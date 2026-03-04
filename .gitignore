@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+apk_extract/
+apk_contents/
+*.xapk
+*.apk
+docs/captures/
+docs/proxy_logs/
+docs/ws_logs/
+docs/web_dump/

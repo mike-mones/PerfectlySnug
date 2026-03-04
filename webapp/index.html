@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Perfectly Snug Controller</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>Perfectly Snug</h1>
+        <div class="status-bar">
+            <span id="connection-status" class="status-dot disconnected"></span>
+            <span id="last-update">Loading...</span>
+        </div>
+    </header>
+
+    <main>
+        <div class="zone-tabs">
+            <button class="zone-tab active" data-zone="left" onclick="switchZone('left')">Left Side</button>
+            <button class="zone-tab" data-zone="right" onclick="switchZone('right')">Right Side</button>
+        </div>
+
+        <div id="zone-content">
+            <!-- Temperature Stages -->
+            <section class="card">
+                <h2>Temperature</h2>
+                <div class="temp-stages">
+                    <div class="temp-stage">
+                        <label>Bedtime</label>
+                        <div class="slider-row">
+                            <span class="slider-label">-10</span>
+                            <input type="range" min="0" max="20" id="slider-l1" oninput="onSliderInput('l1', this.value)" onchange="onSliderChange('l1', this.value)">
+                            <span class="slider-label">+10</span>
+                        </div>
+                        <div class="slider-value" id="display-l1">0</div>
+                    </div>
+                    <div class="temp-stage">
+                        <label>Sleep</label>
+                        <div class="slider-row">
+                            <span class="slider-label">-10</span>
+                            <input type="range" min="0" max="20" id="slider-l2" oninput="onSliderInput('l2', this.value)" onchange="onSliderChange('l2', this.value)">
+                            <span class="slider-label">+10</span>
+                        </div>
+                        <div class="slider-value" id="display-l2">0</div>
+                    </div>
+                    <div class="temp-stage">
+                        <label>Wake</label>
+                        <div class="slider-row">
+                            <span class="slider-label">-10</span>
+                            <input type="range" min="0" max="20" id="slider-l3" oninput="onSliderInput('l3', this.value)" onchange="onSliderChange('l3', this.value)">
+                            <span class="slider-label">+10</span>
+                        </div>
+                        <div class="slider-value" id="display-l3">0</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Foot Warmer -->
+            <section class="card">
+                <h2>Foot Warmer</h2>
+                <div class="button-group" id="foot-warmer-buttons">
+                    <button class="option-btn" data-value="0" onclick="setFootWarmer(0)">Off</button>
+                    <button class="option-btn" data-value="1" onclick="setFootWarmer(1)">Low</button>
+                    <button class="option-btn" data-value="2" onclick="setFootWarmer(2)">Med</button>
+                    <button class="option-btn" data-value="3" onclick="setFootWarmer(3)">High</button>
+                </div>
+            </section>
+
+            <!-- Responsive Cooling -->
+            <section class="card">
+                <h2>Responsive Cooling</h2>
+                <div class="toggle-row">
+                    <span id="cooling-label">Off</span>
+                    <label class="toggle">
+                        <input type="checkbox" id="cooling-toggle" onchange="toggleCooling(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </section>
+
+            <!-- Schedule -->
+            <section class="card">
+                <h2>Schedule</h2>
+                <div class="toggle-row">
+                    <span id="schedule-label">Off</span>
+                    <label class="toggle">
+                        <input type="checkbox" id="schedule-toggle" onchange="toggleSchedule(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div id="schedule-details" class="schedule-details hidden">
+                    <!-- Temperature Levels mode -->
+                    <div class="toggle-row" style="margin-top: 12px;">
+                        <span>Temperature Levels</span>
+                        <div class="button-group" style="width: auto; gap: 4px;">
+                            <button class="option-btn small" id="btn-1level" onclick="setProfileMode(0)">1 Level</button>
+                            <button class="option-btn small" id="btn-3level" onclick="setProfileMode(1)">3 Levels</button>
+                        </div>
+                    </div>
+
+                    <!-- Schedule 1 -->
+                    <div class="schedule-set" style="margin-top: 12px;">
+                        <h3>Schedule 1</h3>
+                        <div class="days-row" id="sched1-days"></div>
+                        <div class="time-row">
+                            <label>Bedtime:</label>
+                            <input type="time" id="sched1-start" onchange="setScheduleTime('sched1Start', this.value)">
+                        </div>
+                        <div class="time-row">
+                            <label>Wake:</label>
+                            <input type="time" id="sched1-stop" onchange="setScheduleTime('sched1Stop', this.value)">
+                        </div>
+                    </div>
+
+                    <!-- Schedule 2 -->
+                    <div class="schedule-set" style="margin-top: 8px;">
+                        <h3>Schedule 2</h3>
+                        <div class="days-row" id="sched2-days"></div>
+                        <div class="time-row">
+                            <label>Bedtime:</label>
+                            <input type="time" id="sched2-start" onchange="setScheduleTime('sched2Start', this.value)">
+                        </div>
+                        <div class="time-row">
+                            <label>Wake:</label>
+                            <input type="time" id="sched2-stop" onchange="setScheduleTime('sched2Stop', this.value)">
+                        </div>
+                    </div>
+
+                    <!-- Start/Wake Length (3 Levels only) -->
+                    <div id="duration-section" class="schedule-set" style="margin-top: 8px;">
+                        <h3>Stage Durations (3 Levels)</h3>
+                        <div class="time-row">
+                            <label>Start Length:</label>
+                            <div class="duration-input">
+                                <input type="number" id="start-length" min="0" max="240" onchange="setDuration('t1', this.value)">
+                                <span>min</span>
+                            </div>
+                        </div>
+                        <div class="time-row">
+                            <label>Wake Length:</label>
+                            <div class="duration-input">
+                                <input type="number" id="wake-length" min="0" max="240" onchange="setDuration('t3', this.value)">
+                                <span>min</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Quiet Mode & Volume -->
+            <section class="card">
+                <h2>Sound</h2>
+                <div class="toggle-row">
+                    <span>Quiet Mode</span>
+                    <label class="toggle">
+                        <input type="checkbox" id="quiet-toggle" onchange="toggleQuiet(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="slider-row" style="margin-top: 12px;">
+                    <label>Volume</label>
+                    <input type="range" min="0" max="10" id="slider-volume" oninput="onVolumeInput(this.value)" onchange="onVolumeChange(this.value)">
+                    <span class="slider-value" id="display-volume">5</span>
+                </div>
+            </section>
+
+            <!-- Status -->
+            <section class="card">
+                <h2>Status</h2>
+                <div class="status-grid">
+                    <div class="stat"><span class="stat-label">Running</span><span id="stat-running" class="stat-value">--</span></div>
+                    <div class="stat"><span class="stat-label">Side</span><span id="stat-side" class="stat-value">--</span></div>
+                    <div class="stat"><span class="stat-label">Burst</span><span id="stat-burst" class="stat-value">--</span></div>
+                    <div class="stat"><span class="stat-label">Progress</span><span id="stat-progress" class="stat-value">--</span></div>
+                </div>
+            </section>
+
+            <!-- Temperatures -->
+            <section class="card">
+                <h2>Sensor Temperatures</h2>
+                <div class="status-grid">
+                    <div class="stat"><span class="stat-label">Ambient</span><span id="stat-temp-ambient" class="stat-value">--</span></div>
+                    <div class="stat"><span class="stat-label">Setpoint</span><span id="stat-temp-setpoint" class="stat-value">--</span></div>
+                    <div class="stat"><span class="stat-label">Sensor R</span><span id="stat-temp-tsr" class="stat-value">--</span></div>
+                    <div class="stat"><span class="stat-label">Sensor C</span><span id="stat-temp-tsc" class="stat-value">--</span></div>
+                    <div class="stat"><span class="stat-label">Sensor L</span><span id="stat-temp-tsl" class="stat-value">--</span></div>
+                    <div class="stat"><span class="stat-label">Heater Head</span><span id="stat-temp-hh" class="stat-value">--</span></div>
+                    <div class="stat"><span class="stat-label">Heater Foot</span><span id="stat-temp-hf" class="stat-value">--</span></div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
