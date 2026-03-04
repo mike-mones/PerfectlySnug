@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Perfectly Snug Smart Topper",
+        "description": "Enter the IP addresses of your Smart Topper zones. For a dual-zone topper, enter both IPs. For a single-zone (Twin), enter the left IP and check 'Single Zone'.",
+        "data": {
+          "left_ip": "Left Zone IP Address",
+          "right_ip": "Right Zone IP Address (dual zone only)",
+          "single_zone": "Single Zone (Twin/TwinXL)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to topper at this IP. Make sure it's powered on and connected to WiFi.",
+      "ip_required": "IP address is required."
+    }
+  }
+}

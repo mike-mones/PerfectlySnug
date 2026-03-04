@@ -1,0 +1,7 @@
+{
+  "name": "Perfectly Snug Smart Topper",
+  "render_readme": true,
+  "domains": ["climate", "sensor", "switch", "number"],
+  "iot_class": "local_push",
+  "homeassistant": "2024.1.0"
+}
