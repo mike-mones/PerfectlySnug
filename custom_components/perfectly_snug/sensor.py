@@ -18,6 +18,12 @@ from .const import (
     DOMAIN,
     MANUFACTURER,
     MODEL,
+    SETTING_BL_OUT,
+    SETTING_CTRL_ITERM,
+    SETTING_CTRL_OUT,
+    SETTING_CTRL_PTERM,
+    SETTING_FH_OUT,
+    SETTING_HH_OUT,
     SETTING_RUN_PROGRESS,
     SETTING_TEMP_AMBIENT,
     SETTING_TEMP_HEATER_FOOT,
@@ -39,6 +45,18 @@ TEMP_SENSORS = {
     SETTING_TEMP_HEATER_FOOT: "Heater Foot Temperature",
 }
 
+PID_SENSORS = {
+    SETTING_CTRL_OUT: ("PID Control Output", "mdi:tune-vertical"),
+    SETTING_CTRL_ITERM: ("PID Integral Term", "mdi:sigma"),
+    SETTING_CTRL_PTERM: ("PID Proportional Term", "mdi:delta"),
+}
+
+OUTPUT_SENSORS = {
+    SETTING_BL_OUT: ("Blower Output", "mdi:fan", "%"),
+    SETTING_HH_OUT: ("Heater Head Output", "mdi:radiator", "%"),
+    SETTING_FH_OUT: ("Heater Foot Output", "mdi:radiator", "%"),
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -53,6 +71,14 @@ async def async_setup_entry(
         for sid, name in TEMP_SENSORS.items():
             entities.append(
                 PerfectlySnugTempSensor(coordinator, zone, entry, sid, name)
+            )
+        for sid, (name, icon) in PID_SENSORS.items():
+            entities.append(
+                PerfectlySnugPIDSensor(coordinator, zone, entry, sid, name, icon)
+            )
+        for sid, (name, icon, unit) in OUTPUT_SENSORS.items():
+            entities.append(
+                PerfectlySnugOutputSensor(coordinator, zone, entry, sid, name, icon, unit)
             )
         entities.append(
             PerfectlySnugProgressSensor(coordinator, zone, entry)
@@ -137,6 +163,96 @@ class PerfectlySnugProgressSensor(
         """Return progress value."""
         if self.coordinator.data and self._zone in self.coordinator.data:
             return self.coordinator.data[self._zone].get(SETTING_RUN_PROGRESS)
+        return None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self.async_write_ha_state()
+
+
+class PerfectlySnugPIDSensor(
+    CoordinatorEntity[PerfectlySnugCoordinator], SensorEntity
+):
+    """PID controller value sensor (signed fixed-point, offset 32768)."""
+
+    _attr_has_entity_name = True
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(
+        self,
+        coordinator: PerfectlySnugCoordinator,
+        zone: str,
+        entry: ConfigEntry,
+        setting_id: int,
+        name: str,
+        icon: str,
+    ) -> None:
+        """Initialize."""
+        super().__init__(coordinator)
+        self._zone = zone
+        self._setting_id = setting_id
+        self._attr_unique_id = f"{entry.entry_id}_{zone}_pid_{setting_id}"
+        self._attr_name = name
+        self._attr_icon = icon
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{entry.entry_id}_{zone}")},
+            "name": f"Smart Topper {zone.title()} Side",
+            "manufacturer": MANUFACTURER,
+            "model": MODEL,
+        }
+
+    @property
+    def native_value(self) -> float | None:
+        """Return PID value as signed value (raw - 32768) / 100."""
+        if self.coordinator.data and self._zone in self.coordinator.data:
+            raw = self.coordinator.data[self._zone].get(self._setting_id)
+            if raw is not None:
+                return round((raw - 32768) / 100, 2)
+        return None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self.async_write_ha_state()
+
+
+class PerfectlySnugOutputSensor(
+    CoordinatorEntity[PerfectlySnugCoordinator], SensorEntity
+):
+    """Fan/heater output percentage sensor."""
+
+    _attr_has_entity_name = True
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(
+        self,
+        coordinator: PerfectlySnugCoordinator,
+        zone: str,
+        entry: ConfigEntry,
+        setting_id: int,
+        name: str,
+        icon: str,
+        unit: str,
+    ) -> None:
+        """Initialize."""
+        super().__init__(coordinator)
+        self._zone = zone
+        self._setting_id = setting_id
+        self._attr_unique_id = f"{entry.entry_id}_{zone}_output_{setting_id}"
+        self._attr_name = name
+        self._attr_icon = icon
+        self._attr_native_unit_of_measurement = unit
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{entry.entry_id}_{zone}")},
+            "name": f"Smart Topper {zone.title()} Side",
+            "manufacturer": MANUFACTURER,
+            "model": MODEL,
+        }
+
+    @property
+    def native_value(self) -> int | None:
+        """Return output value."""
+        if self.coordinator.data and self._zone in self.coordinator.data:
+            return self.coordinator.data[self._zone].get(self._setting_id)
         return None
 
     @callback

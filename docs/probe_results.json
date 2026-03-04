@@ -1,0 +1,426 @@
+{
+  "zone1": {
+    "ip": "192.168.0.159",
+    "endpoints": [
+      {
+        "path": "/",
+        "status": 200,
+        "reason": "OK",
+        "content_type": "text/html",
+        "content_disp": "inline; filename=\"info2.html\"",
+        "content_length": "2692",
+        "body_preview": "<!doctype html>\r\n<html>\r\n<head>\r\n<meta charset=\"utf-8\">\r\n<title>Information</title>\r\n      <link href=\"info.css\" rel=\"stylesheet\" type=\"text/css\">\r\n</head>\r\n\r\n<body>\r\n\r\n<div class=\"topbar\">\r\n  <img cl"
+      },
+      {
+        "path": "/info2.html",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/info.css",
+        "status": 200,
+        "reason": "OK",
+        "content_type": "text/css",
+        "content_disp": "inline; filename=\"info.css\"",
+        "content_length": "1956",
+        "body_preview": "body {\r\n\tbackground: #334451;\r\n\tcolor: white;\r\n\tfont-family: \"Work Sans\",sans-serif;\r\n\tfont-size: 4vw;\r\n  -webkit-tap-highlight-color: rgba(0,0,0,0);\r\n}\r\n\r\nh2 {\r\n  text-align: left;\r\n  font-size: 4vw;"
+      },
+      {
+        "path": "/leftchev.svg",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/status",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/state",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/get",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/set",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/api",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/data",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/config",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/settings",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/temperature",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/sensors",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/version",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/ws",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/rpc",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/command",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/getState",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/getStatus",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/getSettings",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/uploadDatalog",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/diagnostics",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      }
+    ]
+  },
+  "zone2": {
+    "ip": "192.168.0.211",
+    "endpoints": [
+      {
+        "path": "/",
+        "status": 200,
+        "reason": "OK",
+        "content_type": "text/html",
+        "content_disp": "inline; filename=\"info2.html\"",
+        "content_length": "2692",
+        "body_preview": "<!doctype html>\r\n<html>\r\n<head>\r\n<meta charset=\"utf-8\">\r\n<title>Information</title>\r\n      <link href=\"info.css\" rel=\"stylesheet\" type=\"text/css\">\r\n</head>\r\n\r\n<body>\r\n\r\n<div class=\"topbar\">\r\n  <img cl"
+      },
+      {
+        "path": "/info2.html",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/info.css",
+        "status": 200,
+        "reason": "OK",
+        "content_type": "text/css",
+        "content_disp": "inline; filename=\"info.css\"",
+        "content_length": "1956",
+        "body_preview": "body {\r\n\tbackground: #334451;\r\n\tcolor: white;\r\n\tfont-family: \"Work Sans\",sans-serif;\r\n\tfont-size: 4vw;\r\n  -webkit-tap-highlight-color: rgba(0,0,0,0);\r\n}\r\n\r\nh2 {\r\n  text-align: left;\r\n  font-size: 4vw;"
+      },
+      {
+        "path": "/leftchev.svg",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/status",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/state",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/get",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/set",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/api",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/data",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/config",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/settings",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/temperature",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/sensors",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/version",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/ws",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/rpc",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/command",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/getState",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/getStatus",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/getSettings",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/uploadDatalog",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      },
+      {
+        "path": "/diagnostics",
+        "status": 500,
+        "reason": "Internal Server Error",
+        "content_type": "",
+        "content_disp": "",
+        "content_length": "0",
+        "body_preview": ""
+      }
+    ]
+  }
+}
