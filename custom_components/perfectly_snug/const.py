@@ -84,10 +84,15 @@ POLL_SETTINGS = [
     SETTING_PROFILE_ENABLE, SETTING_COOLING_MODE,
 ]
 
-# Temperature sensor setting IDs
+# Temperature sensor setting IDs (confirmed accurate with (raw-32768)/100 formula)
 TEMP_SETTINGS = {
     SETTING_TEMP_SETPOINT, SETTING_TEMP_AMBIENT,
     SETTING_TEMP_SENSOR_RIGHT, SETTING_TEMP_SENSOR_CENTER, SETTING_TEMP_SENSOR_LEFT,
+}
+
+# Heater element sensors — use different/unknown encoding, NOT accurate as temperature
+# Reads ~105F on an empty bed at room temp, so the conversion is wrong for these
+HEATER_TEMP_SETTINGS = {
     SETTING_TEMP_HEATER_HEAD, SETTING_TEMP_HEATER_FOOT,
 }
 

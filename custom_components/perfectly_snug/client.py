@@ -23,7 +23,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def raw_to_celsius(raw: int) -> float:
-    """Convert raw sensor value to Celsius."""
+    """Convert raw sensor value to Celsius. Only valid for TA, TSR, TSC, TSL, TempSP."""
     return round((raw - 32768) / 100, 2)
 
 

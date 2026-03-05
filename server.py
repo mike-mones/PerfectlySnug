@@ -47,7 +47,7 @@ NAME_TO_ID = {v: k for k, v in SETTING_NAMES.items()}
 DASHBOARD_IDS = [0, 1, 2, 3, 4, 5, 6, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
                  21, 22, 23, 29, 30, 31, 32, 33, 34, 35, 36, 40, 41, 52, 53]
 
-TEMP_SENSOR_IDS = {30, 31, 32, 33, 34, 35, 36}
+TEMP_SENSOR_IDS = {30, 31, 32, 33, 34}  # THH(35) and THF(36) use unknown encoding
 
 # Zone configuration
 ZONES = {

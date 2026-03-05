@@ -41,8 +41,12 @@ TEMP_SENSORS = {
     SETTING_TEMP_SENSOR_RIGHT: "Body Sensor Right",
     SETTING_TEMP_SENSOR_CENTER: "Body Sensor Center",
     SETTING_TEMP_SENSOR_LEFT: "Body Sensor Left",
-    SETTING_TEMP_HEATER_HEAD: "Heater Head Temperature",
-    SETTING_TEMP_HEATER_FOOT: "Heater Foot Temperature",
+}
+
+# Heater element temps use unknown encoding - expose as raw values only
+HEATER_RAW_SENSORS = {
+    SETTING_TEMP_HEATER_HEAD: ("Heater Head Raw", "mdi:radiator"),
+    SETTING_TEMP_HEATER_FOOT: ("Heater Foot Raw", "mdi:radiator"),
 }
 
 PID_SENSORS = {
@@ -71,6 +75,10 @@ async def async_setup_entry(
         for sid, name in TEMP_SENSORS.items():
             entities.append(
                 PerfectlySnugTempSensor(coordinator, zone, entry, sid, name)
+            )
+        for sid, (name, icon) in HEATER_RAW_SENSORS.items():
+            entities.append(
+                PerfectlySnugOutputSensor(coordinator, zone, entry, sid, name, icon, None)
             )
         for sid, (name, icon) in PID_SENSORS.items():
             entities.append(
