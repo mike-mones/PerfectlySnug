@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Deep dive into the overnight mystery — check settings + raw values."""
 import json
+import os
+import sys
 from urllib.request import Request, urlopen
 from datetime import datetime, timedelta, timezone
 
 HA_URL = "http://192.168.0.106:8123"
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJlYjMwOGY0ZWJhYTM0NDk0YWNlMGYzMTcyYjllZTJhYyIsImlhdCI6MTc3MjcyNjU4NiwiZXhwIjoyMDg4MDg2NTg2fQ.l7pXoyVKAxpIH-ht5KNTS8X9y65eyHoZSQbJs7JzSlc"
+TOKEN = os.environ.get("HA_TOKEN", "")
+if not TOKEN:
+    print("Set HA_TOKEN environment variable first: export HA_TOKEN='your_token'")
+    sys.exit(1)
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 def ha_get(path):
