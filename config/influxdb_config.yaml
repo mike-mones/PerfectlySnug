@@ -1,0 +1,70 @@
+# InfluxDB Configuration for Perfectly Snug Data Collection
+#
+# Add this to your Home Assistant configuration.yaml
+# (or adapt if you already have an influxdb: section)
+#
+# Prerequisites:
+#   1. Install the InfluxDB add-on from HA Add-on Store
+#   2. Create a database called "perfectly_snug" in InfluxDB
+#   3. Add this config and restart HA
+#
+# If using InfluxDB v2 (OSS), use the influxdb: integration with api_version: 2
+
+# ─── Option A: InfluxDB v1 (HA Add-on default) ───────────
+influxdb:
+  host: a0d7b954-influxdb  # HA add-on hostname (or localhost/IP if external)
+  port: 8086
+  database: perfectly_snug
+  max_retries: 3
+  default_measurement: state
+  # Only log the entities we care about
+  include:
+    entity_globs:
+      - sensor.smart_topper_*
+      - number.smart_topper_*
+      - switch.smart_topper_*
+      - climate.smart_topper_*
+
+# ─── Option B: InfluxDB v2 (if using external InfluxDB) ──
+# influxdb:
+#   api_version: 2
+#   host: 192.168.0.XXX
+#   port: 8086
+#   token: YOUR_INFLUXDB_TOKEN
+#   organization: home
+#   bucket: perfectly_snug
+#   ssl: false
+#   include:
+#     entity_globs:
+#       - sensor.smart_topper_*
+#       - number.smart_topper_*
+#       - switch.smart_topper_*
+#       - climate.smart_topper_*
+
+# ─── Setup Instructions ──────────────────────────────────
+#
+# 1. In HA: Settings → Add-ons → Add-on Store → search "InfluxDB" → Install
+# 2. Start the InfluxDB add-on
+# 3. Open InfluxDB web UI (from the add-on page)
+# 4. Create database: in InfluxDB admin, run:
+#      CREATE DATABASE perfectly_snug
+# 5. Add the "Option A" config above to your configuration.yaml
+# 6. Restart Home Assistant
+# 7. Data will start flowing automatically
+#
+# To verify: In InfluxDB web UI, run:
+#   USE perfectly_snug
+#   SHOW MEASUREMENTS
+#   SELECT * FROM "°C" WHERE entity_id = 'smart_topper_left_side_body_sensor_center' LIMIT 5
+#
+# ─── Grafana (optional, for dashboards) ──────────────────
+#
+# 1. Install Grafana add-on from HA Add-on Store
+# 2. Add InfluxDB as a data source in Grafana
+# 3. Create dashboards showing temperature trends, PID behavior, overrides
+#
+# ─── Data Retention ──────────────────────────────────────
+#
+# By default InfluxDB keeps data forever. To set retention:
+#   CREATE RETENTION POLICY "30days" ON "perfectly_snug" DURATION 30d REPLICATION 1
+#   ALTER RETENTION POLICY "autogen" ON "perfectly_snug" DURATION 365d
