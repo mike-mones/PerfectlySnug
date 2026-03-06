@@ -1,3 +1,7 @@
+# NOTE: As of 2026-03-06, InfluxDB is configured via the HA UI (not YAML).
+# It logs ALL entities by default — no include filter needed.
+# This file is kept as reference for the original planned config.
+#
 # InfluxDB Configuration for Perfectly Snug Data Collection
 #
 # Add this to your Home Assistant configuration.yaml

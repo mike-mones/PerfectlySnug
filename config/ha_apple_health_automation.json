@@ -1,0 +1,37 @@
+{
+  "alias": "Apple Health Import",
+  "description": "Receives Apple Health data from iOS Shortcut webhook",
+  "mode": "single",
+  "trigger": [
+    {
+      "platform": "webhook",
+      "webhook_id": "apple_health_import",
+      "allowed_methods": ["POST"],
+      "local_only": true
+    }
+  ],
+  "action": [
+    {
+      "event": "apple_health_data",
+      "event_data": {
+        "heart_rate_avg": "{{ trigger.json.heart_rate_avg | default(0) }}",
+        "heart_rate_min": "{{ trigger.json.heart_rate_min | default(0) }}",
+        "heart_rate_max": "{{ trigger.json.heart_rate_max | default(0) }}",
+        "hrv_avg": "{{ trigger.json.hrv_avg | default(0) }}",
+        "sleep_deep_min": "{{ trigger.json.sleep_deep_min | default(0) }}",
+        "sleep_rem_min": "{{ trigger.json.sleep_rem_min | default(0) }}",
+        "sleep_core_min": "{{ trigger.json.sleep_core_min | default(0) }}",
+        "sleep_awake_min": "{{ trigger.json.sleep_awake_min | default(0) }}",
+        "wrist_temp": "{{ trigger.json.wrist_temp | default(0) }}",
+        "person": "{{ trigger.json.person | default('mike') }}"
+      }
+    },
+    {
+      "service": "logbook.log",
+      "data": {
+        "name": "Apple Health",
+        "message": "Imported sleep data for {{ trigger.json.person | default('mike') }}"
+      }
+    }
+  ]
+}

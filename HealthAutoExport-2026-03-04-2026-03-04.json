@@ -1,0 +1,317 @@
+{
+  "data" : {
+    "metrics" : [
+      {
+        "data" : [
+          {
+            "qty" : 590.74200000000008,
+            "source" : "Michael’s Apple Watch",
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ],
+        "units" : "kcal",
+        "name" : "active_energy"
+      },
+      {
+        "data" : [
+          {
+            "qty" : 43,
+            "source" : "Michael’s Apple Watch",
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ],
+        "units" : "min",
+        "name" : "apple_exercise_time"
+      },
+      {
+        "data" : [
+          {
+            "qty" : 96.125377655029226,
+            "date" : "2026-03-03 00:00:00 -0500"
+          },
+          {
+            "date" : "2026-03-04 00:00:00 -0500",
+            "qty" : 96.818251037597591
+          }
+        ],
+        "name" : "apple_sleeping_wrist_temperature",
+        "units" : "degF"
+      },
+      {
+        "name" : "apple_stand_hour",
+        "units" : "count",
+        "data" : [
+          {
+            "date" : "2026-03-04 00:00:00 -0500",
+            "qty" : 14
+          }
+        ]
+      },
+      {
+        "name" : "apple_stand_time",
+        "data" : [
+          {
+            "qty" : 110,
+            "source" : "Michael’s Apple Watch",
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ],
+        "units" : "min"
+      },
+      {
+        "data" : [
+          {
+            "qty" : 0.71234846115112305,
+            "date" : "2026-03-03 00:00:00 -0500"
+          },
+          {
+            "qty" : 9.1153717041015625,
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ],
+        "units" : "count",
+        "name" : "breathing_disturbances"
+      },
+      {
+        "name" : "blood_oxygen_saturation",
+        "units" : "%",
+        "data" : [
+          {
+            "date" : "2026-03-04 00:00:00 -0500",
+            "qty" : 97.75
+          }
+        ]
+      },
+      {
+        "name" : "environmental_audio_exposure",
+        "units" : "dBASPL",
+        "data" : [
+          {
+            "date" : "2026-03-03 00:00:00 -0500",
+            "qty" : 53.213049669822603
+          },
+          {
+            "qty" : 64.918643914565962,
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ]
+      },
+      {
+        "data" : [
+          {
+            "date" : "2026-03-04 00:00:00 -0500",
+            "qty" : 2,
+            "source" : "Michael’s Apple Watch|Mike Mones iPhone 14"
+          }
+        ],
+        "units" : "count",
+        "name" : "flights_climbed"
+      },
+      {
+        "units" : "s",
+        "name" : "handwashing",
+        "data" : [
+          {
+            "date" : "2026-03-04 00:00:00 -0500",
+            "qty" : 8.8571428571428577
+          }
+        ]
+      },
+      {
+        "units" : "dBASPL",
+        "name" : "headphone_audio_exposure",
+        "data" : [
+          {
+            "qty" : 35.989919341861203,
+            "date" : "2026-03-03 00:00:00 -0500"
+          },
+          {
+            "qty" : 57.936093870041326,
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ]
+      },
+      {
+        "name" : "heart_rate",
+        "data" : [
+          {
+            "source" : "Michael’s Apple Watch|Mike Mones iPhone 14",
+            "Min" : 58,
+            "date" : "2026-03-04 00:00:00 -0500",
+            "Max" : 131,
+            "Avg" : 79.334028944326391
+          }
+        ],
+        "units" : "count\/min"
+      },
+      {
+        "name" : "heart_rate_variability",
+        "units" : "ms",
+        "data" : [
+          {
+            "qty" : 51.92919756763429,
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ]
+      },
+      {
+        "name" : "physical_effort",
+        "units" : "kcal\/hr·kg",
+        "data" : [
+          {
+            "date" : "2026-03-03 00:00:00 -0500",
+            "qty" : 1.1000000238418579
+          },
+          {
+            "qty" : 3.6661631589209565,
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ]
+      },
+      {
+        "name" : "basal_energy_burned",
+        "units" : "kcal",
+        "data" : [
+          {
+            "qty" : 2041.3355735353944,
+            "source" : "Michael’s Apple Watch",
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ]
+      },
+      {
+        "name" : "resting_heart_rate",
+        "units" : "count\/min",
+        "data" : [
+          {
+            "qty" : 63,
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ]
+      },
+      {
+        "name" : "respiratory_rate",
+        "data" : [
+          {
+            "date" : "2026-03-04 00:00:00 -0500",
+            "qty" : 16.779069767441861
+          }
+        ],
+        "units" : "count\/min"
+      },
+      {
+        "name" : "step_count",
+        "units" : "count",
+        "data" : [
+          {
+            "source" : "Michael’s Apple Watch|Mike Mones iPhone 14",
+            "date" : "2026-03-04 00:00:00 -0500",
+            "qty" : 8833
+          }
+        ]
+      },
+      {
+        "data" : [
+          {
+            "qty" : 0.86470851748008426,
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ],
+        "units" : "ft\/s",
+        "name" : "stair_speed_down"
+      },
+      {
+        "data" : [
+          {
+            "inBedStart" : "2026-03-04 00:24:45 -0500",
+            "totalSleep" : 3.2518461659550666,
+            "sleepStart" : "2026-03-04 00:24:45 -0500",
+            "inBedEnd" : "2026-03-04 08:27:01 -0500",
+            "asleep" : 0,
+            "date" : "2026-03-04 00:00:00 -0500",
+            "sleepEnd" : "2026-03-04 08:27:01 -0500",
+            "inBed" : 0,
+            "rem" : 0,
+            "deep" : 0.64203233609596888,
+            "awake" : 4.7858283213774371,
+            "core" : 2.6098138298590978,
+            "source" : "Michael’s Apple Watch"
+          }
+        ],
+        "name" : "sleep_analysis",
+        "units" : "hr"
+      },
+      {
+        "units" : "ml\/(kg·min)",
+        "name" : "vo2_max",
+        "data" : [
+          {
+            "qty" : 32.479999999999997,
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ]
+      },
+      {
+        "name" : "walking_running_distance",
+        "units" : "mi",
+        "data" : [
+          {
+            "qty" : 3.9902577062143392,
+            "source" : "Michael’s Apple Watch|Mike Mones iPhone 14",
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ]
+      },
+      {
+        "units" : "count\/min",
+        "data" : [
+          {
+            "date" : "2026-03-04 00:00:00 -0500",
+            "qty" : 108.5
+          }
+        ],
+        "name" : "walking_heart_rate_average"
+      },
+      {
+        "units" : "%",
+        "data" : [
+          {
+            "date" : "2026-03-04 00:00:00 -0500",
+            "qty" : 0.055555555555555552
+          }
+        ],
+        "name" : "walking_asymmetry_percentage"
+      },
+      {
+        "units" : "mi\/hr",
+        "name" : "walking_speed",
+        "data" : [
+          {
+            "date" : "2026-03-04 00:00:00 -0500",
+            "qty" : 2.6499706002658749
+          }
+        ]
+      },
+      {
+        "units" : "%",
+        "data" : [
+          {
+            "date" : "2026-03-04 00:00:00 -0500",
+            "qty" : 30.917857142857144
+          }
+        ],
+        "name" : "walking_double_support_percentage"
+      },
+      {
+        "name" : "walking_step_length",
+        "data" : [
+          {
+            "qty" : 24.732845894263225,
+            "date" : "2026-03-04 00:00:00 -0500"
+          }
+        ],
+        "units" : "in"
+      }
+    ]
+  }
+}

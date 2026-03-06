@@ -22,21 +22,28 @@ from .const import (
 )
 from .coordinator import PerfectlySnugCoordinator
 
+# L1/L2/L3 use an offset: raw 0-20 on device = display -10 to +10 in the app.
+# Negative = cooling, zero = neutral, positive = warming.
+_TEMP_OFFSET = 10
+
 NUMBER_CONFIGS = {
     SETTING_L1: {
         "name": "Bedtime Temperature",
         "icon": "mdi:weather-night",
-        "min": 0, "max": 20, "step": 1, "mode": NumberMode.SLIDER,
+        "min": -10, "max": 10, "step": 1, "mode": NumberMode.SLIDER,
+        "offset": _TEMP_OFFSET,
     },
     SETTING_L2: {
         "name": "Sleep Temperature",
         "icon": "mdi:sleep",
-        "min": 0, "max": 20, "step": 1, "mode": NumberMode.SLIDER,
+        "min": -10, "max": 10, "step": 1, "mode": NumberMode.SLIDER,
+        "offset": _TEMP_OFFSET,
     },
     SETTING_L3: {
         "name": "Wake Temperature",
         "icon": "mdi:weather-sunny",
-        "min": 0, "max": 20, "step": 1, "mode": NumberMode.SLIDER,
+        "min": -10, "max": 10, "step": 1, "mode": NumberMode.SLIDER,
+        "offset": _TEMP_OFFSET,
     },
     SETTING_FOOT_WARMER: {
         "name": "Foot Warmer",
@@ -105,6 +112,7 @@ class PerfectlySnugNumber(
         self._attr_native_max_value = cfg["max"]
         self._attr_native_step = cfg["step"]
         self._attr_mode = cfg["mode"]
+        self._offset = cfg.get("offset", 0)
         if "unit" in cfg:
             self._attr_native_unit_of_measurement = cfg["unit"]
         self._attr_device_info = {
@@ -116,15 +124,16 @@ class PerfectlySnugNumber(
 
     @property
     def native_value(self) -> float | None:
-        """Return current value."""
+        """Return current value (with offset applied for L1/L2/L3)."""
         if self.coordinator.data and self._zone in self.coordinator.data:
             val = self.coordinator.data[self._zone].get(self._setting_id)
-            return val if val is not None else None
+            if val is not None:
+                return val - self._offset
         return None
 
     async def async_set_native_value(self, value: float) -> None:
-        """Set new value."""
-        int_val = int(value)
+        """Set new value (convert display value back to raw for L1/L2/L3)."""
+        int_val = int(value) + self._offset
         # For foot warmer, also control heater limit
         if self._setting_id == SETTING_FOOT_WARMER:
             from .const import SETTING_HEATER_LIMIT
