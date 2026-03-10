@@ -92,7 +92,10 @@ DEFICIT_EXTRA_OFFSET = 1        # extra setting points
 # Hold bedtime temp for 15 min after first real sleep stage
 ONSET_HOLD_MINUTES = 15
 
-STATE_DIR = Path("/addon_configs/a0d7b954_appdaemon/apps")
+# State dir: try container path first, fall back to host
+_container = Path("/config/apps")
+_host = Path("/addon_configs/a0d7b954_appdaemon/apps")
+STATE_DIR = _container if _container.exists() else _host
 STATE_FILE = STATE_DIR / "controller_state.json"
 
 # Body temp targets per sleep stage (°F) — learned from correlation analysis
@@ -113,10 +116,10 @@ STAGE_BODY_TARGETS = {
 # That's ~0.45°F per setting point. Conservative estimate.
 DEGREES_PER_SETTING_POINT = 0.45
 
-# PID gains (operating in setting-point space, not °F)
-PID_KP = 1.0 / DEGREES_PER_SETTING_POINT  # ~2.2 setting-points per °F error
-PID_KI = 0.05 / DEGREES_PER_SETTING_POINT
-PID_KD = 0.2 / DEGREES_PER_SETTING_POINT
+# PID gains (halved to reduce oscillation)
+PID_KP = 0.5 / DEGREES_PER_SETTING_POINT
+PID_KI = 0.02 / DEGREES_PER_SETTING_POINT
+PID_KD = 0.1 / DEGREES_PER_SETTING_POINT
 
 # ── Entity Mappings ──────────────────────────────────────────────────────
 
@@ -353,6 +356,18 @@ class SleepController(hass.Hass):
             sensors = self._read_sensors(zone)
             body_avg = sensors.get("body_avg")
             ambient = sensors.get("ambient")
+
+            # Occupancy check: if body temp is below
+            # threshold, nobody is in bed yet
+            if (body_avg is not None
+                    and body_avg < OCCUPANCY_THRESHOLD_F):
+                self.log(
+                    f"[{zone}] Empty bed "
+                    f"({body_avg:.1f}°F < "
+                    f"{OCCUPANCY_THRESHOLD_F}°F) "
+                    f"— skipping")
+                continue
+
             if body_avg is None:
                 state["no_data_count"] += 1
                 if (state["no_data_count"] >= NO_DATA_ALERT_LOOPS
@@ -486,6 +501,17 @@ class SleepController(hass.Hass):
 
             # 6. PID: compute offset from baseline
             error = effective_body - target_temp
+
+            # Deadband: don't adjust if error is small
+            if abs(error) < DEADBAND_F:
+                self.log(
+                    f"[{zone}] t+{hours_in * 60:.0f}m "
+                    f"body={body_avg:.1f}°F "
+                    f"target={target_temp:.1f}°F "
+                    f"err={error:+.1f}°F "
+                    f"DEADBAND — no change")
+                state["last_body_temp"] = body_avg
+                continue
 
             # Track persistent large errors for anomaly
             if abs(error) > 5.0:
@@ -1133,14 +1159,19 @@ class SleepController(hass.Hass):
         import urllib.request
         import urllib.error
 
-        # Read GitHub token from stored file
-        token_path = STATE_DIR / ".github_token"
+        # Read GitHub token — try both container and
+        # host paths since it differs
         gh_token = None
-        if token_path.exists():
-            try:
-                gh_token = token_path.read_text().strip()
-            except Exception:
-                pass
+        for tp in [
+            STATE_DIR / ".github_token",
+            Path("/config/apps/.github_token"),
+        ]:
+            if tp.exists():
+                try:
+                    gh_token = tp.read_text().strip()
+                    break
+                except Exception:
+                    pass
 
         if not gh_token:
             self.log("No GitHub token — skipping issue",
