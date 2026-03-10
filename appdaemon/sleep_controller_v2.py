@@ -31,7 +31,7 @@ import hassapi as hass
 # ── Configuration ────────────────────────────────────────────────────────
 
 LOOP_INTERVAL_SEC = 300     # 5 min control loop
-MAX_STEP_PER_LOOP = 2       # Max setting change per cycle (prevents jumps)
+MAX_STEP_PER_LOOP = 1       # Conservative: ±1 per cycle (Eight Sleep style)
 OVERRIDE_LEARNING_RATE = 0.3  # How fast targets adapt from manual overrides
 STAGE_STALE_MINUTES = 30    # Max age of sleep stage reading before fallback
 STAGE_COOLDOWN_SEC = 180    # Don't adjust for 3 min after a stage transition
@@ -70,6 +70,27 @@ SETTING_LAG_MINUTES = 15
 # Multi-night trend penalty (#14)
 # Penalize settings that deviate from the 7-night rolling average
 TREND_PENALTY_WEIGHT = 0.2
+
+# User's preferred baseline settings (-10 to +10)
+# The controller applies bounded offsets around these,
+# never wholesale overrides (Eight Sleep approach).
+USER_BASELINE = {
+    "bedtime": -10,
+    "sleep":   -6,
+    "wake":    -5,
+}
+# Max offset the controller can apply around baseline
+MAX_OFFSET_FROM_BASELINE = 3
+
+# Prior-night deficit compensation
+# If deep < 15% or REM < 20%, increase cooling/warming
+DEEP_DEFICIT_THRESHOLD = 0.15   # 15% of night
+REM_DEFICIT_THRESHOLD = 0.20    # 20% of night
+DEFICIT_EXTRA_OFFSET = 1        # extra setting points
+
+# Sleep onset → phase transition delay
+# Hold bedtime temp for 15 min after first real sleep stage
+ONSET_HOLD_MINUTES = 15
 
 STATE_DIR = Path("/addon_configs/a0d7b954_appdaemon/apps")
 STATE_FILE = STATE_DIR / "controller_state.json"
@@ -167,7 +188,9 @@ class SleepController(hass.Hass):
         self.zone_state = {}
         self.learned_targets = {}
         self.transfer_rate = DEGREES_PER_SETTING_POINT
-        self.nightly_history = {}  # zone -> list of nightly avg settings
+        self.nightly_history = {}
+        # Prior-night sleep stage percentages
+        self.prior_night_stages = {}  # zone -> {deep_pct, rem_pct}  # zone -> list of nightly avg settings
 
         self._load_state()
 
@@ -221,6 +244,9 @@ class SleepController(hass.Hass):
             # Alerting
             "no_data_count": 0,
             "alert_sent": False,
+            # Sleep onset tracking
+            "sleep_onset_ts": None,
+            "onset_phase_done": False,
         }
 
     # ── Phase Detection ──────────────────────────────────────────────
@@ -286,6 +312,8 @@ class SleepController(hass.Hass):
                 state["manual_mode"] = False
                 state["recent_setting_changes"] = []
                 state["body_temp_history"] = []
+                state["sleep_onset_ts"] = None
+                state["onset_phase_done"] = False
                 continue
 
             # ── Wake detection ──
@@ -359,10 +387,44 @@ class SleepController(hass.Hass):
 
             # Log stage transitions
             if stage != state["last_stage"]:
-                self.log(f"[{zone}] STAGE: {state['last_stage']} → {stage} ({stage_source})")
+                self.log(f"[{zone}] STAGE: "
+                         f"{state['last_stage']} -> "
+                         f"{stage} ({stage_source})")
                 state["last_stage"] = stage
                 state["stage_changed_at"] = now.isoformat()
-                state["integral_error"] = 0.0  # Reset on stage change
+                state["integral_error"] = 0.0
+
+                # Track sleep onset (first non-awake stage)
+                if (stage in ("deep", "core", "rem")
+                        and state["sleep_onset_ts"] is None):
+                    state["sleep_onset_ts"] = now.isoformat()
+                    self.log(f"[{zone}] Sleep onset detected")
+
+            # Awake = freeze setting (don't chase temperature)
+            # Just stabilize and avoid disturbing the sleeper
+            if stage == "awake":
+                self.log(f"[{zone}] Awake — holding setting")
+                state["last_body_temp"] = body_avg
+                continue
+
+            # Sleep onset hold: keep bedtime setting for 15 min
+            # after actual sleep is detected, then allow control
+            if (state["sleep_onset_ts"]
+                    and not state["onset_phase_done"]):
+                onset = datetime.fromisoformat(
+                    state["sleep_onset_ts"])
+                onset_elapsed = (now - onset).total_seconds() / 60
+                if onset_elapsed < ONSET_HOLD_MINUTES:
+                    self.log(
+                        f"[{zone}] Onset hold: "
+                        f"{onset_elapsed:.0f}/"
+                        f"{ONSET_HOLD_MINUTES}m")
+                    state["last_body_temp"] = body_avg
+                    continue
+                else:
+                    state["onset_phase_done"] = True
+                    self.log(f"[{zone}] Onset hold complete"
+                             " — control active")
 
             # Stage transition cooldown: don't adjust for a few minutes
             # after a stage change to let the reading stabilize
@@ -388,36 +450,34 @@ class SleepController(hass.Hass):
                 continue
 
             # 5. Compute target body temp for current stage
-            targets = self.learned_targets.get(zone, STAGE_BODY_TARGETS)
-            target_temp = targets.get(stage, targets.get("unknown", 83.0))
+            targets = self.learned_targets.get(
+                zone, STAGE_BODY_TARGETS)
+            target_temp = targets.get(
+                stage, targets.get("unknown", 83.0))
 
-            # 5b. Time-of-night adjustment (#12)
-            # Body temp naturally rises through the night.
-            # Allow target to drift warmer so we don't fight it.
-            bedtime = datetime.fromisoformat(state["bedtime_ts"])
-            hours_in = (now - bedtime).total_seconds() / 3600.0
+            # 5b. Time-of-night adjustment
+            bedtime = datetime.fromisoformat(
+                state["bedtime_ts"])
+            hours_in = (
+                (now - bedtime).total_seconds() / 3600.0)
             time_adj = hours_in * TIME_DRIFT_F_PER_HOUR
             target_temp += time_adj
 
-            # 5c. Lag compensation (#13)
-            # Current body temp reflects the setting from ~15 min ago.
-            # Use the body temp from ~15 min ago as the error input
-            # if we have enough history.
-            lag_samples = int(SETTING_LAG_MINUTES / 5)  # ~3
+            # 5c. Lag compensation
+            lag_samples = int(SETTING_LAG_MINUTES / 5)
             hist = state["body_temp_history"]
             if len(hist) > lag_samples:
                 effective_body = hist[-lag_samples]
             else:
                 effective_body = body_avg
 
-            # 6. PID: compute setting adjustment
-            # Use lag-compensated temp for error
+            # 6. PID: compute offset from baseline
             error = effective_body - target_temp
 
             p_term = PID_KP * error
-
             state["integral_error"] += error
-            state["integral_error"] = max(-10.0, min(10.0, state["integral_error"]))
+            state["integral_error"] = max(
+                -10.0, min(10.0, state["integral_error"]))
             i_term = PID_KI * state["integral_error"]
 
             d_term = 0.0
@@ -426,42 +486,72 @@ class SleepController(hass.Hass):
                 d_term = PID_KD * rate
             state["last_body_temp"] = body_avg
 
-            pid_output = p_term + i_term + d_term
-            # pid_output > 0 means too warm → decrease setting (more negative = colder)
+            pid_offset = p_term + i_term + d_term
 
-            # 6b. Ambient temperature compensation
-            # If room is warmer than reference, shift setting colder
+            # 6b. Ambient compensation
             ambient_adj = 0.0
             if ambient is not None:
-                ambient_adj = (ambient - AMBIENT_REFERENCE_F) * AMBIENT_COMPENSATION
-                # ambient_adj > 0 when room is warm → need colder setting
-            pid_output += ambient_adj
+                ambient_adj = (
+                    (ambient - AMBIENT_REFERENCE_F)
+                    * AMBIENT_COMPENSATION)
+            pid_offset += ambient_adj
 
-            # 7. Compute new setting
+            # 6c. Prior-night deficit compensation
+            deficit_adj = 0
+            prior = self.prior_night_stages.get(zone, {})
+            if prior.get("deep_pct", 1.0) < DEEP_DEFICIT_THRESHOLD:
+                # Low deep sleep last night -> cool more
+                deficit_adj -= DEFICIT_EXTRA_OFFSET
+                self.log(f"[{zone}] Deep deficit "
+                         f"({prior['deep_pct']:.0%}) "
+                         f"-> extra cooling")
+            if prior.get("rem_pct", 1.0) < REM_DEFICIT_THRESHOLD:
+                # Low REM last night -> warm more
+                deficit_adj += DEFICIT_EXTRA_OFFSET
+                self.log(f"[{zone}] REM deficit "
+                         f"({prior['rem_pct']:.0%}) "
+                         f"-> extra warming")
+
+            # 7. Compute new setting as bounded offset
+            # from user's preferred baseline
+            baseline = USER_BASELINE.get(phase, -6)
+            # PID offset: negative = need colder
+            raw_offset = round(-pid_offset + deficit_adj)
+            # Clamp offset to bounded range
+            clamped_offset = max(
+                -MAX_OFFSET_FROM_BASELINE,
+                min(MAX_OFFSET_FROM_BASELINE, raw_offset))
+            new_setting = baseline + clamped_offset
+            new_setting = max(-10, min(10, new_setting))
+
+            # Read current for comparison
             preset_entity = ZONE_PRESETS[zone][phase]
             current_setting = self._read_entity(preset_entity)
             if current_setting is None:
-                self.log(f"[{zone}] Can't read {phase} preset — skipping",
-                         level="WARNING")
+                self.log(
+                    f"[{zone}] Can't read {phase} "
+                    f"preset", level="WARNING")
                 continue
             current_setting = int(current_setting)
 
-            new_setting = current_setting - pid_output
-            new_setting = max(-10, min(10, round(new_setting)))
-
-            # 7a. Multi-night trend penalty (#14)
-            # Nudge toward 7-night rolling average to keep stable
+            # 7a. Multi-night trend penalty
             night_hist = self.nightly_history.get(zone, [])
             if len(night_hist) >= 3:
-                trend_avg = sum(night_hist[-7:]) / len(night_hist[-7:])
-                trend_pull = (trend_avg - new_setting) * TREND_PENALTY_WEIGHT
+                trend_avg = (
+                    sum(night_hist[-7:])
+                    / len(night_hist[-7:]))
+                trend_pull = (
+                    (trend_avg - new_setting)
+                    * TREND_PENALTY_WEIGHT)
                 new_setting = max(-10, min(10,
                     round(new_setting + trend_pull)))
 
-            # 7b. Wake-up ramp: gradually warm up before wake phase
+            # 7b. Wake-up ramp
             minutes_in = hours_in * 60.0
-            progress = self._read_entity(ZONE_SENSORS[zone]["run_progress"])
-            wake_len = self._read_entity(ZONE_SCHEDULE[zone]["wake_length"]) or 30
+            progress = self._read_entity(
+                ZONE_SENSORS[zone]["run_progress"])
+            wake_len = (self._read_entity(
+                ZONE_SCHEDULE[zone]["wake_length"]) or 30)
             if progress is not None and progress >= 5:
                 total_min = minutes_in / (progress / 100.0)
                 min_until_wake = total_min - minutes_in - wake_len
@@ -533,7 +623,7 @@ class SleepController(hass.Hass):
                         state["stage_training_data"][-200:])
 
             # 10. Continuous learning
-            if abs(error) < 1.0 and abs(pid_output) < 1.0:
+            if abs(error) < 1.0 and abs(pid_offset) < 1.0:
                 # System is near equilibrium — nudge target
                 drift = (body_avg - target_temp) * CONTINUOUS_LEARN_RATE
                 old_t = targets.get(stage, target_temp)
@@ -574,6 +664,21 @@ class SleepController(hass.Hass):
         for td in training:
             s = td["stage"]
             stages_seen[s] = stages_seen.get(s, 0) + 1
+
+        # Compute stage percentages for deficit compensation
+        total_stage_min = sum(stages_seen.values())
+        if total_stage_min > 0:
+            deep_pct = stages_seen.get("deep", 0) / total_stage_min
+            rem_pct = stages_seen.get("rem", 0) / total_stage_min
+            self.prior_night_stages[zone] = {
+                "deep_pct": deep_pct,
+                "rem_pct": rem_pct,
+            }
+            self.log(
+                f"[{zone}] Stage %: deep={deep_pct:.0%} "
+                f"rem={rem_pct:.0%} "
+                f"(thresholds: deep<{DEEP_DEFICIT_THRESHOLD:.0%} "
+                f"rem<{REM_DEFICIT_THRESHOLD:.0%})")
 
         self.log(
             f"[{zone}] *** WAKE SUMMARY *** "
@@ -885,6 +990,8 @@ class SleepController(hass.Hass):
                 "transfer_rate": self.transfer_rate,
                 "nightly_history": (
                     self.nightly_history.get(zone, [])),
+                "prior_night_stages": (
+                    self.prior_night_stages.get(zone, {})),
             }
         try:
             STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -916,6 +1023,10 @@ class SleepController(hass.Hass):
                 nh = zdata.get("nightly_history", [])
                 if nh:
                     self.nightly_history[zone] = nh
+                # Restore prior night stages
+                pns = zdata.get("prior_night_stages", {})
+                if pns:
+                    self.prior_night_stages[zone] = pns
             self.log(f"Loaded state from {STATE_FILE}")
         except (json.JSONDecodeError, KeyError) as e:
             self.log(f"Failed to load state: {e}",

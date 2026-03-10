@@ -1,0 +1,34 @@
+{
+  "left": {
+    "state": {
+      "zone": "left",
+      "bedtime_ts": null,
+      "current_raw_setting": 0,
+      "last_setting_we_pushed": null,
+      "integral_error": 0.0,
+      "last_body_temp": 83.408,
+      "trajectory": {},
+      "override_history": [],
+      "kp": 0.5,
+      "ki": 0.02,
+      "kd": 0.1,
+      "integral_limit": 5.0
+    },
+    "trajectory": {
+      "onset_target_f": 76.0,
+      "deep_target_f": 78.0,
+      "rem_target_f": 80.0,
+      "prewake_target_f": 82.0,
+      "onset_end_min": 60,
+      "deep_end_min": 180,
+      "rem_heavy_start_min": 300,
+      "prewake_start_min": 420,
+      "total_sleep_min": 480,
+      "learned_offset_f": 0.0,
+      "learned_onset_offset_f": 0.0,
+      "learned_deep_offset_f": 0.0,
+      "learned_rem_offset_f": 0.0,
+      "learned_prewake_offset_f": 0.0
+    }
+  }
+}
