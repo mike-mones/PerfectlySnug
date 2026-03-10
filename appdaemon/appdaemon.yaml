@@ -1,0 +1,17 @@
+---
+secrets: /homeassistant/secrets.yaml
+appdaemon:
+  latitude: 40.75
+  longitude: -73.99
+  elevation: 10
+  time_zone: America/New_York
+  plugins:
+    HASS:
+      type: hass
+      ha_url: http://supervisor/core/api
+      token: "${SUPERVISOR_TOKEN}"
+http:
+  url: http://0.0.0.0:5050
+admin:
+api:
+hadashboard:

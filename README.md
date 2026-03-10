@@ -108,6 +108,89 @@ Once we understand the protocol, the web app will:
   - Sleep analytics dashboard
   - Possibly Home Assistant integration later
 
+## Reactive Sleep Temperature Controller
+
+### What It Does
+A continuous PID controller that replaces the static L1/L2/L3 temperature stages.
+Every 5 minutes during sleep, it:
+1. Reads body temperature sensors from the topper
+2. Computes a target body temp from a science-based sleep curve
+3. Uses PID control to find the right topper setting
+4. Pushes the setting change via `number.set_value`
+5. Detects manual overrides and adapts the target curve over time
+
+### Deployment
+- Runs as an **AppDaemon app** on HA Green (`a0d7b954_appdaemon` add-on)
+- App: `/addon_configs/a0d7b954_appdaemon/apps/sleep_controller.py`
+- Config: `/addon_configs/a0d7b954_appdaemon/apps/apps.yaml`
+- State persisted: `/addon_configs/a0d7b954_appdaemon/apps/controller_state.json`
+- Source: `PerfectlySnug/appdaemon/sleep_controller.py`
+
+### Deploy Workflow
+```bash
+# Edit locally, then SCP to HA Green:
+scp PerfectlySnug/appdaemon/sleep_controller.py root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
+scp PerfectlySnug/appdaemon/apps.yaml root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
+
+# Restart AppDaemon:
+ssh root@192.168.0.106 "ha addons restart a0d7b954_appdaemon"
+
+# Check logs:
+ssh root@192.168.0.106 "ha addons logs a0d7b954_appdaemon --lines 30"
+```
+
+### Sleep Curve (Body Temperature Targets)
+| Phase | Time | Target (°F) | What Happens |
+|---|---|---|---|
+| Onset | 0–60 min | 76°F | Aggressive cooling for sleep onset |
+| Deep | 60–180 min | 78°F | Gradual warming into deep sleep |
+| REM | 180–300 min | 80°F | Warmer for REM-heavy second half |
+| Pre-wake | 300–420 min | 82°F | Warm-up toward natural wake |
+
+### Override Learning
+When you manually adjust the topper during sleep, the controller detects it and
+shifts the target curve for that sleep phase. Over multiple nights, the curve
+converges to your personal optimum. Learning rate: 0.7 (aggressive early adaptation).
+
+### PID Gains
+- Kp=0.5 (proportional), Ki=0.02 (integral), Kd=0.1 (derivative)
+- Max change per 5-min cycle: ±2 setting units
+- Integral windup clamped to ±5.0
+
+## Apple Watch Health Data Pipeline
+
+### The Problem
+iOS HealthKit **cannot be read while the iPhone is locked** — this is a hard OS security restriction that affects all apps, Shortcuts, and automations. The Health Auto Export (HAE) app works during the day but produces zero data overnight when the phone is locked on the nightstand.
+
+### Approaches Tested (March 9, 2026)
+| Approach | Result |
+|---|---|
+| HAE + iPhone Mirroring | Manual exports work, automatic scheduling does NOT |
+| HAE Automations widget | Unreliable through iPhone Mirroring |
+| iOS Shortcuts (Time of Day trigger) | Ran, but HealthKit access **blocked** while locked |
+| iOS Shortcuts (from Apple Watch) | **WORKED** — Watch can read HealthKit while phone locked |
+| Native watchOS app (SleepSync) | **Solution** — event-driven via HKObserverQuery |
+
+### SleepSync watchOS App
+Location: `../SleepSync/` (separate Xcode project in the workspace root)
+
+Uses `HKObserverQuery` with `.immediate` background delivery. When the Watch writes a new HR or HRV sample, watchOS wakes SleepSync, which reads the latest sample and POSTs to the HA webhook in the same format our automation already handles.
+
+See [SleepSync README](../SleepSync/README.md) for setup instructions.
+
+### HA Webhook Automation
+- Webhook: `http://192.168.0.106:8123/api/webhook/apple_health_import` (local_only)
+- Source: `config/apple_health_automation_v2.yaml`
+- Deploy: `python3 /tmp/build_automation.py && scp /tmp/automations_new.yaml root@192.168.0.106:/homeassistant/automations.yaml`
+- Handles both aggregated and disaggregated HAE payload formats
+- Updates: `input_number.apple_health_hr_avg`, `input_number.apple_health_hrv`
+
+### Key Entity IDs
+- `input_number.apple_health_hr_avg` — Latest heart rate (bpm)
+- `input_number.apple_health_hrv` — Latest heart rate variability (ms SDNN)
+- `input_number.apple_health_resting_hr` — Resting heart rate
+- `input_number.apple_health_wrist_temp` — Wrist temperature deviation
+
 ## Risk Assessment
 
 | Action | Risk Level | Notes |

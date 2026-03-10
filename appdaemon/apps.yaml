@@ -1,0 +1,3 @@
+sleep_controller:
+  module: sleep_controller
+  class: SleepController

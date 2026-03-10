@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Overnight Temperature Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', 'Segoe UI', sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            min-height: 100vh;
+        }
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 24px;
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+        }
+        header h1 { font-size: 1.2rem; font-weight: 600; }
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            color: #8b949e;
+        }
+        .status .dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #f85149;
+        }
+        .status .dot.live { background: #3fb950; }
+        .controls {
+            display: flex;
+            gap: 12px;
+            padding: 12px 24px;
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .controls label { font-size: 0.85rem; color: #8b949e; }
+        .controls select, .controls input {
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #e6edf3;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+        }
+        .zone-btn {
+            padding: 6px 16px;
+            border: 1px solid #30363d;
+            background: #21262d;
+            color: #8b949e;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+        .zone-btn.active {
+            background: #1f6feb;
+            color: #fff;
+            border-color: #1f6feb;
+        }
+        main { padding: 16px 24px; }
+        .chart-container {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .chart-container h2 {
+            font-size: 0.95rem;
+            font-weight: 500;
+            margin-bottom: 12px;
+            color: #8b949e;
+        }
+        .chart-wrap { position: relative; height: 260px; }
+        .stats-row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .stat-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 14px 18px;
+            flex: 1;
+            min-width: 140px;
+        }
+        .stat-card .label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+        .stat-card .value { font-size: 1.5rem; font-weight: 600; margin-top: 4px; }
+        .stage-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+        .stage-deep { background: #1a3a5c; color: #58a6ff; }
+        .stage-core { background: #1a3a2c; color: #3fb950; }
+        .stage-rem { background: #3d1f5c; color: #bc8cff; }
+        .stage-awake { background: #5c3a1a; color: #f0883e; }
+        .stage-in_bed { background: #2a2a3a; color: #8b949e; }
+        .stage-unknown { background: #21262d; color: #484f58; }
+        .token-overlay {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.85);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 100;
+        }
+        .token-box {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 32px;
+            max-width: 480px;
+            width: 90%;
+        }
+        .token-box h2 { font-size: 1.1rem; margin-bottom: 12px; }
+        .token-box p { font-size: 0.85rem; color: #8b949e; margin-bottom: 16px; }
+        .token-box input {
+            width: 100%;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            color: #e6edf3;
+            padding: 10px 12px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-family: monospace;
+        }
+        .token-box button {
+            margin-top: 12px;
+            padding: 8px 24px;
+            background: #1f6feb;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        .token-box button:hover { background: #388bfd; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Overnight Temperature Tracker</h1>
+        <div class="status">
+            <div class="dot" id="statusDot"></div>
+            <span id="statusText">Connecting...</span>
+        </div>
+    </header>
+
+    <div class="controls">
+        <button class="zone-btn active" data-zone="left" onclick="setZone('left')">Left Side</button>
+        <button class="zone-btn" data-zone="right" onclick="setZone('right')">Right Side</button>
+        <span style="width:1px;height:24px;background:#30363d;margin:0 4px"></span>
+        <button class="zone-btn" id="connectBtn" onclick="showTokenPrompt()" style="background:#1f6feb;color:#fff;border-color:#1f6feb">Connect to HA</button>
+        <span style="width:1px;height:24px;background:#30363d;margin:0 4px"></span>
+        <button class="zone-btn active" id="viewLive" onclick="setView('live')">Live / History</button>
+        <button class="zone-btn" id="viewModel" onclick="setView('model')">Model</button>
+        <span style="width:1px;height:24px;background:#30363d;margin:0 4px"></span>
+        <label>Night:</label>
+        <button class="zone-btn" id="prevDay" onclick="shiftDay(-1)">&larr;</button>
+        <span id="dayLabel" style="color:#e6edf3;min-width:110px;text-align:center">Tonight</span>
+        <button class="zone-btn" id="nextDay" onclick="shiftDay(1)">&rarr;</button>
+    </div>
+
+    <main>
+        <div class="stats-row">
+            <div class="stat-card">
+                <div class="label">Sleep Stage</div>
+                <div class="value" id="currentStage"><span class="stage-badge stage-unknown">--</span></div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Body Temp</div>
+                <div class="value" id="currentBodyTemp">--°F</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Target Temp</div>
+                <div class="value" id="currentTarget">--°F</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Setpoint</div>
+                <div class="value" id="currentSetting">--</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Heart Rate</div>
+                <div class="value" id="currentHR">-- bpm</div>
+            </div>
+        </div>
+
+        <div class="stats-row" id="controllerRow" style="margin-top:8px;font-size:0.8rem">
+            <div class="stat-card" style="flex:2">
+                <div class="label">Controller</div>
+                <div class="value" id="controllerStatus" style="font-size:0.9rem">--</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">SleepSync</div>
+                <div class="value" id="sleepSyncStatus" style="font-size:0.9rem">--</div>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2>Body Temperature vs Target</h2>
+            <div class="chart-wrap"><canvas id="tempChart"></canvas></div>
+        </div>
+
+        <div class="chart-container">
+            <h2>Temperature Setting (-10 to +10)</h2>
+            <div class="chart-wrap"><canvas id="settingChart"></canvas></div>
+        </div>
+
+        <div class="chart-container">
+            <h2>Heart Rate &amp; HRV</h2>
+            <div class="chart-wrap"><canvas id="hrChart"></canvas></div>
+        </div>
+
+        <!-- Model view (hidden by default) -->
+        <div id="modelView" style="display:none">
+            <div class="chart-container">
+                <h2>Controller Target Temperature by Sleep Stage</h2>
+                <p style="font-size:0.85rem;color:#8b949e;margin-bottom:12px">Body temp targets learned from 5 nights of correlation analysis. The controller v2 adjusts the topper setting (-10 to +10) to reach these, and continuously adapts from manual overrides.</p>
+                <div class="chart-wrap" style="height:300px"><canvas id="modelTargetChart"></canvas></div>
+            </div>
+            <div class="chart-container">
+                <h2>Last Night — Actual Body Temperature</h2>
+                <p id="lastNightDesc" style="font-size:0.85rem;color:#8b949e;margin-bottom:12px">Real body sensor data from your most recent overnight run. Connect to HA for live data.</p>
+                <div class="chart-wrap" style="height:350px"><canvas id="modelNightChart"></canvas></div>
+            </div>
+            <div class="chart-container" id="lastNightStats" style="display:none">
+                <h2>Last Night Summary</h2>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-top:12px" id="nightStatsGrid"></div>
+            </div>
+        </div>
+    </main>
+
+    <div class="token-overlay" id="tokenOverlay" style="display:none">
+        <div class="token-box">
+            <h2>Home Assistant Token</h2>
+            <p>Enter your Long-Lived Access Token to connect.<br>It will be saved in your browser's localStorage.</p>
+            <input type="password" id="tokenInput" placeholder="eyJhbGciOiJI..." autocomplete="off">
+            <button onclick="submitToken()">Connect</button>
+        </div>
+    </div>
+    <script src="overnight.js"></script>
+</body>
+</html>

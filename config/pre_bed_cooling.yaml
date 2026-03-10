@@ -1,0 +1,32 @@
+# Pre-Bed Cooling Automation
+# Starts aggressive cooling 20 minutes before bedtime so the bed is
+# already cold when you get in. Uses input_datetime.bedtime_target.
+- id: pre_bed_cooling
+  alias: Pre-Bed Cooling
+  description: Cool the bed 20 min before bedtime target
+  triggers:
+  - trigger: template
+    value_template: >
+      {{ now().strftime('%H:%M') == (today_at(states('input_datetime.bedtime_target')) - timedelta(minutes=20)).strftime('%H:%M') }}
+  conditions:
+  # Only fire if the topper schedule is enabled
+  - condition: state
+    entity_id: switch.smart_topper_left_side_schedule
+    state: "on"
+  # Only fire if the topper isn't already running
+  - condition: numeric_state
+    entity_id: sensor.smart_topper_left_side_run_progress
+    below: 1
+  actions:
+  # Set bedtime temp to max cooling (-10)
+  - action: number.set_value
+    target:
+      entity_id: number.smart_topper_left_side_bedtime_temperature
+    data:
+      value: -10
+  - action: logbook.log
+    data:
+      name: Pre-Bed Cooling
+      message: >
+        Started pre-bed cooling at -10 (bedtime in ~20 min)
+  mode: single
