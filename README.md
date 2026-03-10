@@ -1,6 +1,73 @@
-# Perfectly Snug Smart Topper — Local Web App Project
+# Perfectly Snug Smart Topper — Sleep Temperature Controller
 
-## Project Goal
+## Current System (Mar 2026)
+
+### Architecture
+```
+Apple Watch (SleepSync) → HA Webhook → input_text/input_number entities
+                                            ↓
+PerfectlySnug Topper ← AppDaemon Controller v2 → reads body sensors, ambient, HR/HRV, stage
+     (HA integration)        ↓
+                        Writes to number.smart_topper_left_side_{bedtime,sleep,wake}_temperature
+```
+
+### Components
+| Component | Location | Description |
+|---|---|---|
+| Controller v2 | `appdaemon/sleep_controller_v2.py` | Data-driven PID controller, deployed to AppDaemon on HA Green |
+| SleepSync | `../SleepSync/` (separate repo) | watchOS app, sends HR/HRV/sleep stage to HA via webhook |
+| Webapp | `webapp/overnight.html` + `overnight.js` | Overnight temperature tracking dashboard, Chart.js |
+| Correlator | `tools/correlate.py` | Historical data analysis pipeline |
+| Data audit | `/tmp/audit_data.py` | Entity verification script |
+
+### Controller v2 Features
+- **PID control** in -10 to +10 setting space (NOT °F targets)
+- **Bounded offsets** from user baseline (-8/-6/-5), max ±3
+- **15-min loop** with 1.5°F deadband (prevents oscillation)
+- **Occupancy detection**: body temp < 78°F = empty bed, skip control
+- **Sleep onset detection**: hold bedtime temp for 15 min after first sleep stage
+- **Awake freeze**: don't adjust during brief awakenings
+- **Ambient compensation**: adjusts for room temp deviation from 74°F reference
+- **Time-of-night drift**: targets shift +0.3°F/hr for natural body temp rise
+- **Prior-night deficit**: extra cooling if deep < 15%, extra warming if REM < 20%
+- **Wake-up ramp**: gradual warming 25 min before wake phase
+- **Kill switch**: 3 rapid button presses disables controller for the night
+- **Anomaly watchdog**: detects oscillation/extremes, auto-resets to baseline, creates GitHub issue
+- **Continuous learning**: slowly drifts targets toward equilibrium body temp
+- **Adaptive transfer function**: refines °F-per-setting-point from data
+- **Hard clamp**: setting NEVER goes above 0 (cooling only)
+
+### Key Constants
+| Parameter | Value | Source |
+|---|---|---|
+| USER_BASELINE | bedtime=-8, sleep=-6, wake=-5 | Manual preference (Mar 9-10) |
+| DEGREES_PER_SETTING_POINT | 0.45 | Correlation analysis (5 nights) |
+| DEADBAND_F | 1.5 | Tuned after oscillation bug |
+| LOOP_INTERVAL_SEC | 900 (15 min) | Tuned after oscillation bug |
+| AMBIENT_REFERENCE_F | 74.0 | Historical average |
+| OCCUPANCY_THRESHOLD_F | 78.0 | Below this = nobody in bed |
+
+### Known Issues
+- **SleepSync data sparse**: watchOS background execution unreliable. Dispatch polling works but only when app is running. Need iPhone companion app for Shortcuts-triggered auto-start.
+- **PID oscillated on first night**: fixed with deadband + longer loop + halved gains
+- **GitHub token path**: AppDaemon Docker container sees `/config/apps/`, host sees `/addon_configs/.../apps/`. Code tries both.
+- **Pre-bed cooling automation**: DISABLED. Controller handles presets directly.
+
+### Deploy Commands
+```bash
+# Controller to AppDaemon (auto-reloads):
+scp appdaemon/sleep_controller_v2.py root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
+
+# SleepSync to watch:
+cd ../SleepSync && xcodegen generate && xcodebuild ... && xcrun devicectl device install app --device 00008310-00096A392187A01E build/Build/Products/Release-watchos/SleepSync.app
+
+# HA core restart (for config.yaml changes):
+ssh root@192.168.0.106 'ha core check && ha core restart'
+```
+
+---
+
+## Original Project Goal
 Build a secure, local-only web app to control the Perfectly Snug Smart Topper
 with better UX and expose hidden data (body temperature readings, tunable
 Responsive Cooling parameters).
