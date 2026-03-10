@@ -75,7 +75,7 @@ TREND_PENALTY_WEIGHT = 0.2
 # The controller applies bounded offsets around these,
 # never wholesale overrides (Eight Sleep approach).
 USER_BASELINE = {
-    "bedtime": -10,
+    "bedtime": -8,
     "sleep":   -6,
     "wake":    -5,
 }
