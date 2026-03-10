@@ -1,0 +1,6434 @@
+{
+  "2026-03-09": {
+    "duration_hours": 13.083333333333334,
+    "data_points": 157,
+    "adjustments": 8,
+    "controller_range": [
+      -10,
+      -3
+    ],
+    "actual_range": [
+      -9,
+      -5
+    ],
+    "body_temp_range": [
+      74.7,
+      87.8
+    ],
+    "body_temp_avg": 82.2,
+    "adjustment_log": [
+      {
+        "min": 35,
+        "time": "2026-03-10T03:35:00Z",
+        "body_f": 77.5,
+        "target_f": 76.0,
+        "old": -9,
+        "new": -10,
+        "pid": -0.85,
+        "actual": -7
+      },
+      {
+        "min": 715,
+        "time": "2026-03-10T14:55:00Z",
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "old": -10,
+        "new": -9,
+        "pid": 0.55,
+        "actual": -7
+      },
+      {
+        "min": 720,
+        "time": "2026-03-10T15:00:00Z",
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "old": -9,
+        "new": -8,
+        "pid": 0.66,
+        "actual": -7
+      },
+      {
+        "min": 725,
+        "time": "2026-03-10T15:05:00Z",
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "old": -8,
+        "new": -7,
+        "pid": 0.76,
+        "actual": -7
+      },
+      {
+        "min": 730,
+        "time": "2026-03-10T15:10:00Z",
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "old": -7,
+        "new": -6,
+        "pid": 0.87,
+        "actual": -7
+      },
+      {
+        "min": 735,
+        "time": "2026-03-10T15:15:00Z",
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "old": -6,
+        "new": -5,
+        "pid": 0.97,
+        "actual": -7
+      },
+      {
+        "min": 740,
+        "time": "2026-03-10T15:20:00Z",
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "old": -5,
+        "new": -4,
+        "pid": 1.08,
+        "actual": -7
+      },
+      {
+        "min": 745,
+        "time": "2026-03-10T15:25:00Z",
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "old": -4,
+        "new": -3,
+        "pid": 1.19,
+        "actual": -7
+      }
+    ],
+    "all_points": [
+      {
+        "min": 0,
+        "body_f": 74.7,
+        "target_f": 76.0,
+        "controller_setting": -9,
+        "actual_setting": null,
+        "pid": 0.0
+      },
+      {
+        "min": 5,
+        "body_f": 75.1,
+        "target_f": 76.0,
+        "controller_setting": -9,
+        "actual_setting": null,
+        "pid": 0.4
+      },
+      {
+        "min": 10,
+        "body_f": 75.5,
+        "target_f": 76.0,
+        "controller_setting": -9,
+        "actual_setting": -9,
+        "pid": 0.26
+      },
+      {
+        "min": 15,
+        "body_f": 76.0,
+        "target_f": 76.0,
+        "controller_setting": -9,
+        "actual_setting": -8,
+        "pid": -0.02
+      },
+      {
+        "min": 20,
+        "body_f": 76.3,
+        "target_f": 76.0,
+        "controller_setting": -9,
+        "actual_setting": -8,
+        "pid": -0.14
+      },
+      {
+        "min": 25,
+        "body_f": 76.7,
+        "target_f": 76.0,
+        "controller_setting": -9,
+        "actual_setting": -7,
+        "pid": -0.36
+      },
+      {
+        "min": 30,
+        "body_f": 76.9,
+        "target_f": 76.0,
+        "controller_setting": -9,
+        "actual_setting": -7,
+        "pid": -0.47
+      },
+      {
+        "min": 35,
+        "body_f": 77.5,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -0.85
+      },
+      {
+        "min": 40,
+        "body_f": 78.0,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -1.14
+      },
+      {
+        "min": 45,
+        "body_f": 78.3,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -1.28
+      },
+      {
+        "min": 50,
+        "body_f": 78.8,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -1.64
+      },
+      {
+        "min": 55,
+        "body_f": 81.4,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 60,
+        "body_f": 83.9,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 65,
+        "body_f": 85.2,
+        "target_f": 76.1,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 70,
+        "body_f": 84.7,
+        "target_f": 76.2,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 75,
+        "body_f": 84.4,
+        "target_f": 76.2,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 80,
+        "body_f": 83.8,
+        "target_f": 76.3,
+        "controller_setting": -10,
+        "actual_setting": -9,
+        "pid": -2
+      },
+      {
+        "min": 85,
+        "body_f": 83.3,
+        "target_f": 76.4,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 90,
+        "body_f": 85.0,
+        "target_f": 76.5,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 95,
+        "body_f": 85.6,
+        "target_f": 76.6,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 100,
+        "body_f": 85.5,
+        "target_f": 76.7,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 105,
+        "body_f": 84.6,
+        "target_f": 76.8,
+        "controller_setting": -10,
+        "actual_setting": -9,
+        "pid": -2
+      },
+      {
+        "min": 110,
+        "body_f": 83.4,
+        "target_f": 76.8,
+        "controller_setting": -10,
+        "actual_setting": -9,
+        "pid": -2
+      },
+      {
+        "min": 115,
+        "body_f": 83.6,
+        "target_f": 76.9,
+        "controller_setting": -10,
+        "actual_setting": -9,
+        "pid": -2
+      },
+      {
+        "min": 120,
+        "body_f": 84.7,
+        "target_f": 77.0,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 125,
+        "body_f": 85.7,
+        "target_f": 77.1,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 130,
+        "body_f": 85.7,
+        "target_f": 77.2,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 135,
+        "body_f": 85.6,
+        "target_f": 77.2,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 140,
+        "body_f": 85.0,
+        "target_f": 77.3,
+        "controller_setting": -10,
+        "actual_setting": -9,
+        "pid": -2
+      },
+      {
+        "min": 145,
+        "body_f": 84.3,
+        "target_f": 77.4,
+        "controller_setting": -10,
+        "actual_setting": -9,
+        "pid": -2
+      },
+      {
+        "min": 150,
+        "body_f": 84.7,
+        "target_f": 77.5,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 155,
+        "body_f": 85.3,
+        "target_f": 77.6,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 160,
+        "body_f": 85.7,
+        "target_f": 77.7,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 165,
+        "body_f": 85.8,
+        "target_f": 77.8,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 170,
+        "body_f": 84.6,
+        "target_f": 77.8,
+        "controller_setting": -10,
+        "actual_setting": -9,
+        "pid": -2
+      },
+      {
+        "min": 175,
+        "body_f": 84.4,
+        "target_f": 77.9,
+        "controller_setting": -10,
+        "actual_setting": -9,
+        "pid": -2
+      },
+      {
+        "min": 180,
+        "body_f": 84.8,
+        "target_f": 78.0,
+        "controller_setting": -10,
+        "actual_setting": -9,
+        "pid": -2
+      },
+      {
+        "min": 185,
+        "body_f": 85.2,
+        "target_f": 78.1,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 190,
+        "body_f": 85.7,
+        "target_f": 78.2,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 195,
+        "body_f": 86.4,
+        "target_f": 78.2,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 200,
+        "body_f": 86.8,
+        "target_f": 78.3,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 205,
+        "body_f": 86.5,
+        "target_f": 78.4,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 210,
+        "body_f": 85.9,
+        "target_f": 78.5,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 215,
+        "body_f": 85.5,
+        "target_f": 78.6,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 220,
+        "body_f": 85.8,
+        "target_f": 78.7,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 225,
+        "body_f": 86.6,
+        "target_f": 78.8,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 230,
+        "body_f": 87.1,
+        "target_f": 78.8,
+        "controller_setting": -10,
+        "actual_setting": -5,
+        "pid": -2
+      },
+      {
+        "min": 235,
+        "body_f": 87.4,
+        "target_f": 78.9,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 240,
+        "body_f": 85.8,
+        "target_f": 79.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 245,
+        "body_f": 84.1,
+        "target_f": 79.1,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 250,
+        "body_f": 83.5,
+        "target_f": 79.2,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 255,
+        "body_f": 85.1,
+        "target_f": 79.2,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 260,
+        "body_f": 86.3,
+        "target_f": 79.3,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 265,
+        "body_f": 87.3,
+        "target_f": 79.4,
+        "controller_setting": -10,
+        "actual_setting": -5,
+        "pid": -2
+      },
+      {
+        "min": 270,
+        "body_f": 87.2,
+        "target_f": 79.5,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 275,
+        "body_f": 86.6,
+        "target_f": 79.6,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 280,
+        "body_f": 86.1,
+        "target_f": 79.7,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 285,
+        "body_f": 85.7,
+        "target_f": 79.8,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 290,
+        "body_f": 86.4,
+        "target_f": 79.8,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 295,
+        "body_f": 86.2,
+        "target_f": 79.9,
+        "controller_setting": -10,
+        "actual_setting": -5,
+        "pid": -2
+      },
+      {
+        "min": 300,
+        "body_f": 87.0,
+        "target_f": 80.0,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 305,
+        "body_f": 86.3,
+        "target_f": 80.1,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 310,
+        "body_f": 85.8,
+        "target_f": 80.2,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 315,
+        "body_f": 85.1,
+        "target_f": 80.2,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 320,
+        "body_f": 84.8,
+        "target_f": 80.3,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 325,
+        "body_f": 85.2,
+        "target_f": 80.4,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 330,
+        "body_f": 86.5,
+        "target_f": 80.5,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 335,
+        "body_f": 87.2,
+        "target_f": 80.6,
+        "controller_setting": -10,
+        "actual_setting": -5,
+        "pid": -2
+      },
+      {
+        "min": 340,
+        "body_f": 87.5,
+        "target_f": 80.7,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 345,
+        "body_f": 86.3,
+        "target_f": 80.8,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 350,
+        "body_f": 86.3,
+        "target_f": 80.8,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 355,
+        "body_f": 86.5,
+        "target_f": 80.9,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 360,
+        "body_f": 86.6,
+        "target_f": 81.0,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 365,
+        "body_f": 87.3,
+        "target_f": 81.1,
+        "controller_setting": -10,
+        "actual_setting": -5,
+        "pid": -2
+      },
+      {
+        "min": 370,
+        "body_f": 87.8,
+        "target_f": 81.2,
+        "controller_setting": -10,
+        "actual_setting": -5,
+        "pid": -2
+      },
+      {
+        "min": 375,
+        "body_f": 87.2,
+        "target_f": 81.2,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 380,
+        "body_f": 86.3,
+        "target_f": 81.3,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 385,
+        "body_f": 85.6,
+        "target_f": 81.4,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 390,
+        "body_f": 85.5,
+        "target_f": 81.5,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 395,
+        "body_f": 85.1,
+        "target_f": 81.6,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 400,
+        "body_f": 85.2,
+        "target_f": 81.7,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 405,
+        "body_f": 84.7,
+        "target_f": 81.8,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 410,
+        "body_f": 84.3,
+        "target_f": 81.8,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 415,
+        "body_f": 83.9,
+        "target_f": 81.9,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 420,
+        "body_f": 84.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 425,
+        "body_f": 84.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 430,
+        "body_f": 85.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 435,
+        "body_f": 86.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 440,
+        "body_f": 84.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 445,
+        "body_f": 83.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 450,
+        "body_f": 82.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -9,
+        "pid": -2
+      },
+      {
+        "min": 455,
+        "body_f": 82.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 460,
+        "body_f": 85.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 465,
+        "body_f": 85.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 470,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 475,
+        "body_f": 84.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 480,
+        "body_f": 82.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 485,
+        "body_f": 82.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 490,
+        "body_f": 83.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 495,
+        "body_f": 85.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -5,
+        "pid": -2
+      },
+      {
+        "min": 500,
+        "body_f": 85.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 505,
+        "body_f": 84.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 510,
+        "body_f": 84.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 515,
+        "body_f": 83.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 520,
+        "body_f": 82.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 525,
+        "body_f": 82.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 530,
+        "body_f": 81.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 535,
+        "body_f": 81.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 540,
+        "body_f": 81.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 545,
+        "body_f": 80.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 550,
+        "body_f": 80.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 555,
+        "body_f": 80.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 560,
+        "body_f": 79.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 565,
+        "body_f": 79.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 570,
+        "body_f": 79.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 575,
+        "body_f": 79.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 580,
+        "body_f": 79.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 585,
+        "body_f": 78.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 590,
+        "body_f": 78.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 595,
+        "body_f": 78.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 600,
+        "body_f": 78.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 605,
+        "body_f": 78.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 610,
+        "body_f": 78.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 615,
+        "body_f": 77.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -2
+      },
+      {
+        "min": 620,
+        "body_f": 77.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -1.9
+      },
+      {
+        "min": 625,
+        "body_f": 77.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -1.8
+      },
+      {
+        "min": 630,
+        "body_f": 77.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -1.62
+      },
+      {
+        "min": 635,
+        "body_f": 77.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -1.42
+      },
+      {
+        "min": 640,
+        "body_f": 77.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -1.27
+      },
+      {
+        "min": 645,
+        "body_f": 77.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -1.06
+      },
+      {
+        "min": 650,
+        "body_f": 76.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -0.91
+      },
+      {
+        "min": 655,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -0.71
+      },
+      {
+        "min": 660,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -0.62
+      },
+      {
+        "min": 665,
+        "body_f": 76.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -0.46
+      },
+      {
+        "min": 670,
+        "body_f": 76.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -0.43
+      },
+      {
+        "min": 675,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -0.27
+      },
+      {
+        "min": 680,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -0.16
+      },
+      {
+        "min": 685,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": -0.05
+      },
+      {
+        "min": 690,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": 0.02
+      },
+      {
+        "min": 695,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": 0.13
+      },
+      {
+        "min": 700,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": 0.24
+      },
+      {
+        "min": 705,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": 0.34
+      },
+      {
+        "min": 710,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -7,
+        "pid": 0.45
+      },
+      {
+        "min": 715,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -9,
+        "actual_setting": -7,
+        "pid": 0.55
+      },
+      {
+        "min": 720,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -8,
+        "actual_setting": -7,
+        "pid": 0.66
+      },
+      {
+        "min": 725,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -7,
+        "actual_setting": -7,
+        "pid": 0.76
+      },
+      {
+        "min": 730,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -6,
+        "actual_setting": -7,
+        "pid": 0.87
+      },
+      {
+        "min": 735,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -5,
+        "actual_setting": -7,
+        "pid": 0.97
+      },
+      {
+        "min": 740,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -4,
+        "actual_setting": -7,
+        "pid": 1.08
+      },
+      {
+        "min": 745,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": -7,
+        "pid": 1.19
+      },
+      {
+        "min": 750,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": -7,
+        "pid": 1.29
+      },
+      {
+        "min": 755,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": -7,
+        "pid": 1.4
+      },
+      {
+        "min": 760,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": -7,
+        "pid": 1.5
+      },
+      {
+        "min": 765,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": -7,
+        "pid": 1.61
+      },
+      {
+        "min": 770,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": -7,
+        "pid": 1.71
+      },
+      {
+        "min": 775,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": -7,
+        "pid": 1.82
+      },
+      {
+        "min": 780,
+        "body_f": 76.7,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": -7,
+        "pid": 1.92
+      }
+    ]
+  },
+  "2026-03-08": {
+    "duration_hours": 13.25,
+    "data_points": 159,
+    "adjustments": 8,
+    "controller_range": [
+      -10,
+      -3
+    ],
+    "actual_range": null,
+    "body_temp_range": [
+      75.4,
+      92.0
+    ],
+    "body_temp_avg": 83.5,
+    "adjustment_log": [
+      {
+        "min": 5,
+        "time": "2026-03-09T02:55:00Z",
+        "body_f": 81.9,
+        "target_f": 76.0,
+        "old": -9,
+        "new": -10,
+        "pid": -2,
+        "actual": null
+      },
+      {
+        "min": 750,
+        "time": "2026-03-09T15:20:00Z",
+        "body_f": 75.5,
+        "target_f": 82.0,
+        "old": -10,
+        "new": -9,
+        "pid": 0.62,
+        "actual": null
+      },
+      {
+        "min": 755,
+        "time": "2026-03-09T15:25:00Z",
+        "body_f": 75.6,
+        "target_f": 82.0,
+        "old": -9,
+        "new": -8,
+        "pid": 0.68,
+        "actual": null
+      },
+      {
+        "min": 760,
+        "time": "2026-03-09T15:30:00Z",
+        "body_f": 75.6,
+        "target_f": 82.0,
+        "old": -8,
+        "new": -7,
+        "pid": 0.85,
+        "actual": null
+      },
+      {
+        "min": 765,
+        "time": "2026-03-09T15:35:00Z",
+        "body_f": 75.5,
+        "target_f": 82.0,
+        "old": -7,
+        "new": -6,
+        "pid": 0.99,
+        "actual": null
+      },
+      {
+        "min": 770,
+        "time": "2026-03-09T15:40:00Z",
+        "body_f": 75.7,
+        "target_f": 82.0,
+        "old": -6,
+        "new": -5,
+        "pid": 1.03,
+        "actual": null
+      },
+      {
+        "min": 775,
+        "time": "2026-03-09T15:45:00Z",
+        "body_f": 75.6,
+        "target_f": 82.0,
+        "old": -5,
+        "new": -4,
+        "pid": 1.2,
+        "actual": null
+      },
+      {
+        "min": 780,
+        "time": "2026-03-09T15:50:00Z",
+        "body_f": 75.7,
+        "target_f": 82.0,
+        "old": -4,
+        "new": -3,
+        "pid": 1.29,
+        "actual": null
+      }
+    ],
+    "all_points": [
+      {
+        "min": 0,
+        "body_f": 80.9,
+        "target_f": 76.0,
+        "controller_setting": -9,
+        "actual_setting": null,
+        "pid": 0.0
+      },
+      {
+        "min": 5,
+        "body_f": 81.9,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 10,
+        "body_f": 81.1,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 15,
+        "body_f": 80.7,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 20,
+        "body_f": 81.0,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 25,
+        "body_f": 81.5,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 30,
+        "body_f": 82.7,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 35,
+        "body_f": 83.6,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 40,
+        "body_f": 84.1,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 45,
+        "body_f": 84.1,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 50,
+        "body_f": 84.4,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 55,
+        "body_f": 84.4,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 60,
+        "body_f": 85.4,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 65,
+        "body_f": 87.0,
+        "target_f": 76.1,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 70,
+        "body_f": 86.8,
+        "target_f": 76.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 75,
+        "body_f": 86.8,
+        "target_f": 76.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 80,
+        "body_f": 86.6,
+        "target_f": 76.3,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 85,
+        "body_f": 86.4,
+        "target_f": 76.4,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 90,
+        "body_f": 86.2,
+        "target_f": 76.5,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 95,
+        "body_f": 86.1,
+        "target_f": 76.6,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 100,
+        "body_f": 86.1,
+        "target_f": 76.7,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 105,
+        "body_f": 85.7,
+        "target_f": 76.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 110,
+        "body_f": 85.1,
+        "target_f": 76.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 115,
+        "body_f": 84.9,
+        "target_f": 76.9,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 120,
+        "body_f": 84.8,
+        "target_f": 77.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 125,
+        "body_f": 85.0,
+        "target_f": 77.1,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 130,
+        "body_f": 85.1,
+        "target_f": 77.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 135,
+        "body_f": 85.5,
+        "target_f": 77.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 140,
+        "body_f": 85.9,
+        "target_f": 77.3,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 145,
+        "body_f": 86.2,
+        "target_f": 77.4,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 150,
+        "body_f": 86.1,
+        "target_f": 77.5,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 155,
+        "body_f": 86.1,
+        "target_f": 77.6,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 160,
+        "body_f": 86.1,
+        "target_f": 77.7,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 165,
+        "body_f": 86.2,
+        "target_f": 77.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 170,
+        "body_f": 86.1,
+        "target_f": 77.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 175,
+        "body_f": 86.1,
+        "target_f": 77.9,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 180,
+        "body_f": 86.1,
+        "target_f": 78.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 185,
+        "body_f": 86.1,
+        "target_f": 78.1,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 190,
+        "body_f": 86.3,
+        "target_f": 78.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 195,
+        "body_f": 86.4,
+        "target_f": 78.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 200,
+        "body_f": 85.8,
+        "target_f": 78.3,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 205,
+        "body_f": 86.4,
+        "target_f": 78.4,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 210,
+        "body_f": 86.0,
+        "target_f": 78.5,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 215,
+        "body_f": 85.9,
+        "target_f": 78.6,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 220,
+        "body_f": 87.2,
+        "target_f": 78.7,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 225,
+        "body_f": 86.8,
+        "target_f": 78.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 230,
+        "body_f": 86.6,
+        "target_f": 78.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 235,
+        "body_f": 85.7,
+        "target_f": 78.9,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 240,
+        "body_f": 85.6,
+        "target_f": 79.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 245,
+        "body_f": 85.9,
+        "target_f": 79.1,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 250,
+        "body_f": 86.4,
+        "target_f": 79.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 255,
+        "body_f": 86.0,
+        "target_f": 79.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 260,
+        "body_f": 85.9,
+        "target_f": 79.3,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 265,
+        "body_f": 86.2,
+        "target_f": 79.4,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 270,
+        "body_f": 85.9,
+        "target_f": 79.5,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 275,
+        "body_f": 85.5,
+        "target_f": 79.6,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 280,
+        "body_f": 85.2,
+        "target_f": 79.7,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 285,
+        "body_f": 85.3,
+        "target_f": 79.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 290,
+        "body_f": 85.3,
+        "target_f": 79.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 295,
+        "body_f": 85.7,
+        "target_f": 79.9,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 300,
+        "body_f": 85.8,
+        "target_f": 80.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 305,
+        "body_f": 85.9,
+        "target_f": 80.1,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 310,
+        "body_f": 85.9,
+        "target_f": 80.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 315,
+        "body_f": 85.0,
+        "target_f": 80.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 320,
+        "body_f": 84.5,
+        "target_f": 80.3,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 325,
+        "body_f": 84.1,
+        "target_f": 80.4,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 330,
+        "body_f": 83.8,
+        "target_f": 80.5,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 335,
+        "body_f": 82.7,
+        "target_f": 80.6,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 340,
+        "body_f": 82.1,
+        "target_f": 80.7,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 345,
+        "body_f": 81.9,
+        "target_f": 80.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 350,
+        "body_f": 81.8,
+        "target_f": 80.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 355,
+        "body_f": 81.4,
+        "target_f": 80.9,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 360,
+        "body_f": 81.5,
+        "target_f": 81.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 365,
+        "body_f": 81.5,
+        "target_f": 81.1,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 370,
+        "body_f": 81.3,
+        "target_f": 81.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 375,
+        "body_f": 81.2,
+        "target_f": 81.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 380,
+        "body_f": 82.4,
+        "target_f": 81.3,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 385,
+        "body_f": 81.8,
+        "target_f": 81.4,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 390,
+        "body_f": 81.6,
+        "target_f": 81.5,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 395,
+        "body_f": 81.6,
+        "target_f": 81.6,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 400,
+        "body_f": 83.0,
+        "target_f": 81.7,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 405,
+        "body_f": 84.1,
+        "target_f": 81.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 410,
+        "body_f": 85.1,
+        "target_f": 81.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 415,
+        "body_f": 85.6,
+        "target_f": 81.9,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 420,
+        "body_f": 85.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 425,
+        "body_f": 86.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 430,
+        "body_f": 86.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 435,
+        "body_f": 86.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 440,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 445,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 450,
+        "body_f": 86.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 455,
+        "body_f": 86.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 460,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 465,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 470,
+        "body_f": 86.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 475,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 480,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 485,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 490,
+        "body_f": 86.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 495,
+        "body_f": 85.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 500,
+        "body_f": 85.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 505,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 510,
+        "body_f": 86.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 515,
+        "body_f": 86.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 520,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 525,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 530,
+        "body_f": 86.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 535,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 540,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 545,
+        "body_f": 86.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 550,
+        "body_f": 85.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 555,
+        "body_f": 85.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 560,
+        "body_f": 86.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 565,
+        "body_f": 86.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 570,
+        "body_f": 86.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 575,
+        "body_f": 86.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 580,
+        "body_f": 85.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 585,
+        "body_f": 84.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 590,
+        "body_f": 85.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 595,
+        "body_f": 85.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 600,
+        "body_f": 87.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 605,
+        "body_f": 89.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 610,
+        "body_f": 91.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 615,
+        "body_f": 92.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 620,
+        "body_f": 89.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 625,
+        "body_f": 85.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 630,
+        "body_f": 82.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 635,
+        "body_f": 81.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 640,
+        "body_f": 80.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 645,
+        "body_f": 79.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 650,
+        "body_f": 79.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 655,
+        "body_f": 78.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 660,
+        "body_f": 78.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 665,
+        "body_f": 77.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 670,
+        "body_f": 77.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 675,
+        "body_f": 77.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -1.99
+      },
+      {
+        "min": 680,
+        "body_f": 76.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -1.76
+      },
+      {
+        "min": 685,
+        "body_f": 76.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -1.51
+      },
+      {
+        "min": 690,
+        "body_f": 76.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -1.32
+      },
+      {
+        "min": 695,
+        "body_f": 76.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -1.16
+      },
+      {
+        "min": 700,
+        "body_f": 76.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -0.92
+      },
+      {
+        "min": 705,
+        "body_f": 76.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -0.79
+      },
+      {
+        "min": 710,
+        "body_f": 76.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -0.64
+      },
+      {
+        "min": 715,
+        "body_f": 75.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -0.47
+      },
+      {
+        "min": 720,
+        "body_f": 75.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -0.19
+      },
+      {
+        "min": 725,
+        "body_f": 75.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -0.11
+      },
+      {
+        "min": 730,
+        "body_f": 75.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": 0.11
+      },
+      {
+        "min": 735,
+        "body_f": 75.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": 0.2
+      },
+      {
+        "min": 740,
+        "body_f": 75.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": 0.42
+      },
+      {
+        "min": 745,
+        "body_f": 75.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": 0.47
+      },
+      {
+        "min": 750,
+        "body_f": 75.5,
+        "target_f": 82.0,
+        "controller_setting": -9,
+        "actual_setting": null,
+        "pid": 0.62
+      },
+      {
+        "min": 755,
+        "body_f": 75.6,
+        "target_f": 82.0,
+        "controller_setting": -8,
+        "actual_setting": null,
+        "pid": 0.68
+      },
+      {
+        "min": 760,
+        "body_f": 75.6,
+        "target_f": 82.0,
+        "controller_setting": -7,
+        "actual_setting": null,
+        "pid": 0.85
+      },
+      {
+        "min": 765,
+        "body_f": 75.5,
+        "target_f": 82.0,
+        "controller_setting": -6,
+        "actual_setting": null,
+        "pid": 0.99
+      },
+      {
+        "min": 770,
+        "body_f": 75.7,
+        "target_f": 82.0,
+        "controller_setting": -5,
+        "actual_setting": null,
+        "pid": 1.03
+      },
+      {
+        "min": 775,
+        "body_f": 75.6,
+        "target_f": 82.0,
+        "controller_setting": -4,
+        "actual_setting": null,
+        "pid": 1.2
+      },
+      {
+        "min": 780,
+        "body_f": 75.7,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": null,
+        "pid": 1.29
+      },
+      {
+        "min": 785,
+        "body_f": 75.7,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": null,
+        "pid": 1.4
+      },
+      {
+        "min": 790,
+        "body_f": 75.7,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": null,
+        "pid": 1.53
+      }
+    ]
+  },
+  "2026-03-07": {
+    "duration_hours": 12.083333333333334,
+    "data_points": 145,
+    "adjustments": 1,
+    "controller_range": [
+      -10,
+      -9
+    ],
+    "actual_range": null,
+    "body_temp_range": [
+      77.8,
+      87.5
+    ],
+    "body_temp_avg": 84.9,
+    "adjustment_log": [
+      {
+        "min": 5,
+        "time": "2026-03-08T04:05:00Z",
+        "body_f": 82.6,
+        "target_f": 76.0,
+        "old": -9,
+        "new": -10,
+        "pid": -2,
+        "actual": null
+      }
+    ],
+    "all_points": [
+      {
+        "min": 0,
+        "body_f": 83.3,
+        "target_f": 76.0,
+        "controller_setting": -9,
+        "actual_setting": null,
+        "pid": 0.0
+      },
+      {
+        "min": 5,
+        "body_f": 82.6,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 10,
+        "body_f": 82.2,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 15,
+        "body_f": 81.9,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 20,
+        "body_f": 81.6,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 25,
+        "body_f": 82.0,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 30,
+        "body_f": 82.6,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 35,
+        "body_f": 82.4,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 40,
+        "body_f": 82.2,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 45,
+        "body_f": 82.0,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 50,
+        "body_f": 82.1,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 55,
+        "body_f": 82.0,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 60,
+        "body_f": 82.9,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 65,
+        "body_f": 85.6,
+        "target_f": 76.1,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 70,
+        "body_f": 85.5,
+        "target_f": 76.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 75,
+        "body_f": 85.6,
+        "target_f": 76.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 80,
+        "body_f": 85.8,
+        "target_f": 76.3,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 85,
+        "body_f": 86.5,
+        "target_f": 76.4,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 90,
+        "body_f": 86.6,
+        "target_f": 76.5,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 95,
+        "body_f": 86.5,
+        "target_f": 76.6,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 100,
+        "body_f": 86.5,
+        "target_f": 76.7,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 105,
+        "body_f": 86.4,
+        "target_f": 76.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 110,
+        "body_f": 86.4,
+        "target_f": 76.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 115,
+        "body_f": 86.4,
+        "target_f": 76.9,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 120,
+        "body_f": 86.0,
+        "target_f": 77.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 125,
+        "body_f": 86.0,
+        "target_f": 77.1,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 130,
+        "body_f": 86.8,
+        "target_f": 77.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 135,
+        "body_f": 86.1,
+        "target_f": 77.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 140,
+        "body_f": 86.7,
+        "target_f": 77.3,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 145,
+        "body_f": 86.7,
+        "target_f": 77.4,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 150,
+        "body_f": 86.5,
+        "target_f": 77.5,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 155,
+        "body_f": 86.4,
+        "target_f": 77.6,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 160,
+        "body_f": 86.3,
+        "target_f": 77.7,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 165,
+        "body_f": 86.3,
+        "target_f": 77.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 170,
+        "body_f": 87.4,
+        "target_f": 77.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 175,
+        "body_f": 87.3,
+        "target_f": 77.9,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 180,
+        "body_f": 86.1,
+        "target_f": 78.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 185,
+        "body_f": 86.6,
+        "target_f": 78.1,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 190,
+        "body_f": 86.9,
+        "target_f": 78.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 195,
+        "body_f": 87.1,
+        "target_f": 78.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 200,
+        "body_f": 86.4,
+        "target_f": 78.3,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 205,
+        "body_f": 86.2,
+        "target_f": 78.4,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 210,
+        "body_f": 86.3,
+        "target_f": 78.5,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 215,
+        "body_f": 86.2,
+        "target_f": 78.6,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 220,
+        "body_f": 87.0,
+        "target_f": 78.7,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 225,
+        "body_f": 86.9,
+        "target_f": 78.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 230,
+        "body_f": 86.1,
+        "target_f": 78.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 235,
+        "body_f": 85.8,
+        "target_f": 78.9,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 240,
+        "body_f": 86.2,
+        "target_f": 79.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 245,
+        "body_f": 86.1,
+        "target_f": 79.1,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 250,
+        "body_f": 85.8,
+        "target_f": 79.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 255,
+        "body_f": 85.7,
+        "target_f": 79.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 260,
+        "body_f": 85.8,
+        "target_f": 79.3,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 265,
+        "body_f": 85.8,
+        "target_f": 79.4,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 270,
+        "body_f": 85.9,
+        "target_f": 79.5,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 275,
+        "body_f": 86.0,
+        "target_f": 79.6,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 280,
+        "body_f": 86.1,
+        "target_f": 79.7,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 285,
+        "body_f": 86.1,
+        "target_f": 79.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 290,
+        "body_f": 86.1,
+        "target_f": 79.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 295,
+        "body_f": 86.1,
+        "target_f": 79.9,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 300,
+        "body_f": 86.4,
+        "target_f": 80.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 305,
+        "body_f": 86.6,
+        "target_f": 80.1,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 310,
+        "body_f": 86.1,
+        "target_f": 80.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 315,
+        "body_f": 85.7,
+        "target_f": 80.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 320,
+        "body_f": 87.1,
+        "target_f": 80.3,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 325,
+        "body_f": 86.9,
+        "target_f": 80.4,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 330,
+        "body_f": 86.7,
+        "target_f": 80.5,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 335,
+        "body_f": 87.4,
+        "target_f": 80.6,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 340,
+        "body_f": 87.4,
+        "target_f": 80.7,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 345,
+        "body_f": 87.5,
+        "target_f": 80.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 350,
+        "body_f": 87.4,
+        "target_f": 80.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 355,
+        "body_f": 87.3,
+        "target_f": 80.9,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 360,
+        "body_f": 87.3,
+        "target_f": 81.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 365,
+        "body_f": 87.4,
+        "target_f": 81.1,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 370,
+        "body_f": 87.4,
+        "target_f": 81.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 375,
+        "body_f": 87.2,
+        "target_f": 81.2,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 380,
+        "body_f": 87.4,
+        "target_f": 81.3,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 385,
+        "body_f": 87.1,
+        "target_f": 81.4,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 390,
+        "body_f": 87.1,
+        "target_f": 81.5,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 395,
+        "body_f": 86.9,
+        "target_f": 81.6,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 400,
+        "body_f": 86.8,
+        "target_f": 81.7,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 405,
+        "body_f": 86.5,
+        "target_f": 81.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 410,
+        "body_f": 86.4,
+        "target_f": 81.8,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 415,
+        "body_f": 86.4,
+        "target_f": 81.9,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 420,
+        "body_f": 86.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 425,
+        "body_f": 86.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 430,
+        "body_f": 86.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 435,
+        "body_f": 86.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 440,
+        "body_f": 86.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 445,
+        "body_f": 86.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 450,
+        "body_f": 86.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 455,
+        "body_f": 86.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 460,
+        "body_f": 86.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 465,
+        "body_f": 86.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 470,
+        "body_f": 86.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 475,
+        "body_f": 86.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 480,
+        "body_f": 86.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 485,
+        "body_f": 87.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 490,
+        "body_f": 87.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 495,
+        "body_f": 86.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 500,
+        "body_f": 87.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 505,
+        "body_f": 87.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 510,
+        "body_f": 87.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 515,
+        "body_f": 87.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 520,
+        "body_f": 87.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 525,
+        "body_f": 87.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 530,
+        "body_f": 87.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 535,
+        "body_f": 86.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 540,
+        "body_f": 86.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 545,
+        "body_f": 87.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 550,
+        "body_f": 86.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 555,
+        "body_f": 86.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 560,
+        "body_f": 86.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 565,
+        "body_f": 86.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 570,
+        "body_f": 86.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 575,
+        "body_f": 86.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 580,
+        "body_f": 86.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 585,
+        "body_f": 86.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 590,
+        "body_f": 86.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 595,
+        "body_f": 84.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 600,
+        "body_f": 82.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 605,
+        "body_f": 81.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 610,
+        "body_f": 81.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 615,
+        "body_f": 80.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 620,
+        "body_f": 80.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 625,
+        "body_f": 79.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 630,
+        "body_f": 79.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 635,
+        "body_f": 79.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 640,
+        "body_f": 79.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 645,
+        "body_f": 79.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 650,
+        "body_f": 79.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 655,
+        "body_f": 78.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 660,
+        "body_f": 78.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 665,
+        "body_f": 78.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 670,
+        "body_f": 78.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 675,
+        "body_f": 78.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 680,
+        "body_f": 78.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 685,
+        "body_f": 78.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 690,
+        "body_f": 78.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 695,
+        "body_f": 78.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -2
+      },
+      {
+        "min": 700,
+        "body_f": 78.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -1.96
+      },
+      {
+        "min": 705,
+        "body_f": 78.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -1.78
+      },
+      {
+        "min": 710,
+        "body_f": 78.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -1.71
+      },
+      {
+        "min": 715,
+        "body_f": 77.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -1.55
+      },
+      {
+        "min": 720,
+        "body_f": 77.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": null,
+        "pid": -1.48
+      }
+    ]
+  },
+  "2026-03-06": {
+    "duration_hours": 12.083333333333334,
+    "data_points": 145,
+    "adjustments": 7,
+    "controller_range": [
+      -10,
+      -3
+    ],
+    "actual_range": [
+      -10,
+      10
+    ],
+    "body_temp_range": [
+      71.4,
+      94.6
+    ],
+    "body_temp_avg": 84.2,
+    "adjustment_log": [
+      {
+        "min": 5,
+        "time": "2026-03-07T04:05:00Z",
+        "body_f": 72.1,
+        "target_f": 76.0,
+        "old": -9,
+        "new": -7,
+        "pid": 2,
+        "actual": -7
+      },
+      {
+        "min": 10,
+        "time": "2026-03-07T04:10:00Z",
+        "body_f": 72.4,
+        "target_f": 76.0,
+        "old": -7,
+        "new": -5,
+        "pid": 1.91,
+        "actual": -5
+      },
+      {
+        "min": 15,
+        "time": "2026-03-07T04:15:00Z",
+        "body_f": 72.4,
+        "target_f": 76.0,
+        "old": -5,
+        "new": -3,
+        "pid": 2,
+        "actual": -3
+      },
+      {
+        "min": 65,
+        "time": "2026-03-07T05:05:00Z",
+        "body_f": 78.0,
+        "target_f": 76.1,
+        "old": -3,
+        "new": -4,
+        "pid": -0.65,
+        "actual": 10
+      },
+      {
+        "min": 70,
+        "time": "2026-03-07T05:10:00Z",
+        "body_f": 81.8,
+        "target_f": 76.2,
+        "old": -4,
+        "new": -6,
+        "pid": -2,
+        "actual": 8
+      },
+      {
+        "min": 75,
+        "time": "2026-03-07T05:15:00Z",
+        "body_f": 84.1,
+        "target_f": 76.2,
+        "old": -6,
+        "new": -8,
+        "pid": -2,
+        "actual": 6
+      },
+      {
+        "min": 80,
+        "time": "2026-03-07T05:20:00Z",
+        "body_f": 85.4,
+        "target_f": 76.3,
+        "old": -8,
+        "new": -10,
+        "pid": -2,
+        "actual": 4
+      }
+    ],
+    "all_points": [
+      {
+        "min": 0,
+        "body_f": 71.9,
+        "target_f": 76.0,
+        "controller_setting": -9,
+        "actual_setting": null,
+        "pid": 0.0
+      },
+      {
+        "min": 5,
+        "body_f": 72.1,
+        "target_f": 76.0,
+        "controller_setting": -7,
+        "actual_setting": -7,
+        "pid": 2
+      },
+      {
+        "min": 10,
+        "body_f": 72.4,
+        "target_f": 76.0,
+        "controller_setting": -5,
+        "actual_setting": -5,
+        "pid": 1.91
+      },
+      {
+        "min": 15,
+        "body_f": 72.4,
+        "target_f": 76.0,
+        "controller_setting": -3,
+        "actual_setting": -3,
+        "pid": 2
+      },
+      {
+        "min": 20,
+        "body_f": 72.5,
+        "target_f": 76.0,
+        "controller_setting": -3,
+        "actual_setting": -1,
+        "pid": 2
+      },
+      {
+        "min": 25,
+        "body_f": 72.3,
+        "target_f": 76.0,
+        "controller_setting": -3,
+        "actual_setting": 1,
+        "pid": 2
+      },
+      {
+        "min": 30,
+        "body_f": 72.0,
+        "target_f": 76.0,
+        "controller_setting": -3,
+        "actual_setting": 3,
+        "pid": 2
+      },
+      {
+        "min": 35,
+        "body_f": 71.8,
+        "target_f": 76.0,
+        "controller_setting": -3,
+        "actual_setting": 5,
+        "pid": 2
+      },
+      {
+        "min": 40,
+        "body_f": 71.7,
+        "target_f": 76.0,
+        "controller_setting": -3,
+        "actual_setting": 7,
+        "pid": 2
+      },
+      {
+        "min": 45,
+        "body_f": 71.4,
+        "target_f": 76.0,
+        "controller_setting": -3,
+        "actual_setting": 9,
+        "pid": 2
+      },
+      {
+        "min": 50,
+        "body_f": 71.5,
+        "target_f": 76.0,
+        "controller_setting": -3,
+        "actual_setting": 10,
+        "pid": 2
+      },
+      {
+        "min": 55,
+        "body_f": 71.4,
+        "target_f": 76.0,
+        "controller_setting": -3,
+        "actual_setting": 10,
+        "pid": 2
+      },
+      {
+        "min": 60,
+        "body_f": 72.0,
+        "target_f": 76.0,
+        "controller_setting": -3,
+        "actual_setting": 10,
+        "pid": 2
+      },
+      {
+        "min": 65,
+        "body_f": 78.0,
+        "target_f": 76.1,
+        "controller_setting": -4,
+        "actual_setting": 10,
+        "pid": -0.65
+      },
+      {
+        "min": 70,
+        "body_f": 81.8,
+        "target_f": 76.2,
+        "controller_setting": -6,
+        "actual_setting": 8,
+        "pid": -2
+      },
+      {
+        "min": 75,
+        "body_f": 84.1,
+        "target_f": 76.2,
+        "controller_setting": -8,
+        "actual_setting": 6,
+        "pid": -2
+      },
+      {
+        "min": 80,
+        "body_f": 85.4,
+        "target_f": 76.3,
+        "controller_setting": -10,
+        "actual_setting": 4,
+        "pid": -2
+      },
+      {
+        "min": 85,
+        "body_f": 86.3,
+        "target_f": 76.4,
+        "controller_setting": -10,
+        "actual_setting": 2,
+        "pid": -2
+      },
+      {
+        "min": 90,
+        "body_f": 86.4,
+        "target_f": 76.5,
+        "controller_setting": -10,
+        "actual_setting": 0,
+        "pid": -2
+      },
+      {
+        "min": 95,
+        "body_f": 86.5,
+        "target_f": 76.6,
+        "controller_setting": -10,
+        "actual_setting": -2,
+        "pid": -2
+      },
+      {
+        "min": 100,
+        "body_f": 85.7,
+        "target_f": 76.7,
+        "controller_setting": -10,
+        "actual_setting": -4,
+        "pid": -2
+      },
+      {
+        "min": 105,
+        "body_f": 86.0,
+        "target_f": 76.8,
+        "controller_setting": -10,
+        "actual_setting": -6,
+        "pid": -2
+      },
+      {
+        "min": 110,
+        "body_f": 85.5,
+        "target_f": 76.8,
+        "controller_setting": -10,
+        "actual_setting": -8,
+        "pid": -2
+      },
+      {
+        "min": 115,
+        "body_f": 85.1,
+        "target_f": 76.9,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 120,
+        "body_f": 85.8,
+        "target_f": 77.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 125,
+        "body_f": 85.7,
+        "target_f": 77.1,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 130,
+        "body_f": 85.5,
+        "target_f": 77.2,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 135,
+        "body_f": 85.5,
+        "target_f": 77.2,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 140,
+        "body_f": 85.3,
+        "target_f": 77.3,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 145,
+        "body_f": 85.3,
+        "target_f": 77.4,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 150,
+        "body_f": 85.2,
+        "target_f": 77.5,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 155,
+        "body_f": 84.9,
+        "target_f": 77.6,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 160,
+        "body_f": 85.0,
+        "target_f": 77.7,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 165,
+        "body_f": 84.9,
+        "target_f": 77.8,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 170,
+        "body_f": 84.2,
+        "target_f": 77.8,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 175,
+        "body_f": 83.7,
+        "target_f": 77.9,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 180,
+        "body_f": 83.0,
+        "target_f": 78.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 185,
+        "body_f": 82.2,
+        "target_f": 78.1,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 190,
+        "body_f": 82.2,
+        "target_f": 78.2,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 195,
+        "body_f": 82.1,
+        "target_f": 78.2,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 200,
+        "body_f": 81.2,
+        "target_f": 78.3,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 205,
+        "body_f": 80.7,
+        "target_f": 78.4,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 210,
+        "body_f": 80.5,
+        "target_f": 78.5,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 215,
+        "body_f": 80.3,
+        "target_f": 78.6,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 220,
+        "body_f": 80.2,
+        "target_f": 78.7,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 225,
+        "body_f": 80.1,
+        "target_f": 78.8,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 230,
+        "body_f": 81.8,
+        "target_f": 78.8,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 235,
+        "body_f": 83.7,
+        "target_f": 78.9,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 240,
+        "body_f": 84.1,
+        "target_f": 79.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 245,
+        "body_f": 83.1,
+        "target_f": 79.1,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 250,
+        "body_f": 83.7,
+        "target_f": 79.2,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 255,
+        "body_f": 84.4,
+        "target_f": 79.2,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 260,
+        "body_f": 84.9,
+        "target_f": 79.3,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 265,
+        "body_f": 84.7,
+        "target_f": 79.4,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 270,
+        "body_f": 84.0,
+        "target_f": 79.5,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 275,
+        "body_f": 83.7,
+        "target_f": 79.6,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 280,
+        "body_f": 83.5,
+        "target_f": 79.7,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 285,
+        "body_f": 84.3,
+        "target_f": 79.8,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 290,
+        "body_f": 84.4,
+        "target_f": 79.8,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 295,
+        "body_f": 84.1,
+        "target_f": 79.9,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 300,
+        "body_f": 84.0,
+        "target_f": 80.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 305,
+        "body_f": 84.0,
+        "target_f": 80.1,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 310,
+        "body_f": 84.0,
+        "target_f": 80.2,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 315,
+        "body_f": 83.7,
+        "target_f": 80.2,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 320,
+        "body_f": 83,
+        "target_f": 80.3,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 325,
+        "body_f": 82.3,
+        "target_f": 80.4,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 330,
+        "body_f": 81.8,
+        "target_f": 80.5,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 335,
+        "body_f": 82.1,
+        "target_f": 80.6,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 340,
+        "body_f": 84.7,
+        "target_f": 80.7,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 345,
+        "body_f": 86.1,
+        "target_f": 80.8,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 350,
+        "body_f": 86.4,
+        "target_f": 80.8,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 355,
+        "body_f": 86.4,
+        "target_f": 80.9,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 360,
+        "body_f": 86.5,
+        "target_f": 81.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 365,
+        "body_f": 86.5,
+        "target_f": 81.1,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 370,
+        "body_f": 86.4,
+        "target_f": 81.2,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 375,
+        "body_f": 86.2,
+        "target_f": 81.2,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 380,
+        "body_f": 86.3,
+        "target_f": 81.3,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 385,
+        "body_f": 86.3,
+        "target_f": 81.4,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 390,
+        "body_f": 86.1,
+        "target_f": 81.5,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 395,
+        "body_f": 85.9,
+        "target_f": 81.6,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 400,
+        "body_f": 86.0,
+        "target_f": 81.7,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 405,
+        "body_f": 85.6,
+        "target_f": 81.8,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 410,
+        "body_f": 85.0,
+        "target_f": 81.8,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 415,
+        "body_f": 84.5,
+        "target_f": 81.9,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 420,
+        "body_f": 84.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 425,
+        "body_f": 84.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 430,
+        "body_f": 83.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 435,
+        "body_f": 83.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 440,
+        "body_f": 83.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 445,
+        "body_f": 83.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 450,
+        "body_f": 83.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 455,
+        "body_f": 83.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 460,
+        "body_f": 83.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 465,
+        "body_f": 83.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 470,
+        "body_f": 82.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 475,
+        "body_f": 81.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 480,
+        "body_f": 83.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 485,
+        "body_f": 85.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 490,
+        "body_f": 85.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 495,
+        "body_f": 85.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 500,
+        "body_f": 86,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 505,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 510,
+        "body_f": 86.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 515,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 520,
+        "body_f": 85.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 525,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 530,
+        "body_f": 86.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 535,
+        "body_f": 86.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 540,
+        "body_f": 85.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 545,
+        "body_f": 85.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 550,
+        "body_f": 86.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 555,
+        "body_f": 86.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 560,
+        "body_f": 86.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 565,
+        "body_f": 86.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 570,
+        "body_f": 85.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 575,
+        "body_f": 86.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 580,
+        "body_f": 85.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 585,
+        "body_f": 85.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 590,
+        "body_f": 86.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 595,
+        "body_f": 86.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 600,
+        "body_f": 86.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 605,
+        "body_f": 87.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 610,
+        "body_f": 87.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 615,
+        "body_f": 87.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 620,
+        "body_f": 87.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 625,
+        "body_f": 87.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 630,
+        "body_f": 87.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 635,
+        "body_f": 88.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 640,
+        "body_f": 89.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 645,
+        "body_f": 90.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 650,
+        "body_f": 91.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 655,
+        "body_f": 91.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 660,
+        "body_f": 92.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 665,
+        "body_f": 93.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 670,
+        "body_f": 94.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 675,
+        "body_f": 94.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 680,
+        "body_f": 94.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 685,
+        "body_f": 93.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 690,
+        "body_f": 91.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 695,
+        "body_f": 89.9,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 700,
+        "body_f": 88.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 705,
+        "body_f": 87.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 710,
+        "body_f": 86.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 715,
+        "body_f": 86.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      },
+      {
+        "min": 720,
+        "body_f": 86.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": -10,
+        "pid": -2
+      }
+    ]
+  },
+  "2026-03-05": {
+    "duration_hours": 12.083333333333334,
+    "data_points": 145,
+    "adjustments": 8,
+    "controller_range": [
+      -10,
+      -3
+    ],
+    "actual_range": [
+      1,
+      1
+    ],
+    "body_temp_range": [
+      72.1,
+      86.5
+    ],
+    "body_temp_avg": 80.6,
+    "adjustment_log": [
+      {
+        "min": 5,
+        "time": "2026-03-06T04:05:00Z",
+        "body_f": 74.1,
+        "target_f": 76.0,
+        "old": -9,
+        "new": -8,
+        "pid": 0.9,
+        "actual": null
+      },
+      {
+        "min": 20,
+        "time": "2026-03-06T04:20:00Z",
+        "body_f": 77.6,
+        "target_f": 76.0,
+        "old": -8,
+        "new": -9,
+        "pid": -0.9,
+        "actual": null
+      },
+      {
+        "min": 25,
+        "time": "2026-03-06T04:25:00Z",
+        "body_f": 78.7,
+        "target_f": 76.0,
+        "old": -9,
+        "new": -10,
+        "pid": -1.53,
+        "actual": 1
+      },
+      {
+        "min": 650,
+        "time": "2026-03-06T14:50:00Z",
+        "body_f": 73.8,
+        "target_f": 82.0,
+        "old": -10,
+        "new": -9,
+        "pid": 0.68,
+        "actual": 1
+      },
+      {
+        "min": 655,
+        "time": "2026-03-06T14:55:00Z",
+        "body_f": 73.6,
+        "target_f": 82.0,
+        "old": -9,
+        "new": -8,
+        "pid": 0.97,
+        "actual": 1
+      },
+      {
+        "min": 660,
+        "time": "2026-03-06T15:00:00Z",
+        "body_f": 73.4,
+        "target_f": 82.0,
+        "old": -8,
+        "new": -7,
+        "pid": 1.24,
+        "actual": 1
+      },
+      {
+        "min": 665,
+        "time": "2026-03-06T15:05:00Z",
+        "body_f": 73.2,
+        "target_f": 82.0,
+        "old": -7,
+        "new": -5,
+        "pid": 1.53,
+        "actual": 1
+      },
+      {
+        "min": 670,
+        "time": "2026-03-06T15:10:00Z",
+        "body_f": 72.9,
+        "target_f": 82.0,
+        "old": -5,
+        "new": -3,
+        "pid": 1.82,
+        "actual": 1
+      }
+    ],
+    "all_points": [
+      {
+        "min": 0,
+        "body_f": 73.3,
+        "target_f": 76.0,
+        "controller_setting": -9,
+        "actual_setting": null,
+        "pid": 0.0
+      },
+      {
+        "min": 5,
+        "body_f": 74.1,
+        "target_f": 76.0,
+        "controller_setting": -8,
+        "actual_setting": null,
+        "pid": 0.9
+      },
+      {
+        "min": 10,
+        "body_f": 75.5,
+        "target_f": 76.0,
+        "controller_setting": -8,
+        "actual_setting": null,
+        "pid": 0.15
+      },
+      {
+        "min": 15,
+        "body_f": 76.2,
+        "target_f": 76.0,
+        "controller_setting": -8,
+        "actual_setting": null,
+        "pid": -0.14
+      },
+      {
+        "min": 20,
+        "body_f": 77.6,
+        "target_f": 76.0,
+        "controller_setting": -9,
+        "actual_setting": null,
+        "pid": -0.9
+      },
+      {
+        "min": 25,
+        "body_f": 78.7,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -1.53
+      },
+      {
+        "min": 30,
+        "body_f": 78.9,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -1.56
+      },
+      {
+        "min": 35,
+        "body_f": 79.6,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 40,
+        "body_f": 80.1,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 45,
+        "body_f": 80.6,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 50,
+        "body_f": 81.2,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 55,
+        "body_f": 81.7,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 60,
+        "body_f": 83.1,
+        "target_f": 76.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 65,
+        "body_f": 83.1,
+        "target_f": 76.1,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 70,
+        "body_f": 82.3,
+        "target_f": 76.2,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 75,
+        "body_f": 82.6,
+        "target_f": 76.2,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 80,
+        "body_f": 82.8,
+        "target_f": 76.3,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 85,
+        "body_f": 82.3,
+        "target_f": 76.4,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 90,
+        "body_f": 81.5,
+        "target_f": 76.5,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 95,
+        "body_f": 81.1,
+        "target_f": 76.6,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 100,
+        "body_f": 80.9,
+        "target_f": 76.7,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 105,
+        "body_f": 80.9,
+        "target_f": 76.8,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 110,
+        "body_f": 80.8,
+        "target_f": 76.8,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 115,
+        "body_f": 80.4,
+        "target_f": 76.9,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 120,
+        "body_f": 80.2,
+        "target_f": 77.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 125,
+        "body_f": 80.0,
+        "target_f": 77.1,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 130,
+        "body_f": 80.1,
+        "target_f": 77.2,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 135,
+        "body_f": 80.0,
+        "target_f": 77.2,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 140,
+        "body_f": 79.9,
+        "target_f": 77.3,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 145,
+        "body_f": 79.1,
+        "target_f": 77.4,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 150,
+        "body_f": 78.5,
+        "target_f": 77.5,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 155,
+        "body_f": 78.4,
+        "target_f": 77.6,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 160,
+        "body_f": 78.8,
+        "target_f": 77.7,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 165,
+        "body_f": 80.5,
+        "target_f": 77.8,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 170,
+        "body_f": 81.0,
+        "target_f": 77.8,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 175,
+        "body_f": 81.2,
+        "target_f": 77.9,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 180,
+        "body_f": 81.3,
+        "target_f": 78.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 185,
+        "body_f": 81.0,
+        "target_f": 78.1,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 190,
+        "body_f": 80.7,
+        "target_f": 78.2,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 195,
+        "body_f": 80.7,
+        "target_f": 78.2,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 200,
+        "body_f": 80.5,
+        "target_f": 78.3,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 205,
+        "body_f": 80.0,
+        "target_f": 78.4,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 210,
+        "body_f": 79.7,
+        "target_f": 78.5,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 215,
+        "body_f": 79.6,
+        "target_f": 78.6,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 220,
+        "body_f": 79.5,
+        "target_f": 78.7,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 225,
+        "body_f": 79.5,
+        "target_f": 78.8,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 230,
+        "body_f": 79.4,
+        "target_f": 78.8,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 235,
+        "body_f": 79.3,
+        "target_f": 78.9,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 240,
+        "body_f": 79.3,
+        "target_f": 79.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 245,
+        "body_f": 79.3,
+        "target_f": 79.1,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 250,
+        "body_f": 79.3,
+        "target_f": 79.2,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 255,
+        "body_f": 79.7,
+        "target_f": 79.2,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 260,
+        "body_f": 79.8,
+        "target_f": 79.3,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 265,
+        "body_f": 79.9,
+        "target_f": 79.4,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 270,
+        "body_f": 80.5,
+        "target_f": 79.5,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 275,
+        "body_f": 80.9,
+        "target_f": 79.6,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 280,
+        "body_f": 81.3,
+        "target_f": 79.7,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 285,
+        "body_f": 81.5,
+        "target_f": 79.8,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 290,
+        "body_f": 81.6,
+        "target_f": 79.8,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 295,
+        "body_f": 81.7,
+        "target_f": 79.9,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 300,
+        "body_f": 81.9,
+        "target_f": 80.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 305,
+        "body_f": 82.0,
+        "target_f": 80.1,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 310,
+        "body_f": 82.2,
+        "target_f": 80.2,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 315,
+        "body_f": 82.5,
+        "target_f": 80.2,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 320,
+        "body_f": 82.8,
+        "target_f": 80.3,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 325,
+        "body_f": 83.0,
+        "target_f": 80.4,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 330,
+        "body_f": 82.9,
+        "target_f": 80.5,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 335,
+        "body_f": 83.1,
+        "target_f": 80.6,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 340,
+        "body_f": 83.2,
+        "target_f": 80.7,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 345,
+        "body_f": 83.2,
+        "target_f": 80.8,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 350,
+        "body_f": 83.3,
+        "target_f": 80.8,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 355,
+        "body_f": 83.6,
+        "target_f": 80.9,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 360,
+        "body_f": 83.9,
+        "target_f": 81.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 365,
+        "body_f": 84.0,
+        "target_f": 81.1,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 370,
+        "body_f": 84.1,
+        "target_f": 81.2,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 375,
+        "body_f": 84.1,
+        "target_f": 81.2,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 380,
+        "body_f": 84.0,
+        "target_f": 81.3,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 385,
+        "body_f": 84.0,
+        "target_f": 81.4,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 390,
+        "body_f": 83.5,
+        "target_f": 81.5,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 395,
+        "body_f": 82.6,
+        "target_f": 81.6,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 400,
+        "body_f": 82.2,
+        "target_f": 81.7,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 405,
+        "body_f": 82.4,
+        "target_f": 81.8,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 410,
+        "body_f": 82.2,
+        "target_f": 81.8,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 415,
+        "body_f": 81.9,
+        "target_f": 81.9,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 420,
+        "body_f": 81.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 425,
+        "body_f": 81.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 430,
+        "body_f": 81.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 435,
+        "body_f": 84.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 440,
+        "body_f": 85.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 445,
+        "body_f": 85.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 450,
+        "body_f": 85.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 455,
+        "body_f": 85.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 460,
+        "body_f": 85.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 465,
+        "body_f": 85.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 470,
+        "body_f": 85.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 475,
+        "body_f": 85.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 480,
+        "body_f": 85.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 485,
+        "body_f": 85.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 490,
+        "body_f": 85.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 495,
+        "body_f": 85.8,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 500,
+        "body_f": 85.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 505,
+        "body_f": 85.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 510,
+        "body_f": 85.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 515,
+        "body_f": 85.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 520,
+        "body_f": 85.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 525,
+        "body_f": 85.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 530,
+        "body_f": 85.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 535,
+        "body_f": 85.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 540,
+        "body_f": 85.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 545,
+        "body_f": 85.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 550,
+        "body_f": 85.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 555,
+        "body_f": 85.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 560,
+        "body_f": 85.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 565,
+        "body_f": 85.2,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 570,
+        "body_f": 85.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 575,
+        "body_f": 86.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 580,
+        "body_f": 86.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 585,
+        "body_f": 83.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 590,
+        "body_f": 80.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 595,
+        "body_f": 78.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 600,
+        "body_f": 77.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 605,
+        "body_f": 77.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -2
+      },
+      {
+        "min": 610,
+        "body_f": 76.3,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -1.68
+      },
+      {
+        "min": 615,
+        "body_f": 75.7,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -1.29
+      },
+      {
+        "min": 620,
+        "body_f": 75.4,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -1.02
+      },
+      {
+        "min": 625,
+        "body_f": 75.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -0.73
+      },
+      {
+        "min": 630,
+        "body_f": 74.6,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -0.31
+      },
+      {
+        "min": 635,
+        "body_f": 74.5,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": -0.13
+      },
+      {
+        "min": 640,
+        "body_f": 74.1,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": 0.22
+      },
+      {
+        "min": 645,
+        "body_f": 74.0,
+        "target_f": 82.0,
+        "controller_setting": -10,
+        "actual_setting": 1,
+        "pid": 0.44
+      },
+      {
+        "min": 650,
+        "body_f": 73.8,
+        "target_f": 82.0,
+        "controller_setting": -9,
+        "actual_setting": 1,
+        "pid": 0.68
+      },
+      {
+        "min": 655,
+        "body_f": 73.6,
+        "target_f": 82.0,
+        "controller_setting": -8,
+        "actual_setting": 1,
+        "pid": 0.97
+      },
+      {
+        "min": 660,
+        "body_f": 73.4,
+        "target_f": 82.0,
+        "controller_setting": -7,
+        "actual_setting": 1,
+        "pid": 1.24
+      },
+      {
+        "min": 665,
+        "body_f": 73.2,
+        "target_f": 82.0,
+        "controller_setting": -5,
+        "actual_setting": 1,
+        "pid": 1.53
+      },
+      {
+        "min": 670,
+        "body_f": 72.9,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": 1,
+        "pid": 1.82
+      },
+      {
+        "min": 675,
+        "body_f": 72.9,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": 1,
+        "pid": 2
+      },
+      {
+        "min": 680,
+        "body_f": 72.8,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": 1,
+        "pid": 2
+      },
+      {
+        "min": 685,
+        "body_f": 72.4,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": 1,
+        "pid": 2
+      },
+      {
+        "min": 690,
+        "body_f": 72.4,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": 1,
+        "pid": 2
+      },
+      {
+        "min": 695,
+        "body_f": 72.3,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": 1,
+        "pid": 2
+      },
+      {
+        "min": 700,
+        "body_f": 72.2,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": 1,
+        "pid": 2
+      },
+      {
+        "min": 705,
+        "body_f": 72.1,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": 1,
+        "pid": 2
+      },
+      {
+        "min": 710,
+        "body_f": 72.5,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": 1,
+        "pid": 2
+      },
+      {
+        "min": 715,
+        "body_f": 72.6,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": 1,
+        "pid": 2
+      },
+      {
+        "min": 720,
+        "body_f": 72.6,
+        "target_f": 82.0,
+        "controller_setting": -3,
+        "actual_setting": 1,
+        "pid": 2
+      }
+    ]
+  }
+}

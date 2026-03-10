@@ -1,0 +1,110 @@
+{
+  "cycles": 33,
+  "webhook_successes": 0,
+  "webhook_failures": 0,
+  "entity_updates": 0,
+  "entity_verify_ok": 0,
+  "entity_verify_fail": 0,
+  "controller_adjustments": [
+    {
+      "min": 15.0,
+      "stage": "awake",
+      "body_f": 77.9,
+      "target_f": 76.0,
+      "old_setting": -9,
+      "new_setting": -10,
+      "pid": -0.94
+    },
+    {
+      "min": 30.0,
+      "stage": "core",
+      "body_f": 75.3,
+      "target_f": 76.0,
+      "old_setting": -10,
+      "new_setting": -9,
+      "pid": 0.59
+    },
+    {
+      "min": 45.0,
+      "stage": "deep",
+      "body_f": 74.4,
+      "target_f": 76.0,
+      "old_setting": -9,
+      "new_setting": -8,
+      "pid": 0.9
+    },
+    {
+      "min": 90.0,
+      "stage": "core",
+      "body_f": 75.2,
+      "target_f": 76.5,
+      "old_setting": -8,
+      "new_setting": -7,
+      "pid": 0.81
+    },
+    {
+      "min": 120.0,
+      "stage": "core",
+      "body_f": 74.8,
+      "target_f": 77.0,
+      "old_setting": -7,
+      "new_setting": -6,
+      "pid": 1.37
+    },
+    {
+      "min": 135.0,
+      "stage": "deep",
+      "body_f": 74.4,
+      "target_f": 77.25,
+      "old_setting": -6,
+      "new_setting": -4,
+      "pid": 1.62
+    },
+    {
+      "min": 150.0,
+      "stage": "deep",
+      "body_f": 75.1,
+      "target_f": 77.5,
+      "old_setting": -4,
+      "new_setting": -3,
+      "pid": 1.33
+    },
+    {
+      "min": 180.0,
+      "stage": "core",
+      "body_f": 76.8,
+      "target_f": 78.0,
+      "old_setting": -3,
+      "new_setting": -2,
+      "pid": 0.86
+    },
+    {
+      "min": 210.0,
+      "stage": "core",
+      "body_f": 76.4,
+      "target_f": 78.5,
+      "old_setting": -2,
+      "new_setting": -1,
+      "pid": 1.5
+    },
+    {
+      "min": 225.0,
+      "stage": "deep",
+      "body_f": 76.2,
+      "target_f": 78.75,
+      "old_setting": -1,
+      "new_setting": 0,
+      "pid": 1.63
+    },
+    {
+      "min": 465.0,
+      "stage": "awake",
+      "body_f": 84.5,
+      "target_f": 82.0,
+      "old_setting": 0,
+      "new_setting": -1,
+      "pid": -0.86
+    }
+  ],
+  "errors": []
+}
