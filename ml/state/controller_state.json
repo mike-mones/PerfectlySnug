@@ -2,11 +2,11 @@
   "left": {
     "state": {
       "zone": "left",
-      "bedtime_ts": null,
+      "bedtime_ts": "2026-03-09T23:03:08.707906",
       "current_raw_setting": 0,
       "last_setting_we_pushed": null,
-      "integral_error": 0.0,
-      "last_body_temp": 83.408,
+      "integral_error": -4.9539999999999935,
+      "last_body_temp": 76.046,
       "trajectory": {},
       "override_history": [],
       "kp": 0.5,

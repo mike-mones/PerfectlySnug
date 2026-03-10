@@ -544,6 +544,18 @@ class SleepController(hass.Hass):
             new_setting = baseline + clamped_offset
             new_setting = max(-10, min(10, new_setting))
 
+            # Hard ceiling: NEVER go into heating (>= 0)
+            if new_setting > 0:
+                self.log(
+                    f"[{zone}] BUG: setting would be "
+                    f"{new_setting:+d} (heating!) "
+                    f"— clamping to 0")
+                self._notify(
+                    f"Controller bug: tried to set "
+                    f"{new_setting:+d} (heating). "
+                    f"Clamped to 0. Check logs.")
+                new_setting = 0
+
             # Read current for comparison
             preset_entity = ZONE_PRESETS[zone][phase]
             current_setting = self._read_entity(preset_entity)
@@ -591,6 +603,9 @@ class SleepController(hass.Hass):
                 new_setting = current_setting + (
                     MAX_STEP_PER_LOOP if delta > 0
                     else -MAX_STEP_PER_LOOP)
+
+            # Final hard clamp: cooling only, never heating
+            new_setting = min(0, new_setting)
 
             # 7d. Anomaly detection & auto-remediation
             anomaly = self._check_anomaly(
