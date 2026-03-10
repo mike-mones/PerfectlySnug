@@ -247,6 +247,9 @@ class SleepController(hass.Hass):
             # Sleep onset tracking
             "sleep_onset_ts": None,
             "onset_phase_done": False,
+            # Anomaly tracking
+            "recent_settings": [],  # last N settings
+            "anomaly_count": 0,
         }
 
     # ── Phase Detection ──────────────────────────────────────────────
@@ -474,6 +477,13 @@ class SleepController(hass.Hass):
             # 6. PID: compute offset from baseline
             error = effective_body - target_temp
 
+            # Track persistent large errors for anomaly
+            if abs(error) > 5.0:
+                state["anomaly_count"] = (
+                    state.get("anomaly_count", 0) + 1)
+            else:
+                state["anomaly_count"] = 0
+
             p_term = PID_KP * error
             state["integral_error"] += error
             state["integral_error"] = max(
@@ -568,9 +578,26 @@ class SleepController(hass.Hass):
             # Rate limit
             delta = new_setting - current_setting
             if abs(delta) > MAX_STEP_PER_LOOP:
-                new_setting = current_setting + (MAX_STEP_PER_LOOP if delta > 0 else -MAX_STEP_PER_LOOP)
+                new_setting = current_setting + (
+                    MAX_STEP_PER_LOOP if delta > 0
+                    else -MAX_STEP_PER_LOOP)
 
-            hr_str = f"HR={hr:.0f}" if hr else "HR=?"
+            # 7d. Anomaly detection & auto-remediation
+            anomaly = self._check_anomaly(
+                zone, state, new_setting,
+                current_setting, body_avg, stage,
+                ambient, hours_in)
+            if anomaly:
+                # Reset to baseline
+                new_setting = USER_BASELINE.get(
+                    phase, -6)
+                self.log(
+                    f"[{zone}] ANOMALY: {anomaly} "
+                    f"-> reset to baseline "
+                    f"{new_setting:+d}")
+
+            hr_str = (f"HR={hr:.0f}" if hr
+                      else "HR=?")
             hrv_str = f"HRV={hrv:.0f}" if hrv else "HRV=?"
             amb_str = f"amb={ambient:.1f}°F({ambient_adj:+.1f})" if ambient else "amb=?"
 
@@ -974,6 +1001,165 @@ class SleepController(hass.Hass):
                 title="SleepSync")
         except Exception as e:
             self.log(f"Notify failed: {e}", level="WARNING")
+
+    # ── Anomaly Detection ────────────────────────────────────────────
+
+    def _check_anomaly(self, zone, state, new_setting,
+                       current_setting, body_temp, stage,
+                       ambient, hours_in):
+        """Detect anomalous controller behavior.
+
+        Returns anomaly description string, or None.
+        On anomaly: notifies, creates GitHub issue, resets.
+        """
+        # Track recent settings for oscillation detection
+        state["recent_settings"].append(new_setting)
+        if len(state["recent_settings"]) > 12:
+            state["recent_settings"] = (
+                state["recent_settings"][-12:])
+
+        recent = state["recent_settings"]
+        anomaly = None
+
+        # 1. Extreme: hitting min/max repeatedly
+        if (len(recent) >= 3
+                and all(s in (-10, 10) for s in recent[-3:])):
+            anomaly = (
+                f"stuck at extreme ({recent[-1]:+d}) "
+                f"for 3+ cycles")
+
+        # 2. Oscillation: alternating direction 4+ times
+        if len(recent) >= 6:
+            dirs = []
+            for i in range(1, len(recent)):
+                d = recent[i] - recent[i - 1]
+                if d > 0:
+                    dirs.append(1)
+                elif d < 0:
+                    dirs.append(-1)
+            # Count direction changes
+            changes = sum(
+                1 for i in range(1, len(dirs))
+                if dirs[i] != dirs[i - 1])
+            if changes >= 4:
+                anomaly = (
+                    f"oscillating ({changes} direction "
+                    f"changes in {len(recent)} cycles)")
+
+        # 3. Large error persisting: body temp > 5°F from
+        # target for 6+ cycles (30 min)
+        if state.get("anomaly_count", 0) >= 6:
+            anomaly = (
+                f"large error persisting for "
+                f"{state['anomaly_count'] * 5} min")
+
+        if anomaly:
+            # Build context for the issue
+            context = {
+                "anomaly": anomaly,
+                "zone": zone,
+                "setting": new_setting,
+                "body_temp": body_temp,
+                "stage": stage,
+                "ambient": ambient,
+                "hours_in": round(hours_in, 1),
+                "recent_settings": recent[-6:],
+                "targets": self.learned_targets.get(
+                    zone, {}),
+                "transfer_rate": self.transfer_rate,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            self._notify(
+                f"Controller anomaly: {anomaly}. "
+                f"Auto-reset to baseline.")
+            self._create_github_issue(anomaly, context)
+
+            # Reset state
+            state["anomaly_count"] = 0
+            state["recent_settings"] = []
+            state["integral_error"] = 0.0
+
+            return anomaly
+
+        return None
+
+    def _create_github_issue(self, anomaly, context):
+        """Create a GitHub issue with anomaly report."""
+        import urllib.request
+        import urllib.error
+
+        # Read GitHub token from HA secrets or env
+        # We'll use the gh CLI's token if available
+        token_path = Path.home() / ".config" / "gh" / "hosts.yml"
+        gh_token = None
+        if token_path.exists():
+            try:
+                content = token_path.read_text()
+                for line in content.split("\n"):
+                    if "oauth_token:" in line:
+                        gh_token = line.split(
+                            "oauth_token:")[-1].strip()
+                        break
+            except Exception:
+                pass
+
+        if not gh_token:
+            self.log("No GitHub token — skipping issue",
+                     level="WARNING")
+            return
+
+        body = (
+            f"## Anomaly Detected\n\n"
+            f"**Type:** {anomaly}\n"
+            f"**Time:** {context['timestamp']}\n\n"
+            f"### Context\n"
+            f"- Zone: {context['zone']}\n"
+            f"- Setting: {context['setting']:+d}\n"
+            f"- Body temp: {context['body_temp']:.1f}°F\n"
+            f"- Stage: {context['stage']}\n"
+            f"- Ambient: {context['ambient']}\n"
+            f"- Hours in: {context['hours_in']}\n"
+            f"- Recent settings: {context['recent_settings']}\n"
+            f"- Transfer rate: "
+            f"{context['transfer_rate']:.3f}\n\n"
+            f"### Learned Targets\n"
+            f"```json\n"
+            f"{json.dumps(context['targets'], indent=2)}\n"
+            f"```\n\n"
+            f"### Action Taken\n"
+            f"Auto-reset to baseline. Controller continues "
+            f"operating with default settings.\n"
+        )
+
+        payload = json.dumps({
+            "title": f"[Anomaly] {anomaly}",
+            "body": body,
+            "labels": ["anomaly", "auto-generated"],
+        }).encode()
+
+        url = ("https://api.github.com/repos/"
+               "mike-mones/PerfectlySnug/issues")
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={
+                "Authorization": f"token {gh_token}",
+                "Accept": "application/vnd.github.v3+json",
+                "Content-Type": "application/json",
+            },
+            method="POST")
+
+        try:
+            with urllib.request.urlopen(req) as resp:
+                result = json.loads(resp.read())
+                self.log(
+                    f"GitHub issue created: "
+                    f"#{result.get('number', '?')}")
+        except urllib.error.URLError as e:
+            self.log(
+                f"GitHub issue failed: {e}",
+                level="WARNING")
 
     # ── State Persistence ────────────────────────────────────────────
 
