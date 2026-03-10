@@ -404,9 +404,19 @@ class SleepController(hass.Hass):
                     self.log(f"[{zone}] Sleep onset detected")
 
             # Awake = freeze setting (don't chase temperature)
-            # Just stabilize and avoid disturbing the sleeper
+            # Log context for model tuning
             if stage == "awake":
-                self.log(f"[{zone}] Awake — holding setting")
+                bedtime_dt = datetime.fromisoformat(
+                    state["bedtime_ts"])
+                mins_in = (now - bedtime_dt).total_seconds() / 60
+                preset = ZONE_PRESETS[zone].get(phase)
+                cur_set = (self._read_entity(preset)
+                           if preset else None)
+                self.log(
+                    f"[{zone}] AWAKE t+{mins_in:.0f}m | "
+                    f"body={body_avg:.1f}°F "
+                    f"setting={cur_set} "
+                    f"ambient={ambient}")
                 state["last_body_temp"] = body_avg
                 continue
 
@@ -790,14 +800,31 @@ class SleepController(hass.Hass):
         actual = int(actual)
 
         if actual != last_pushed:
-            self.log(f"[{zone}] MANUAL OVERRIDE on {current_phase}: "
-                     f"expected {last_pushed:+d}, found {actual:+d}")
+            # Full context log for model tuning
+            sensors = self._read_sensors(zone)
+            body = sensors.get("body_avg")
+            amb = sensors.get("ambient")
+            bedtime_dt = datetime.fromisoformat(
+                state["bedtime_ts"])
+            mins = ((datetime.now() - bedtime_dt)
+                    .total_seconds() / 60)
+            self.log(
+                f"[{zone}] MANUAL OVERRIDE "
+                f"t+{mins:.0f}m | "
+                f"{current_phase}: "
+                f"{last_pushed:+d}->{actual:+d} "
+                f"(delta={actual - last_pushed:+d}) | "
+                f"body={body:.1f if body else '?'}°F "
+                f"ambient={amb} "
+                f"stage={state.get('last_stage','?')}")
             return {
                 "phase": current_phase,
                 "expected": last_pushed,
                 "actual": actual,
                 "delta": actual - last_pushed,
                 "timestamp": datetime.now().isoformat(),
+                "body_temp": body,
+                "ambient": amb,
             }
         return None
 
@@ -844,6 +871,8 @@ class SleepController(hass.Hass):
             "delta": delta,
             "direction": direction,
             "minutes_in": round(minutes_in),
+            "body_temp": override.get("body_temp"),
+            "ambient": override.get("ambient"),
         })
 
     def _on_setting_changed(self, entity, attribute,
@@ -1089,18 +1118,12 @@ class SleepController(hass.Hass):
         import urllib.request
         import urllib.error
 
-        # Read GitHub token from HA secrets or env
-        # We'll use the gh CLI's token if available
-        token_path = Path.home() / ".config" / "gh" / "hosts.yml"
+        # Read GitHub token from stored file
+        token_path = STATE_DIR / ".github_token"
         gh_token = None
         if token_path.exists():
             try:
-                content = token_path.read_text()
-                for line in content.split("\n"):
-                    if "oauth_token:" in line:
-                        gh_token = line.split(
-                            "oauth_token:")[-1].strip()
-                        break
+                gh_token = token_path.read_text().strip()
             except Exception:
                 pass
 
