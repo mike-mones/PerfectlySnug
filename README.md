@@ -15,6 +15,7 @@ PerfectlySnug Topper ← AppDaemon Controller v2 → reads body sensors, ambient
 | Component | Location | Description |
 |---|---|---|
 | Controller v2 | `appdaemon/sleep_controller_v2.py` | Data-driven PID controller, deployed to AppDaemon on HA Green |
+| Stage Classifier | `ml/train_stage_classifier.py` | Trains an ML sleep stage classifier from controller data, exports portable JSON model |
 | SleepSync | `../SleepSync/` (separate repo) | watchOS app, sends HR/HRV/sleep stage to HA via webhook |
 | Webapp | `webapp/overnight.html` + `overnight.js` | Overnight temperature tracking dashboard, Chart.js |
 | Correlator | `tools/correlate.py` | Historical data analysis pipeline |
@@ -36,6 +37,7 @@ PerfectlySnug Topper ← AppDaemon Controller v2 → reads body sensors, ambient
 - **Continuous learning**: slowly drifts targets toward equilibrium body temp
 - **Adaptive transfer function**: refines °F-per-setting-point from data
 - **Hard clamp**: setting NEVER goes above 0 (cooling only)
+- **ML sleep stage classifier**: when Apple Watch data is stale, uses a trained Random Forest (JSON, no sklearn) to infer sleep stage from HR/HRV deviation + time-of-night. Falls back to hardcoded heuristic if model not deployed or confidence < 45%.
 
 ### Key Constants
 | Parameter | Value | Source |
@@ -46,8 +48,10 @@ PerfectlySnug Topper ← AppDaemon Controller v2 → reads body sensors, ambient
 | LOOP_INTERVAL_SEC | 900 (15 min) | Tuned after oscillation bug |
 | AMBIENT_REFERENCE_F | 74.0 | Historical average |
 | OCCUPANCY_THRESHOLD_F | 78.0 | Below this = nobody in bed |
+| STAGE_CLASSIFIER_MIN_CONFIDENCE | 0.45 | Below this, fall back to heuristic |
 
 ### Known Issues
+- **DEADBAND_F and OCCUPANCY_THRESHOLD_F were missing** (Mar 10-11): These constants were used in the control loop but never defined in the constants section. Caused NameError crash every loop iteration — controller would initialize and read the current setting but never adjust it. Fixed Mar 11 by adding both back. Also fixed LOOP_INTERVAL_SEC (was 300 in code but should have been 900 per tuning).
 - **SleepSync data sparse**: watchOS background execution unreliable. Dispatch polling works but only when app is running. Need iPhone companion app for Shortcuts-triggered auto-start.
 - **PID oscillated on first night**: fixed with deadband + longer loop + halved gains
 - **GitHub token path**: AppDaemon Docker container sees `/config/apps/`, host sees `/addon_configs/.../apps/`. Code tries both.
@@ -57,6 +61,11 @@ PerfectlySnug Topper ← AppDaemon Controller v2 → reads body sensors, ambient
 ```bash
 # Controller to AppDaemon (auto-reloads):
 scp appdaemon/sleep_controller_v2.py root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
+
+# Stage classifier (train locally, deploy JSON to HA Green):
+scp root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/controller_state.json /tmp/
+python3 ml/train_stage_classifier.py --state /tmp/controller_state.json
+scp ml/models/stage_classifier.json root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
 
 # SleepSync to watch:
 cd ../SleepSync && xcodegen generate && xcodebuild ... && xcrun devicectl device install app --device 00008310-00096A392187A01E build/Build/Products/Release-watchos/SleepSync.app

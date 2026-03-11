@@ -30,12 +30,14 @@ import hassapi as hass
 
 # ── Configuration ────────────────────────────────────────────────────────
 
-LOOP_INTERVAL_SEC = 300     # 5 min control loop
+LOOP_INTERVAL_SEC = 900     # 15 min control loop (tuned up from 5 min after oscillation)
 MAX_STEP_PER_LOOP = 1       # Conservative: ±1 per cycle (Eight Sleep style)
 OVERRIDE_LEARNING_RATE = 0.3  # How fast targets adapt from manual overrides
 STAGE_STALE_MINUTES = 30    # Max age of sleep stage reading before fallback
 STAGE_COOLDOWN_SEC = 180    # Don't adjust for 3 min after a stage transition
 OUTLIER_THRESHOLD_F = 5.0   # Ignore body temp readings >5°F from rolling avg
+DEADBAND_F = 1.5            # Don't adjust if error is within this range (°F)
+OCCUPANCY_THRESHOLD_F = 78.0  # Body temp below this = nobody in bed
 WAKE_RAMP_MINUTES = 25      # Start warming this many min before wake phase
 WAKE_RAMP_SETTING = -3      # Target setting at wake (warmer than sleep)
 CONTINUOUS_LEARN_RATE = 0.01  # Slow continuous adaptation per loop
@@ -97,6 +99,10 @@ _container = Path("/config/apps")
 _host = Path("/addon_configs/a0d7b954_appdaemon/apps")
 STATE_DIR = _container if _container.exists() else _host
 STATE_FILE = STATE_DIR / "controller_state.json"
+STAGE_MODEL_FILE = STATE_DIR / "stage_classifier.json"
+
+# Minimum confidence to trust the ML classifier over the heuristic
+STAGE_CLASSIFIER_MIN_CONFIDENCE = 0.45
 
 # Body temp targets per sleep stage (°F) — learned from correlation analysis
 # These represent what body temp should be during each stage.
@@ -193,9 +199,12 @@ class SleepController(hass.Hass):
         self.transfer_rate = DEGREES_PER_SETTING_POINT
         self.nightly_history = {}
         # Prior-night sleep stage percentages
-        self.prior_night_stages = {}  # zone -> {deep_pct, rem_pct}  # zone -> list of nightly avg settings
+        self.prior_night_stages = {}  # zone -> {deep_pct, rem_pct}
+        # ML sleep stage classifier (loaded from JSON, no sklearn needed)
+        self.stage_classifier = None
 
         self._load_state()
+        self._load_stage_classifier()
 
         for zone in self.zones:
             if zone not in self.zone_state:
@@ -218,6 +227,10 @@ class SleepController(hass.Hass):
         self.log(f"  Zones: {', '.join(self.zones)}")
         self.log(f"  Body temp targets: {targets}")
         self.log(f"  Transfer rate: {self.transfer_rate:.2f} °F/setting-point")
+        clf_status = (f"{self.stage_classifier['n_trees']} trees, "
+                      f"classes={self.stage_classifier['classes']}"
+                      if self.stage_classifier else "not loaded (using heuristic)")
+        self.log(f"  Stage classifier: {clf_status}")
         self.log("Controller ready — reactive mode")
         self.log("=" * 60)
 
@@ -677,9 +690,9 @@ class SleepController(hass.Hass):
                     "new": new_setting,
                     "body_before": body_avg,
                 })
-                if len(state["setting_change_log"]) > 50:
+                if len(state["setting_change_log"]) > 200:
                     state["setting_change_log"] = (
-                        state["setting_change_log"][-50:])
+                        state["setting_change_log"][-200:])
 
             # 9. Stage classifier training data (#11)
             # When Apple Watch provides a real stage, log
@@ -1014,7 +1027,11 @@ class SleepController(hass.Hass):
             self.log(f"HRV baseline: {state['hrv_baseline']:.1f} ms")
 
     def _estimate_stage_from_hr(self, state, hr, hrv):
-        """Estimate sleep stage from HR/HRV deviation."""
+        """Estimate sleep stage from HR/HRV deviation.
+
+        Uses the trained ML classifier if available, falling
+        back to hardcoded thresholds if not.
+        """
         if state is None or hr is None or state.get("hr_baseline") is None:
             return "unknown"
 
@@ -1026,6 +1043,35 @@ class SleepController(hass.Hass):
         if baseline_hrv and baseline_hrv > 0 and hrv is not None:
             hrv_pct = (hrv - baseline_hrv) / baseline_hrv
 
+        # Calculate hours_in for ML features
+        hours_in = 0.0
+        for zone in self.zones:
+            zs = self.zone_state.get(zone, {})
+            bt = zs.get("bedtime_ts")
+            if bt:
+                try:
+                    hours_in = (datetime.now() - datetime.fromisoformat(bt)).total_seconds() / 3600
+                except (ValueError, TypeError):
+                    pass
+                break
+
+        # Try ML classifier first
+        if self.stage_classifier is not None:
+            features = {
+                "hr_pct": hr_pct,
+                "hrv_pct": hrv_pct,
+                "hours_in": hours_in,
+            }
+            ml_stage, confidence = self._predict_stage_ml(features)
+            if ml_stage and confidence >= STAGE_CLASSIFIER_MIN_CONFIDENCE:
+                self.log(f"Stage ML: {ml_stage} ({confidence:.0%})",
+                         level="DEBUG")
+                return ml_stage
+            # Low confidence — fall through to heuristic
+            self.log(f"Stage ML low-conf: {ml_stage} ({confidence:.0%})"
+                     f" — using heuristic", level="DEBUG")
+
+        # Heuristic fallback
         if hr_pct < -0.10 and hrv_pct > 0.10:
             return "deep"
         elif hr_pct < -0.15:
@@ -1036,6 +1082,68 @@ class SleepController(hass.Hass):
             return "awake"
         else:
             return "core"
+
+    # ── ML Stage Classifier ──────────────────────────────────────────
+
+    def _load_stage_classifier(self):
+        """Load the JSON sleep stage classifier (trained offline)."""
+        if not STAGE_MODEL_FILE.exists():
+            self.log(f"No stage classifier at {STAGE_MODEL_FILE} "
+                     f"— using HR/HRV heuristic")
+            return
+        try:
+            model = json.loads(STAGE_MODEL_FILE.read_text())
+            if (model.get("type") == "random_forest"
+                    and model.get("trees")
+                    and model.get("features")
+                    and model.get("classes")):
+                self.stage_classifier = model
+                self.log(f"Loaded stage classifier: "
+                         f"{model['n_trees']} trees, "
+                         f"classes={model['classes']}")
+            else:
+                self.log(f"Invalid stage classifier format",
+                         level="WARNING")
+        except (json.JSONDecodeError, OSError) as e:
+            self.log(f"Failed to load stage classifier: {e}",
+                     level="WARNING")
+
+    def _predict_stage_ml(self, features: dict) -> tuple:
+        """Predict sleep stage from feature dict using JSON model.
+
+        Returns (stage, confidence). No sklearn needed — pure
+        Python tree evaluation.
+        """
+        model = self.stage_classifier
+        if model is None:
+            return None, 0.0
+
+        classes = model["classes"]
+        totals = {c: 0.0 for c in classes}
+
+        for tree in model["trees"]:
+            probs = self._walk_tree(tree, features)
+            for cls, prob in probs.items():
+                totals[cls] += prob
+
+        # Normalize by number of trees
+        n_trees = model["n_trees"]
+        for cls in totals:
+            totals[cls] /= n_trees
+
+        best_cls = max(totals, key=totals.get)
+        confidence = totals[best_cls]
+        return best_cls, confidence
+
+    def _walk_tree(self, node: dict, features: dict) -> dict:
+        """Walk a JSON decision tree using named features."""
+        if node.get("leaf"):
+            return node["probs"]
+        val = features.get(node["feature"], 0.0)
+        if val <= node["threshold"]:
+            return self._walk_tree(node["left"], features)
+        else:
+            return self._walk_tree(node["right"], features)
 
     # ── Sensor Reading ───────────────────────────────────────────────
 
