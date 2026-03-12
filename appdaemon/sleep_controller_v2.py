@@ -37,7 +37,7 @@ STAGE_STALE_MINUTES = 30    # Max age of sleep stage reading before fallback
 STAGE_COOLDOWN_SEC = 180    # Don't adjust for 3 min after a stage transition
 OUTLIER_THRESHOLD_F = 5.0   # Ignore body temp readings >5°F from rolling avg
 DEADBAND_F = 1.5            # Don't adjust if error is within this range (°F)
-OCCUPANCY_THRESHOLD_F = 78.0  # Body temp below this = nobody in bed
+OCCUPANCY_THRESHOLD_F = 70.0  # Body temp below this = nobody in bed (lowered from 78 for testing)
 WAKE_RAMP_MINUTES = 25      # Start warming this many min before wake phase
 WAKE_RAMP_SETTING = -3      # Target setting at wake (warmer than sleep)
 CONTINUOUS_LEARN_RATE = 0.01  # Slow continuous adaptation per loop
