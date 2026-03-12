@@ -30,7 +30,7 @@ import hassapi as hass
 
 # ── Configuration ────────────────────────────────────────────────────────
 
-LOOP_INTERVAL_SEC = 900     # 15 min control loop (tuned up from 5 min after oscillation)
+LOOP_INTERVAL_SEC = 180     # 3 min control loop (fast enough for stage reactivity)
 MAX_STEP_PER_LOOP = 1       # Conservative: ±1 per cycle (Eight Sleep style)
 OVERRIDE_LEARNING_RATE = 0.3  # How fast targets adapt from manual overrides
 STAGE_STALE_MINUTES = 30    # Max age of sleep stage reading before fallback
