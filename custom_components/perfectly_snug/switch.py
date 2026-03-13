@@ -17,11 +17,13 @@ from .const import (
     SETTING_COOLING_MODE,
     SETTING_PROFILE_ENABLE,
     SETTING_QUIET_ENABLE,
+    SETTING_RUNNING,
     SETTING_SCHEDULE_ENABLE,
 )
 from .coordinator import PerfectlySnugCoordinator
 
 SWITCHES = {
+    SETTING_RUNNING: ("Running", "mdi:power"),
     SETTING_SCHEDULE_ENABLE: ("Schedule", "mdi:calendar-clock"),
     SETTING_COOLING_MODE: ("Responsive Cooling", "mdi:snowflake-thermometer"),
     SETTING_QUIET_ENABLE: ("Quiet Mode", "mdi:volume-off"),

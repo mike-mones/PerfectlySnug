@@ -139,17 +139,21 @@ class PerfectlySnugClimate(CoordinatorEntity[PerfectlySnugCoordinator], ClimateE
             )
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Set HVAC mode."""
-        # We can't truly turn the topper on/off via WiFi (physical switch only)
-        # But we can set temperature to neutral
+        """Set HVAC mode. Can start/stop the topper via SETTING_RUNNING."""
         if hvac_mode == HVACMode.OFF:
-            await self.coordinator.async_set_setting(self._zone, SETTING_L1, 10)
+            await self.coordinator.async_set_setting(self._zone, SETTING_RUNNING, 0)
         elif hvac_mode == HVACMode.COOL:
-            await self.coordinator.async_set_setting(self._zone, SETTING_L1, 5)
+            await self.coordinator.async_set_settings(
+                self._zone, {SETTING_RUNNING: 1, SETTING_L1: 5}
+            )
         elif hvac_mode == HVACMode.HEAT:
-            await self.coordinator.async_set_setting(self._zone, SETTING_L1, 15)
+            await self.coordinator.async_set_settings(
+                self._zone, {SETTING_RUNNING: 1, SETTING_L1: 15}
+            )
         elif hvac_mode == HVACMode.HEAT_COOL:
-            await self.coordinator.async_set_setting(self._zone, SETTING_L1, 10)
+            await self.coordinator.async_set_settings(
+                self._zone, {SETTING_RUNNING: 1, SETTING_L1: 10}
+            )
 
     @callback
     def _handle_coordinator_update(self) -> None:
