@@ -386,7 +386,12 @@ class SleepController(hass.Hass):
                     f"{OCCUPANCY_THRESHOLD_F}°F) "
                     f"— skipping")
                 state["occupancy_detected_ts"] = None
-                state["occupancy_hold_done"] = False
+                # Don't reset occupancy_hold_done here.
+                # If the initial hold already completed,
+                # a brief absence (bathroom break) should
+                # NOT trigger another 20-min hold on return.
+                # The flag is properly reset on new sleep
+                # session start (bedtime detection).
                 continue
 
             # Occupancy hold: when body first detected, hold
