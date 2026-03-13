@@ -38,6 +38,7 @@ STAGE_COOLDOWN_SEC = 180    # Don't adjust for 3 min after a stage transition
 OUTLIER_THRESHOLD_F = 5.0   # Ignore body temp readings >5°F from rolling avg
 DEADBAND_F = 1.5            # Don't adjust if error is within this range (°F)
 OCCUPANCY_THRESHOLD_F = 78.0  # Body temp below this = nobody in bed
+OCCUPANCY_HOLD_MINUTES = 20  # Hold pre-cool setting for 20 min after occupancy detected
 WAKE_RAMP_MINUTES = 25      # Start warming this many min before wake phase
 WAKE_RAMP_SETTING = -3      # Target setting at wake (warmer than sleep)
 CONTINUOUS_LEARN_RATE = 0.01  # Slow continuous adaptation per loop
@@ -263,6 +264,9 @@ class SleepController(hass.Hass):
             # Sleep onset tracking
             "sleep_onset_ts": None,
             "onset_phase_done": False,
+            # Occupancy hold: keep pre-cool setting stable after first detecting body in bed
+            "occupancy_detected_ts": None,
+            "occupancy_hold_done": False,
             # Anomaly tracking
             "recent_settings": [],  # last N settings
             "anomaly_count": 0,
@@ -333,6 +337,8 @@ class SleepController(hass.Hass):
                 state["body_temp_history"] = []
                 state["sleep_onset_ts"] = None
                 state["onset_phase_done"] = False
+                state["occupancy_detected_ts"] = None
+                state["occupancy_hold_done"] = False
                 continue
 
             # ── Wake detection ──
@@ -379,7 +385,38 @@ class SleepController(hass.Hass):
                     f"({body_avg:.1f}°F < "
                     f"{OCCUPANCY_THRESHOLD_F}°F) "
                     f"— skipping")
+                state["occupancy_detected_ts"] = None
+                state["occupancy_hold_done"] = False
                 continue
+
+            # Occupancy hold: when body first detected, hold
+            # the pre-cool setting for OCCUPANCY_HOLD_MINUTES
+            # before letting the PID start adjusting.
+            if (body_avg is not None
+                    and body_avg >= OCCUPANCY_THRESHOLD_F
+                    and not state.get("occupancy_hold_done", False)):
+                if state.get("occupancy_detected_ts") is None:
+                    state["occupancy_detected_ts"] = now.isoformat()
+                    self.log(
+                        f"[{zone}] *** OCCUPANCY DETECTED *** "
+                        f"body={body_avg:.1f}°F — holding "
+                        f"pre-cool for {OCCUPANCY_HOLD_MINUTES}m")
+                occ_ts = datetime.fromisoformat(
+                    state["occupancy_detected_ts"])
+                hold_elapsed = (now - occ_ts).total_seconds() / 60
+                if hold_elapsed < OCCUPANCY_HOLD_MINUTES:
+                    self.log(
+                        f"[{zone}] Occupancy hold: "
+                        f"{hold_elapsed:.0f}/"
+                        f"{OCCUPANCY_HOLD_MINUTES}m — "
+                        f"keeping current setting")
+                    state["last_body_temp"] = body_avg
+                    continue
+                else:
+                    state["occupancy_hold_done"] = True
+                    self.log(
+                        f"[{zone}] Occupancy hold complete"
+                        " — PID control active")
 
             if body_avg is None:
                 state["no_data_count"] += 1
