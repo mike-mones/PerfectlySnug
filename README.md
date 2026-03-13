@@ -52,6 +52,7 @@ PerfectlySnug Topper ← AppDaemon Controller v2 → reads body sensors, ambient
 
 ### Known Issues
 - **DEADBAND_F and OCCUPANCY_THRESHOLD_F were missing** (Mar 10-11): These constants were used in the control loop but never defined in the constants section. Caused NameError crash every loop iteration — controller would initialize and read the current setting but never adjust it. Fixed Mar 11 by adding both back. Also fixed LOOP_INTERVAL_SEC (was 300 in code but should have been 900 per tuning).
+- **SleepSync webhook URL was hardcoded to local IP** (Mar 11): `http://192.168.0.106:8123` — only works on LAN. But the REAL issue was **App Transport Security (ATS)**: watchOS blocks plain `http://` requests by default. Without an `NSAppTransportSecurity` exception in Info.plist, every request was silently rejected by the OS before hitting the network — even on the local network. Fixed both: switched URL to Nabu Casa HTTPS + added ATS exception for local IP fallback. Requires recompiling and deploying SleepSync to the watch.
 - **SleepSync data sparse**: watchOS background execution unreliable. Dispatch polling works but only when app is running. Need iPhone companion app for Shortcuts-triggered auto-start.
 - **PID oscillated on first night**: fixed with deadband + longer loop + halved gains
 - **GitHub token path**: AppDaemon Docker container sees `/config/apps/`, host sees `/addon_configs/.../apps/`. Code tries both.
@@ -59,8 +60,12 @@ PerfectlySnug Topper ← AppDaemon Controller v2 → reads body sensors, ambient
 
 ### Deploy Commands
 ```bash
-# Controller to AppDaemon (auto-reloads):
+# Controller to AppDaemon (from local network):
 scp appdaemon/sleep_controller_v2.py root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
+
+# Controller to AppDaemon (remote via Nabu Casa SSH terminal):
+curl -sL https://raw.githubusercontent.com/mike-mones/PerfectlySnug/main/appdaemon/sleep_controller_v2.py -o /addon_configs/a0d7b954_appdaemon/apps/sleep_controller_v2.py
+ha apps restart a0d7b954_appdaemon
 
 # Stage classifier (train locally, deploy JSON to HA Green):
 scp root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/controller_state.json /tmp/
