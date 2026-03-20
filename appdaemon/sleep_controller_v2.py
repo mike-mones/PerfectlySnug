@@ -178,6 +178,8 @@ ZONE_SCHEDULE = {
 HEALTH_ENTITIES = {
     "hr_avg": "input_number.apple_health_hr_avg",
     "hrv":    "input_number.apple_health_hrv",
+    "respiratory_rate": "input_number.apple_health_respiratory_rate",
+    "wrist_temp": "input_number.apple_health_wrist_temp",
 }
 
 # Notification entity for alerts
@@ -235,6 +237,10 @@ class SleepController(hass.Hass):
         self.log("Controller ready — reactive mode")
         self.log("=" * 60)
 
+        # Run health check on startup and every hour
+        self._health_check(None)
+        self.run_every(self._health_check, "now+3600", 3600)
+
     def _fresh_zone_state(self):
         return {
             "bedtime_ts": None,
@@ -247,11 +253,14 @@ class SleepController(hass.Hass):
             "override_history": [],
             "manual_mode": False,
             "recent_setting_changes": [],
-            # HR/HRV baseline tracking
+            # HR/HRV/RespRate baseline tracking
             "hr_samples": [],
             "hrv_samples": [],
+            "resp_rate_samples": [],
             "hr_baseline": None,
             "hrv_baseline": None,
+            "resp_rate_baseline": None,
+            "last_wrist_temp": None,
             # Transfer function tracking (#9)
             "setting_change_log": [],
             # Stage classifier training data (#11)
@@ -313,6 +322,8 @@ class SleepController(hass.Hass):
         for zone in self.zones:
             state = self.zone_state[zone]
             is_sleeping = self._is_sleeping(zone)
+            if is_sleeping:
+                state["last_run_progress"] = self._read_entity(ZONE_SENSORS[zone]["run_progress"]) or 0
 
             # ── Bedtime detection ──
             if is_sleeping and state["bedtime_ts"] is None:
@@ -347,7 +358,28 @@ class SleepController(hass.Hass):
                 duration = (now - bedtime).total_seconds() / 3600
                 overrides = len(state["override_history"])
 
+                # Check for premature schedule abort
+                apple_stage = self.get_state(SLEEP_STAGE_ENTITY)
+                apple_asleep = apple_stage in ("deep", "core", "rem", "in_bed")
+                prev_progress = state.get("last_run_progress", 0)
+                
+                # If the native 10-hour limit kicked in (progress ~100) OR Apple Health insists we are still asleep
+                # after a few hours of running, auto-restart the topper to bypass the limit.
+                if apple_asleep and prev_progress > 90:
+                    self.log(f"[{zone}] Topper organically shut down (progress={prev_progress}, stage={apple_stage}), but sleep continues. Auto-restarting!")
+                    self.call_service("switch/turn_on", entity_id=f"switch.smart_topper_{zone}_side_running")
+                    self._notify(f"SleepSync: Topper schedule exhausted early ({duration:.1f}h). Auto-restarted to maintain cooling during {apple_stage} sleep.")
+                    state["last_run_progress"] = 0  # prevent spam while it restarts
+                    state["last_restart_ts"] = now.isoformat()
+                    continue
+
                 # Nightly summary (#8)
+                last_restart = state.get("last_restart_ts")
+                if last_restart and (now - datetime.fromisoformat(last_restart)).total_seconds() < 120:
+                    # Give it 2 minutes to turn back on before we officially declare Wake
+                    self.log(f"[{zone}] Waiting for Topper to reflect Auto-restart. Delaying Wake detection.")
+                    continue
+
                 self._log_nightly_summary(zone, state, duration)
 
                 state["bedtime_ts"] = None
@@ -449,11 +481,15 @@ class SleepController(hass.Hass):
             if len(history) > 12:  # Keep ~1 hour at 5-min intervals
                 state["body_temp_history"] = history[-12:]
 
-            # 3. Read sleep stage (with HR/HRV fallback)
+            # 3. Read sleep stage (with HR/HRV/RespRate fallback)
             hr = self._read_entity(HEALTH_ENTITIES["hr_avg"])
             hrv = self._read_entity(HEALTH_ENTITIES["hrv"])
-            self._update_hr_baseline(state, hr, hrv)
-            stage = self._read_sleep_stage(state, hr, hrv)
+            resp_rate = self._read_entity(HEALTH_ENTITIES["respiratory_rate"])
+            wrist_temp = self._read_entity(HEALTH_ENTITIES["wrist_temp"])
+            self._update_hr_baseline(state, hr, hrv, resp_rate)
+            if wrist_temp is not None:
+                state["last_wrist_temp"] = wrist_temp
+            stage = self._read_sleep_stage(state, hr, hrv, resp_rate)
 
             apple_stage = self.get_state(SLEEP_STAGE_ENTITY)
             stage_source = "apple" if apple_stage == stage and stage in STAGE_BODY_TARGETS else "hr/hrv"
@@ -705,6 +741,8 @@ class SleepController(hass.Hass):
             hr_str = (f"HR={hr:.0f}" if hr
                       else "HR=?")
             hrv_str = f"HRV={hrv:.0f}" if hrv else "HRV=?"
+            rr_str = f"RR={resp_rate:.1f}" if resp_rate else "RR=?"
+            wt_str = f"WT={wrist_temp:.1f}" if wrist_temp else ""
             amb_str = f"amb={ambient:.1f}°F({ambient_adj:+.1f})" if ambient else "amb=?"
 
             self.log(f"[{zone}] t+{minutes_in:.0f}m {phase} stage={stage}({stage_source}) | "
@@ -712,7 +750,7 @@ class SleepController(hass.Hass):
                      f"err={error:+.1f}°F | "
                      f"PID={p_term:+.1f}/{i_term:+.1f}/{d_term:+.1f} {amb_str} | "
                      f"setting: {current_setting:+d}→{new_setting:+d} | "
-                     f"{hr_str} {hrv_str}")
+                     f"{hr_str} {hrv_str} {rr_str} {wt_str}".rstrip())
 
             # 8. Apply if changed — write to ALL presets so the
             # topper uses the right value regardless of its phase
@@ -738,19 +776,26 @@ class SleepController(hass.Hass):
 
             # 9. Stage classifier training data (#11)
             # When Apple Watch provides a real stage, log
-            # HR/HRV so we can train a personalized classifier
+            # HR/HRV/RR so we can train a personalized classifier
             if (stage_source == "apple"
                     and hr and hrv
                     and state.get("hr_baseline")):
                 hr_bl = state["hr_baseline"]
                 hrv_bl = state.get("hrv_baseline") or 1
-                state["stage_training_data"].append({
+                rr_bl = state.get("resp_rate_baseline")
+                sample = {
                     "stage": stage,
                     "hr": hr, "hrv": hrv,
                     "hr_pct": (hr - hr_bl) / hr_bl,
                     "hrv_pct": (hrv - hrv_bl) / hrv_bl,
                     "hours_in": hours_in,
-                })
+                }
+                if resp_rate and rr_bl and rr_bl > 0:
+                    sample["resp_rate"] = resp_rate
+                    sample["resp_rate_pct"] = (resp_rate - rr_bl) / rr_bl
+                if wrist_temp is not None:
+                    sample["wrist_temp"] = wrist_temp
+                state["stage_training_data"].append(sample)
                 if len(state["stage_training_data"]) > 200:
                     state["stage_training_data"] = (
                         state["stage_training_data"][-200:])
@@ -1031,8 +1076,8 @@ class SleepController(hass.Hass):
 
     # ── Sleep Stage Reading ──────────────────────────────────────────
 
-    def _read_sleep_stage(self, zone_state=None, hr=None, hrv=None):
-        """Read sleep stage from HA, fallback to HR/HRV estimation."""
+    def _read_sleep_stage(self, zone_state=None, hr=None, hrv=None, resp_rate=None):
+        """Read sleep stage from HA, fallback to HR/HRV/RR estimation."""
         state = self.get_state(SLEEP_STAGE_ENTITY)
         if state not in (None, "", "unavailable", "unknown"):
             last_changed = self.get_state(SLEEP_STAGE_ENTITY, attribute="last_changed")
@@ -1048,10 +1093,10 @@ class SleepController(hass.Hass):
             elif state in STAGE_BODY_TARGETS:
                 return state
 
-        return self._estimate_stage_from_hr(zone_state, hr, hrv)
+        return self._estimate_stage_from_hr(zone_state, hr, hrv, resp_rate)
 
-    def _update_hr_baseline(self, state, hr, hrv):
-        """Track rolling HR/HRV and compute baseline."""
+    def _update_hr_baseline(self, state, hr, hrv, resp_rate=None):
+        """Track rolling HR/HRV/RespRate and compute baselines."""
         if hr is not None and hr > 30:
             state["hr_samples"].append(hr)
             if len(state["hr_samples"]) > 60:
@@ -1060,6 +1105,10 @@ class SleepController(hass.Hass):
             state["hrv_samples"].append(hrv)
             if len(state["hrv_samples"]) > 60:
                 state["hrv_samples"] = state["hrv_samples"][-60:]
+        if resp_rate is not None and resp_rate > 0:
+            state["resp_rate_samples"].append(resp_rate)
+            if len(state["resp_rate_samples"]) > 60:
+                state["resp_rate_samples"] = state["resp_rate_samples"][-60:]
 
         if state["hr_baseline"] is None and len(state["hr_samples"]) >= 3:
             state["hr_baseline"] = sum(state["hr_samples"]) / len(state["hr_samples"])
@@ -1067,9 +1116,12 @@ class SleepController(hass.Hass):
         if state["hrv_baseline"] is None and len(state["hrv_samples"]) >= 3:
             state["hrv_baseline"] = sum(state["hrv_samples"]) / len(state["hrv_samples"])
             self.log(f"HRV baseline: {state['hrv_baseline']:.1f} ms")
+        if state["resp_rate_baseline"] is None and len(state["resp_rate_samples"]) >= 3:
+            state["resp_rate_baseline"] = sum(state["resp_rate_samples"]) / len(state["resp_rate_samples"])
+            self.log(f"RespRate baseline: {state['resp_rate_baseline']:.1f} br/min")
 
-    def _estimate_stage_from_hr(self, state, hr, hrv):
-        """Estimate sleep stage from HR/HRV deviation.
+    def _estimate_stage_from_hr(self, state, hr, hrv, resp_rate=None):
+        """Estimate sleep stage from HR/HRV/RespRate deviation.
 
         Uses the trained ML classifier if available, falling
         back to hardcoded thresholds if not.
@@ -1084,6 +1136,11 @@ class SleepController(hass.Hass):
         hrv_pct = 0.0
         if baseline_hrv and baseline_hrv > 0 and hrv is not None:
             hrv_pct = (hrv - baseline_hrv) / baseline_hrv
+
+        resp_rate_pct = 0.0
+        baseline_rr = state.get("resp_rate_baseline")
+        if resp_rate is not None and baseline_rr and baseline_rr > 0:
+            resp_rate_pct = (resp_rate - baseline_rr) / baseline_rr
 
         # Calculate hours_in for ML features
         hours_in = 0.0
@@ -1104,6 +1161,9 @@ class SleepController(hass.Hass):
                 "hrv_pct": hrv_pct,
                 "hours_in": hours_in,
             }
+            # Add resp_rate_pct if the model was trained with it
+            if "resp_rate_pct" in self.stage_classifier.get("features", []):
+                features["resp_rate_pct"] = resp_rate_pct
             ml_stage, confidence = self._predict_stage_ml(features)
             if ml_stage and confidence >= STAGE_CLASSIFIER_MIN_CONFIDENCE:
                 self.log(f"Stage ML: {ml_stage} ({confidence:.0%})",
@@ -1113,12 +1173,22 @@ class SleepController(hass.Hass):
             self.log(f"Stage ML low-conf: {ml_stage} ({confidence:.0%})"
                      f" — using heuristic", level="DEBUG")
 
-        # Heuristic fallback
+        # Heuristic fallback (enhanced with respiratory rate)
+        has_rr = resp_rate is not None and baseline_rr is not None
+
+        # Deep sleep: low HR, high HRV, slow/stable breathing
         if hr_pct < -0.10 and hrv_pct > 0.10:
             return "deep"
         elif hr_pct < -0.15:
+            # Additional RR confirmation: deep = low RR
+            if has_rr and resp_rate_pct > 0.10:
+                return "core"  # HR low but breathing elevated → light sleep
             return "deep"
+        # REM: moderate HR, low HRV, elevated/irregular breathing
         elif -0.05 < hr_pct < 0.05 and hrv_pct < -0.10:
+            return "rem"
+        elif has_rr and resp_rate_pct > 0.15 and hr_pct > -0.05 and hrv_pct < -0.05:
+            # RR elevated + HRV suppressed = likely REM
             return "rem"
         elif hr_pct > 0.05:
             return "awake"
@@ -1380,6 +1450,102 @@ class SleepController(hass.Hass):
                 f"GitHub issue failed: {e}",
                 level="WARNING")
 
+    # ── Health Check & Monitoring ──────────────────────────────────
+
+    def _health_check(self, kwargs):
+        """Periodic self-diagnostic. Runs on startup and every hour.
+
+        Validates that all sensors are reachable, learning is
+        accumulating, and no silent failures are occurring.
+        """
+        issues = []
+        warnings = []
+
+        # 1. Verify all health entities exist and are reachable
+        for name, entity_id in HEALTH_ENTITIES.items():
+            state = self.get_state(entity_id)
+            if state in (None, "unavailable"):
+                issues.append(f"Health entity {name} ({entity_id}) is {state}")
+            elif state in ("unknown", ""):
+                warnings.append(f"Health entity {name} ({entity_id}) has no data yet")
+
+        # 2. Verify topper sensor entities exist
+        for zone in self.zones:
+            for key, entity_id in ZONE_SENSORS[zone].items():
+                state = self.get_state(entity_id)
+                if state in (None, "unavailable"):
+                    issues.append(f"Sensor {key} ({entity_id}) is {state}")
+
+        # 3. Check learning state
+        for zone in self.zones:
+            targets = self.learned_targets.get(zone, {})
+            targets_default = all(
+                targets.get(s) == STAGE_BODY_TARGETS.get(s)
+                for s in STAGE_BODY_TARGETS
+            )
+            zs = self.zone_state.get(zone, {})
+            td_count = len(zs.get("stage_training_data", []))
+            scl_count = len(zs.get("setting_change_log", []))
+
+            if targets_default:
+                warnings.append(
+                    f"[{zone}] Learned targets still at defaults — "
+                    f"no adaptation has occurred yet"
+                )
+            if self.transfer_rate == DEGREES_PER_SETTING_POINT:
+                warnings.append(
+                    f"[{zone}] Transfer rate still at initial estimate "
+                    f"({DEGREES_PER_SETTING_POINT}) — not yet refined"
+                )
+
+            self.log(f"[{zone}] HEALTH: "
+                     f"training_samples={td_count}, "
+                     f"setting_changes={scl_count}, "
+                     f"targets_adapted={not targets_default}, "
+                     f"transfer_rate={self.transfer_rate:.3f}")
+
+        # 4. Check stage classifier
+        if self.stage_classifier is None:
+            # Check if enough data to train
+            for zone in self.zones:
+                td = self.zone_state.get(zone, {}).get("stage_training_data", [])
+                if len(td) >= 30:
+                    warnings.append(
+                        f"[{zone}] {len(td)} training samples collected "
+                        f"but stage classifier not yet trained! "
+                        f"Run: python3 ml/train_stage_classifier.py"
+                    )
+
+        # 5. State file check
+        if STATE_FILE.exists():
+            try:
+                state_age_sec = (
+                    datetime.now().timestamp()
+                    - STATE_FILE.stat().st_mtime
+                )
+                if state_age_sec > 86400:  # > 24 hours old
+                    warnings.append(
+                        f"State file is {state_age_sec / 3600:.0f}h old — "
+                        f"controller may not be saving properly"
+                    )
+            except OSError:
+                pass
+        else:
+            issues.append("No state file found — starting from scratch")
+
+        # Report
+        if issues:
+            self.log("=" * 40)
+            self.log("HEALTH CHECK: ISSUES FOUND")
+            for i in issues:
+                self.log(f"  ❌ {i}", level="WARNING")
+            self.log("=" * 40)
+        if warnings:
+            for w in warnings:
+                self.log(f"  ⚠️  {w}", level="WARNING")
+        if not issues and not warnings:
+            self.log("HEALTH CHECK: All systems nominal")
+
     # ── State Persistence ────────────────────────────────────────────
 
     def _save_state(self):
@@ -1414,6 +1580,17 @@ class SleepController(hass.Hass):
             data = json.loads(STATE_FILE.read_text())
             for zone, zdata in data.items():
                 self.zone_state[zone] = self._fresh_zone_state()
+
+                # Restore persistent zone state fields that survive across nights
+                saved_state = zdata.get("state", {})
+                _PERSISTENT_KEYS = (
+                    "stage_training_data",    # ML training samples (accumulate forever)
+                    "setting_change_log",     # Transfer function samples
+                )
+                for key in _PERSISTENT_KEYS:
+                    if key in saved_state and saved_state[key]:
+                        self.zone_state[zone][key] = saved_state[key]
+
                 # Restore learned targets
                 saved = zdata.get("learned_targets", {})
                 if saved:
@@ -1432,6 +1609,24 @@ class SleepController(hass.Hass):
                 pns = zdata.get("prior_night_stages", {})
                 if pns:
                     self.prior_night_stages[zone] = pns
+
+            # Log what was restored
+            for zone in data:
+                zs = self.zone_state.get(zone, {})
+                td_count = len(zs.get("stage_training_data", []))
+                scl_count = len(zs.get("setting_change_log", []))
+                lt = self.learned_targets.get(zone, {})
+                targets_changed = any(
+                    lt.get(s) != STAGE_BODY_TARGETS.get(s)
+                    for s in STAGE_BODY_TARGETS
+                )
+                self.log(
+                    f"[{zone}] Restored: "
+                    f"{td_count} training samples, "
+                    f"{scl_count} setting changes, "
+                    f"targets {'ADAPTED' if targets_changed else 'DEFAULT'}, "
+                    f"transfer_rate={self.transfer_rate:.3f}"
+                )
             self.log(f"Loaded state from {STATE_FILE}")
         except (json.JSONDecodeError, KeyError) as e:
             self.log(f"Failed to load state: {e}",

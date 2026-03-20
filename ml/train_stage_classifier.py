@@ -76,13 +76,27 @@ def load_from_csv(csv_path: str) -> list[dict]:
 
 def extract_features(sample: dict) -> list[float]:
     """Convert a sample dict into a feature vector."""
-    return [
+    feats = [
         sample["hr_pct"],       # HR % deviation from baseline
         sample["hrv_pct"],      # HRV % deviation from baseline
         sample["hours_in"],     # hours since bedtime
     ]
+    if "resp_rate_pct" in sample:
+        feats.append(sample["resp_rate_pct"])  # RR % deviation from baseline
+    return feats
 
 
+def get_feature_names(samples: list[dict]) -> list[str]:
+    """Determine feature names based on available data."""
+    names = ["hr_pct", "hrv_pct", "hours_in"]
+    # Include resp_rate_pct if majority of samples have it
+    has_rr = sum(1 for s in samples if "resp_rate_pct" in s)
+    if has_rr > len(samples) * 0.5:
+        names.append("resp_rate_pct")
+    return names
+
+
+# Will be set dynamically based on available data
 FEATURE_NAMES = ["hr_pct", "hrv_pct", "hours_in"]
 
 
@@ -112,8 +126,18 @@ def train_classifier(samples: list[dict]) -> dict:
         print(f"WARNING: Only {len(samples)} samples. "
               "Model will be unreliable. Need ~50+ for decent accuracy.")
 
+    # Determine features based on available data
+    feature_names = get_feature_names(samples)
+    print(f"\nUsing features: {feature_names}")
+
+    # For samples missing resp_rate_pct when we're using it, fill with 0.0
+    if "resp_rate_pct" in feature_names:
+        for s in samples:
+            if "resp_rate_pct" not in s:
+                s["resp_rate_pct"] = 0.0
+
     # Build arrays
-    X = np.array([extract_features(s) for s in samples])
+    X = np.array([[s.get(f, 0.0) for f in feature_names] for s in samples])
     y = np.array([s["stage"] for s in samples])
 
     # Class distribution
@@ -149,12 +173,12 @@ def train_classifier(samples: list[dict]) -> dict:
     # Feature importance
     print("Feature importance:")
     for name, imp in sorted(
-            zip(FEATURE_NAMES, clf.feature_importances_),
+            zip(feature_names, clf.feature_importances_),
             key=lambda x: -x[1]):
         print(f"  {name:15s}: {imp:.3f}")
 
     # Export to portable JSON format
-    model_json = _export_forest_json(clf, FEATURE_NAMES, STAGES)
+    model_json = _export_forest_json(clf, feature_names, STAGES)
 
     return model_json
 

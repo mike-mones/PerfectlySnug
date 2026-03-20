@@ -1,0 +1,232 @@
+[
+  {
+    "stage": "rem",
+    "hr": 73,
+    "hrv": 0,
+    "hr_pct": 0.0,
+    "hrv_pct": 0,
+    "hours_in": 0.26,
+    "source": "influxdb_recovery",
+    "night": "2026-03-09"
+  },
+  {
+    "stage": "deep",
+    "hr": 72,
+    "hrv": 42,
+    "hr_pct": -0.0137,
+    "hrv_pct": -0.321,
+    "hours_in": 13.33,
+    "source": "influxdb_recovery",
+    "night": "2026-03-09"
+  },
+  {
+    "stage": "deep",
+    "hr": 99,
+    "hrv": 55.5,
+    "hr_pct": 0.3562,
+    "hrv_pct": -0.1028,
+    "hours_in": 13.39,
+    "source": "influxdb_recovery",
+    "night": "2026-03-09"
+  },
+  {
+    "stage": "rem",
+    "hr": 99,
+    "hrv": 55.5,
+    "hr_pct": 0.3562,
+    "hrv_pct": -0.1028,
+    "hours_in": 13.39,
+    "source": "influxdb_recovery",
+    "night": "2026-03-09"
+  },
+  {
+    "stage": "core",
+    "hr": 99,
+    "hrv": 55.5,
+    "hr_pct": 0.3562,
+    "hrv_pct": -0.1028,
+    "hours_in": 13.4,
+    "source": "influxdb_recovery",
+    "night": "2026-03-09"
+  },
+  {
+    "stage": "rem",
+    "hr": 99,
+    "hrv": 55.5,
+    "hr_pct": 0.3562,
+    "hrv_pct": -0.1028,
+    "hours_in": 13.45,
+    "source": "influxdb_recovery",
+    "night": "2026-03-09"
+  },
+  {
+    "stage": "rem",
+    "hr": 99,
+    "hrv": 55.5,
+    "hr_pct": 0.3562,
+    "hrv_pct": -0.1028,
+    "hours_in": 13.51,
+    "source": "influxdb_recovery",
+    "night": "2026-03-09"
+  },
+  {
+    "stage": "rem",
+    "hr": 99,
+    "hrv": 55.5,
+    "hr_pct": 0.3562,
+    "hrv_pct": -0.1028,
+    "hours_in": 13.57,
+    "source": "influxdb_recovery",
+    "night": "2026-03-09"
+  },
+  {
+    "stage": "deep",
+    "hr": 67,
+    "hrv": 27.1,
+    "hr_pct": -0.0694,
+    "hrv_pct": -0.4779,
+    "hours_in": 11.59,
+    "source": "influxdb_recovery",
+    "night": "2026-03-11"
+  },
+  {
+    "stage": "rem",
+    "hr": 67,
+    "hrv": 27.1,
+    "hr_pct": -0.0694,
+    "hrv_pct": -0.4779,
+    "hours_in": 11.59,
+    "source": "influxdb_recovery",
+    "night": "2026-03-11"
+  },
+  {
+    "stage": "core",
+    "hr": 67,
+    "hrv": 27.1,
+    "hr_pct": -0.0694,
+    "hrv_pct": -0.4779,
+    "hours_in": 11.69,
+    "source": "influxdb_recovery",
+    "night": "2026-03-11"
+  },
+  {
+    "stage": "rem",
+    "hr": 67,
+    "hrv": 27.1,
+    "hr_pct": -0.0694,
+    "hrv_pct": -0.4779,
+    "hours_in": 11.69,
+    "source": "influxdb_recovery",
+    "night": "2026-03-11"
+  },
+  {
+    "stage": "deep",
+    "hr": 63,
+    "hrv": 27.1,
+    "hr_pct": -0.125,
+    "hrv_pct": -0.4779,
+    "hours_in": 12.32,
+    "source": "influxdb_recovery",
+    "night": "2026-03-11"
+  },
+  {
+    "stage": "core",
+    "hr": 63,
+    "hrv": 27.1,
+    "hr_pct": -0.125,
+    "hrv_pct": -0.4779,
+    "hours_in": 13.12,
+    "source": "influxdb_recovery",
+    "night": "2026-03-11"
+  },
+  {
+    "stage": "deep",
+    "hr": 63,
+    "hrv": 27.1,
+    "hr_pct": -0.125,
+    "hrv_pct": -0.4779,
+    "hours_in": 13.12,
+    "source": "influxdb_recovery",
+    "night": "2026-03-11"
+  },
+  {
+    "stage": "rem",
+    "hr": 74,
+    "hrv": 46.3,
+    "hr_pct": 0.0278,
+    "hrv_pct": -0.1086,
+    "hours_in": 13.28,
+    "source": "influxdb_recovery",
+    "night": "2026-03-11"
+  },
+  {
+    "stage": "core",
+    "hr": 74,
+    "hrv": 46.3,
+    "hr_pct": 0.0278,
+    "hrv_pct": -0.1086,
+    "hours_in": 13.71,
+    "source": "influxdb_recovery",
+    "night": "2026-03-11"
+  },
+  {
+    "stage": "core",
+    "hr": 68,
+    "hrv": 22.3,
+    "hr_pct": -0.236,
+    "hrv_pct": 0.1955,
+    "hours_in": 11.27,
+    "source": "influxdb_recovery",
+    "night": "2026-03-12"
+  },
+  {
+    "stage": "rem",
+    "hr": 81,
+    "hrv": 52.3,
+    "hr_pct": 0.0848,
+    "hrv_pct": 0.0332,
+    "hours_in": 11.67,
+    "source": "influxdb_recovery",
+    "night": "2026-03-18"
+  },
+  {
+    "stage": "core",
+    "hr": 64.2,
+    "hrv": 52.3,
+    "hr_pct": -0.1402,
+    "hrv_pct": 0.0332,
+    "hours_in": 11.76,
+    "source": "influxdb_recovery",
+    "night": "2026-03-18"
+  },
+  {
+    "stage": "rem",
+    "hr": 64.2,
+    "hrv": 52.3,
+    "hr_pct": -0.1402,
+    "hrv_pct": 0.0332,
+    "hours_in": 11.76,
+    "source": "influxdb_recovery",
+    "night": "2026-03-18"
+  },
+  {
+    "stage": "rem",
+    "hr": 66,
+    "hrv": 52.3,
+    "hr_pct": -0.1161,
+    "hrv_pct": 0.0332,
+    "hours_in": 12.46,
+    "source": "influxdb_recovery",
+    "night": "2026-03-18"
+  },
+  {
+    "stage": "core",
+    "hr": 58,
+    "hrv": 42.1,
+    "hr_pct": -0.0866,
+    "hrv_pct": -0.2617,
+    "hours_in": 10.79,
+    "source": "influxdb_recovery",
+    "night": "2026-03-19"
+  }
+]
