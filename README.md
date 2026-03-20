@@ -210,7 +210,8 @@ Every 5 minutes during sleep, it:
 ### Deploy Workflow
 ```bash
 # Edit locally, then SCP to HA Green:
-scp PerfectlySnug/appdaemon/sleep_controller.py root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
+scp PerfectlySnug/appdaemon/sleep_controller_v2.py root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
+scp PerfectlySnug/ml/state/controller_state.json root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
 scp PerfectlySnug/appdaemon/apps.yaml root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
 
 # Restart AppDaemon:
