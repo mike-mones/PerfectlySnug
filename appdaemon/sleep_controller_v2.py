@@ -317,6 +317,15 @@ class SleepController(hass.Hass):
     # ── Control Loop ─────────────────────────────────────────────────
 
     def _control_loop(self, kwargs):
+        try:
+            self._control_loop_inner(kwargs)
+        except Exception as exc:
+            self.log(f"CONTROL LOOP CRASH: {exc}", level="ERROR")
+            import traceback
+            self.log(traceback.format_exc(), level="ERROR")
+            self._save_state()  # preserve state on crash
+
+    def _control_loop_inner(self, kwargs):
         now = datetime.now()
 
         for zone in self.zones:
@@ -367,7 +376,10 @@ class SleepController(hass.Hass):
                 # after a few hours of running, auto-restart the topper to bypass the limit.
                 if apple_asleep and prev_progress > 90:
                     self.log(f"[{zone}] Topper organically shut down (progress={prev_progress}, stage={apple_stage}), but sleep continues. Auto-restarting!")
-                    self.call_service("switch/turn_on", entity_id=f"switch.smart_topper_{zone}_side_running")
+                    try:
+                        self.call_service("switch/turn_on", entity_id=f"switch.smart_topper_{zone}_side_running")
+                    except Exception as svc_err:
+                        self.log(f"[{zone}] FAILED to auto-restart topper: {svc_err}", level="ERROR")
                     self._notify(f"SleepSync: Topper schedule exhausted early ({duration:.1f}h). Auto-restarted to maintain cooling during {apple_stage} sleep.")
                     state["last_run_progress"] = 0  # prevent spam while it restarts
                     state["last_restart_ts"] = now.isoformat()
@@ -756,11 +768,14 @@ class SleepController(hass.Hass):
             # topper uses the right value regardless of its phase
             if new_setting != current_setting:
                 for p_name, p_entity in ZONE_PRESETS[zone].items():
-                    self.call_service(
-                        "number/set_value",
-                        entity_id=p_entity,
-                        value=new_setting)
-                    state["last_settings_pushed"][p_name] = new_setting
+                    try:
+                        self.call_service(
+                            "number/set_value",
+                            entity_id=p_entity,
+                            value=new_setting)
+                        state["last_settings_pushed"][p_name] = new_setting
+                    except Exception as svc_err:
+                        self.log(f"[{zone}] FAILED to set {p_entity}: {svc_err}", level="ERROR")
                 self.log(f"[{zone}] SET all presets = {new_setting:+d}")
 
                 # 8b. Log for transfer function learning (#9)
@@ -1034,6 +1049,7 @@ class SleepController(hass.Hass):
         try:
             new_val = int(float(new))
         except (ValueError, TypeError):
+            self.log(f"[{zone}] Setting change unparseable: {new!r}", level="DEBUG")
             return
         if pushed is not None and new_val == pushed:
             return  # Our own write, ignore
@@ -1088,8 +1104,8 @@ class SleepController(hass.Hass):
                     age_min = (datetime.now(changed_dt.tzinfo) - changed_dt).total_seconds() / 60
                     if age_min <= STAGE_STALE_MINUTES and state in STAGE_BODY_TARGETS:
                         return state
-                except (ValueError, TypeError):
-                    pass
+                except (ValueError, TypeError) as e:
+                    self.log(f"Sleep stage datetime parse error: {e} (raw={last_changed!r})", level="WARNING")
             elif state in STAGE_BODY_TARGETS:
                 return state
 
@@ -1262,10 +1278,12 @@ class SleepController(hass.Hass):
     def _read_entity(self, entity_id):
         state = self.get_state(entity_id)
         if state in (None, "unknown", "unavailable", ""):
+            self.log(f"Entity {entity_id} returned {state!r}", level="DEBUG")
             return None
         try:
             return float(state)
         except (ValueError, TypeError):
+            self.log(f"Entity {entity_id} not numeric: {state!r}", level="WARNING")
             return None
 
     def _read_sensors(self, zone):
@@ -1289,7 +1307,7 @@ class SleepController(hass.Hass):
                 NOTIFY_SERVICE,
                 message=message,
                 title="SleepSync")
-        except Exception as e:
+        except (TypeError, AttributeError, ConnectionError) as e:
             self.log(f"Notify failed: {e}", level="WARNING")
 
     # ── Anomaly Detection ────────────────────────────────────────────
@@ -1390,8 +1408,8 @@ class SleepController(hass.Hass):
                 try:
                     gh_token = tp.read_text().strip()
                     break
-                except Exception:
-                    pass
+                except OSError as e:
+                    self.log(f"Failed to read GitHub token from {tp}: {e}", level="WARNING")
 
         if not gh_token:
             self.log("No GitHub token — skipping issue",
@@ -1629,5 +1647,6 @@ class SleepController(hass.Hass):
                 )
             self.log(f"Loaded state from {STATE_FILE}")
         except (json.JSONDecodeError, KeyError) as e:
-            self.log(f"Failed to load state: {e}",
-                     level="WARNING")
+            self.log(f"STATE FILE CORRUPTED — starting from scratch. "
+                     f"Error: {e}. Training data and learned "
+                     f"targets are LOST.", level="ERROR")

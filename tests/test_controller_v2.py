@@ -204,7 +204,7 @@ class TestControlLoopIntegrity:
             "CONTINUOUS_LEARN_RATE not found"
         )
         # Verify it's actually used in the control loop
-        loop_fn = _extract_method(src, "_control_loop")
+        loop_fn = _extract_method(src, "_control_loop_inner")
         assert "CONTINUOUS_LEARN_RATE" in loop_fn, (
             "CONTINUOUS_LEARN_RATE defined but not used in control loop"
         )
@@ -212,10 +212,18 @@ class TestControlLoopIntegrity:
     def test_save_called_periodically(self):
         """State must be saved periodically during the control loop."""
         src = _read_controller_source()
-        loop_fn = _extract_method(src, "_control_loop")
+        loop_fn = _extract_method(src, "_control_loop_inner")
         assert "_save_state" in loop_fn, (
             "_save_state not called in control loop — "
             "state will only be saved at wake"
+        )
+
+    def test_control_loop_has_crash_handler(self):
+        """Control loop must have top-level exception handling."""
+        src = _read_controller_source()
+        loop_fn = _extract_method(src, "_control_loop")
+        assert "except" in loop_fn and "_save_state" in loop_fn, (
+            "_control_loop must catch exceptions and save state on crash"
         )
 
 
