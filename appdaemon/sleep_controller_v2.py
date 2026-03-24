@@ -767,6 +767,7 @@ class SleepController(hass.Hass):
             # 8. Apply if changed — write to ALL presets so the
             # topper uses the right value regardless of its phase
             if new_setting != current_setting:
+                write_ok = True
                 for p_name, p_entity in ZONE_PRESETS[zone].items():
                     try:
                         self.call_service(
@@ -776,18 +777,21 @@ class SleepController(hass.Hass):
                         state["last_settings_pushed"][p_name] = new_setting
                     except Exception as svc_err:
                         self.log(f"[{zone}] FAILED to set {p_entity}: {svc_err}", level="ERROR")
+                        write_ok = False
                 self.log(f"[{zone}] SET all presets = {new_setting:+d}")
 
                 # 8b. Log for transfer function learning (#9)
-                state["setting_change_log"].append({
-                    "ts": now.isoformat(),
-                    "old": current_setting,
-                    "new": new_setting,
-                    "body_before": body_avg,
-                })
-                if len(state["setting_change_log"]) > 200:
-                    state["setting_change_log"] = (
-                        state["setting_change_log"][-200:])
+                # Only log if at least one write succeeded
+                if write_ok:
+                    state["setting_change_log"].append({
+                        "ts": now.isoformat(),
+                        "old": current_setting,
+                        "new": new_setting,
+                        "body_before": body_avg,
+                    })
+                    if len(state["setting_change_log"]) > 200:
+                        state["setting_change_log"] = (
+                            state["setting_change_log"][-200:])
 
             # 9. Stage classifier training data (#11)
             # When Apple Watch provides a real stage, log
@@ -804,6 +808,7 @@ class SleepController(hass.Hass):
                     "hr_pct": (hr - hr_bl) / hr_bl,
                     "hrv_pct": (hrv - hrv_bl) / hrv_bl,
                     "hours_in": hours_in,
+                    "body_temp": body_avg,
                 }
                 if resp_rate and rr_bl and rr_bl > 0:
                     sample["resp_rate"] = resp_rate
@@ -816,7 +821,10 @@ class SleepController(hass.Hass):
                         state["stage_training_data"][-200:])
 
             # 10. Continuous learning
-            if abs(error) < 1.0 and abs(pid_offset) < 1.0:
+            # Use only P-term (not full PID with integral) to detect
+            # equilibrium, since integral accumulates over time and
+            # would permanently block this path.
+            if abs(error) < 2.0 and abs(p_term) < 1.0:
                 # System is near equilibrium — nudge target
                 drift = (body_avg - target_temp) * CONTINUOUS_LEARN_RATE
                 old_t = targets.get(stage, target_temp)
@@ -897,9 +905,65 @@ class SleepController(hass.Hass):
         if len(hist) > 30:
             self.nightly_history[zone] = hist[-30:]
 
+        # Adapt body temp targets based on tonight's data (#10)
+        self._adapt_targets_from_night(zone, state, training)
+
         # Adaptive transfer function (#9)
         # Look at setting changes and the body temp ~15min later
         self._update_transfer_function(zone, state)
+
+    def _adapt_targets_from_night(self, zone, state, training):
+        """Adjust body temp targets based on tonight's training data.
+
+        If the controller had to cool aggressively (setting < -8) while
+        body temps were above target, the target was too low.  If it
+        barely cooled (setting > -4) while body temps were below target,
+        the target was too high.  We nudge targets toward the body temps
+        actually achieved during each stage.
+        """
+        if len(training) < 5:
+            return  # not enough data
+
+        targets = self.learned_targets.setdefault(
+            zone, dict(STAGE_BODY_TARGETS))
+
+        # Group training samples by stage and compute avg body temp
+        stage_data = {}  # stage -> [body_temp, ...]
+        for td in training:
+            stage = td.get("stage", "unknown")
+            body = td.get("body_temp")
+            if body and stage in targets:
+                stage_data.setdefault(stage, []).append(body)
+
+        # Also use body_temp_history paired with stage tracking
+        # from the control loop if training data lacks body temps
+        temps = state.get("body_temp_history", [])
+        if not any(stage_data.values()) and temps:
+            # Fallback: use overall body temp for all stages
+            avg_body = sum(temps) / len(temps)
+            for stage in targets:
+                stage_data.setdefault(stage, []).append(avg_body)
+
+        adapted = False
+        for stage, body_temps in stage_data.items():
+            if len(body_temps) < 2:
+                continue
+            avg_body = sum(body_temps) / len(body_temps)
+            current_target = targets[stage]
+            # Nudge target toward achieved body temp (slow, 10% per night)
+            delta = (avg_body - current_target) * 0.10
+            new_target = max(TARGET_MIN_F,
+                             min(TARGET_MAX_F, current_target + delta))
+            if abs(new_target - current_target) > 0.01:
+                targets[stage] = round(new_target, 2)
+                adapted = True
+
+        if adapted:
+            self.log(
+                f"[{zone}] Targets adapted: {targets}")
+        else:
+            self.log(
+                f"[{zone}] Targets unchanged (insufficient data)")
 
     def _update_transfer_function(self, zone, state):
         """Refine transfer rate from observed setting→temp

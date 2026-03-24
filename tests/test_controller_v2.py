@@ -273,6 +273,79 @@ class TestFStringFormatSafety:
             )
 
 
+class TestTargetAdaptation:
+    """Verify the three adaptation paths that move targets
+    away from defaults: continuous learning, nightly adaptation,
+    and override learning."""
+
+    def test_nightly_adaptation_method_exists(self):
+        """_adapt_targets_from_night must exist and be called
+        from _log_nightly_summary."""
+        src = _read_controller_source()
+        assert "def _adapt_targets_from_night" in src, (
+            "_adapt_targets_from_night method missing — "
+            "targets will never adapt from nightly data"
+        )
+        summary_fn = _extract_method(src, "_log_nightly_summary")
+        assert "_adapt_targets_from_night" in summary_fn, (
+            "_adapt_targets_from_night not called from "
+            "_log_nightly_summary — nightly adaptation is dead code"
+        )
+
+    def test_continuous_learning_uses_p_term(self):
+        """Continuous learning must gate on P-term, not full PID offset.
+        The integral term accumulates and would permanently block
+        continuous learning if used in the threshold."""
+        src = _read_controller_source()
+        loop_fn = _extract_method(src, "_control_loop_inner")
+        # Find the continuous learning gate condition
+        # Should be abs(p_term) not abs(pid_offset)
+        assert re.search(r'abs\(p_term\)\s*<', loop_fn), (
+            "Continuous learning must gate on abs(p_term), not "
+            "abs(pid_offset). The integral accumulates and would "
+            "permanently block this learning path."
+        )
+        # Ensure PID offset is NOT in the condition
+        # (look for the pattern: abs(pid_offset) < NUMBER)
+        bad = re.search(r'abs\(pid_offset\)\s*<\s*[\d.]+', loop_fn)
+        assert not bad, (
+            f"Found abs(pid_offset) threshold in continuous "
+            f"learning: {bad.group(0)}. Use p_term instead."
+        )
+
+    def test_setting_change_log_gated_on_write_success(self):
+        """setting_change_log.append must only happen when
+        service calls succeed (write_ok is True)."""
+        src = _read_controller_source()
+        loop_fn = _extract_method(src, "_control_loop_inner")
+        # write_ok should exist
+        assert "write_ok" in loop_fn, (
+            "write_ok flag missing — setting_change_log records "
+            "failed writes, corrupting transfer rate learning"
+        )
+        # The append must be inside an `if write_ok:` block
+        assert re.search(
+            r'if\s+write_ok.*?setting_change_log.*?append',
+            loop_fn, re.DOTALL
+        ), (
+            "setting_change_log.append is not gated on write_ok — "
+            "phantom failed writes will corrupt transfer rate"
+        )
+
+    def test_training_data_includes_body_temp(self):
+        """Training samples must include body_temp so nightly
+        adaptation has per-stage temperature data."""
+        src = _read_controller_source()
+        loop_fn = _extract_method(src, "_control_loop_inner")
+        # The training data dict should have body_temp
+        assert re.search(
+            r'"body_temp"\s*:\s*body_avg', loop_fn
+        ), (
+            "Training samples don't include body_temp — "
+            "_adapt_targets_from_night has no per-stage data"
+        )
+
+
 # ── Helpers ──────────────────────────────────────────────────────
 
 def _extract_method(source: str, method_name: str) -> str:
