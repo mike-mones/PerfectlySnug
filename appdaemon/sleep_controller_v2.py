@@ -970,7 +970,7 @@ class SleepController(hass.Hass):
                 f"{current_phase}: "
                 f"{last_pushed:+d}->{actual:+d} "
                 f"(delta={actual - last_pushed:+d}) | "
-                f"body={body:.1f if body else '?'}°F "
+                f"body={f'{body:.1f}' if body else '?'}°F "
                 f"ambient={amb} "
                 f"stage={state.get('last_stage','?')}")
             return {
