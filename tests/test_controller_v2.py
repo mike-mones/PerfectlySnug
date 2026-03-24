@@ -227,6 +227,52 @@ class TestControlLoopIntegrity:
         )
 
 
+class TestFStringFormatSafety:
+    """F-strings with format specifiers must not use conditional
+    expressions inside the format spec (e.g., {x:.1f if x else '?'}).
+    Python parses the entire thing after : as a format spec, causing
+    ValueError at runtime. This test catches that class of bug."""
+
+    def test_no_conditional_format_specifiers(self):
+        """No f-string should have 'if...else' inside a format spec."""
+        src = _read_controller_source()
+        # Pattern: {variable_name:FORMAT_SPEC if ... else ...}
+        # The colon starts a format spec, and 'if' inside it is invalid
+        bad_pattern = re.compile(
+            r'\{[^}]*:\.[0-9]+[a-z]\s+if\s+.*?else\s+.*?\}')
+        matches = bad_pattern.findall(src)
+        assert not matches, (
+            f"Found conditional expression inside f-string format "
+            f"specifier (will crash at runtime): {matches}"
+        )
+
+    def test_all_log_fstrings_compile(self):
+        """Every self.log() f-string must compile without SyntaxError."""
+        src = _read_controller_source()
+        # The file must parse cleanly as Python
+        try:
+            ast.parse(src)
+        except SyntaxError as e:
+            raise AssertionError(
+                f"Controller has syntax error: {e}"
+            )
+
+    def test_format_specifiers_are_valid(self):
+        """All :.Nf format specifiers must apply to actual numeric
+        expressions, not conditional ternaries."""
+        src = _read_controller_source()
+        # Find all f-string expressions with format specs like :.1f, :.0f
+        # Pattern: {EXPR:.Nf} where EXPR should not contain 'if' or 'else'
+        fspec_pattern = re.compile(
+            r'\{([^}:]+):\.[0-9]+f\}')
+        for match in fspec_pattern.finditer(src):
+            expr = match.group(1)
+            assert ' if ' not in expr and ' else ' not in expr, (
+                f"Format specifier applied to ternary expression "
+                f"(will crash): {match.group(0)}"
+            )
+
+
 # ── Helpers ──────────────────────────────────────────────────────
 
 def _extract_method(source: str, method_name: str) -> str:
