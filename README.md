@@ -4,9 +4,7 @@
 
 ### Architecture
 ```
-Apple Watch (SleepSync) → HA Webhook → input_text/input_number entities
-                                            ↓
-PerfectlySnug Topper ← AppDaemon Controller v2 → reads body sensors, ambient, HR/HRV, stage
+PerfectlySnug Topper ← AppDaemon Controller v3 → reads body sensors
      (HA integration)        ↓
                         Writes to number.smart_topper_left_side_{bedtime,sleep,wake}_temperature
 ```
@@ -14,41 +12,36 @@ PerfectlySnug Topper ← AppDaemon Controller v2 → reads body sensors, ambient
 ### Components
 | Component | Location | Description |
 |---|---|---|
-| Controller v2 | `appdaemon/sleep_controller_v2.py` | Data-driven PID controller, deployed to AppDaemon on HA Green |
-| Stage Classifier | `ml/train_stage_classifier.py` | Trains an ML sleep stage classifier from controller data, exports portable JSON model |
-| SleepSync | `../SleepSync/` (separate repo) | watchOS app, sends HR/HRV/sleep stage to HA via webhook |
+| Controller v3 | `appdaemon/sleep_controller_v3.py` | Simplified threshold controller, deployed to AppDaemon on HA Green |
+| Controller v2 (archived) | `appdaemon/sleep_controller_v2.py` | Previous PID/ML controller (replaced Mar 2026) |
 | Webapp | `webapp/overnight.html` + `overnight.js` | Overnight temperature tracking dashboard, Chart.js |
 | Correlator | `tools/correlate.py` | Historical data analysis pipeline |
-| Data audit | `/tmp/audit_data.py` | Entity verification script |
 
-### Controller v2 Features
-- **PID control** in -10 to +10 setting space (NOT °F targets)
-- **Bounded offsets** from user baseline (-8/-6/-5), max ±3
-- **15-min loop** with 1.5°F deadband (prevents oscillation)
+### Controller v3 Features
+- **Simple threshold control**: if body temp > 83°F, step 1 cooler; if below, step 1 warmer
+- **Static baseline curve**: bedtime=-8, sleep=-6, wake=-5 (user preference)
+- **Bounded offsets**: max ±3 from baseline per phase
+- **5-min loop** with 1.0°F deadband
 - **Occupancy detection**: body temp < 78°F = empty bed, skip control
-- **Sleep onset detection**: hold bedtime temp for 15 min after first sleep stage
-- **Awake freeze**: don't adjust during brief awakenings
-- **Ambient compensation**: adjusts for room temp deviation from 74°F reference
-- **Time-of-night drift**: targets shift +0.3°F/hr for natural body temp rise
-- **Prior-night deficit**: extra cooling if deep < 15%, extra warming if REM < 20%
-- **Wake-up ramp**: gradual warming 25 min before wake phase
+- **Occupancy hold**: 20-min freeze after first detecting body in bed
 - **Kill switch**: 3 rapid button presses disables controller for the night
-- **Anomaly watchdog**: detects oscillation/extremes, auto-resets to baseline, creates GitHub issue
-- **Continuous learning**: slowly drifts targets toward equilibrium body temp
-- **Adaptive transfer function**: refines °F-per-setting-point from data
+- **Manual override detection**: accepts user changes without fighting them
+- **Baseline reset at wake**: presets reset to USER_BASELINE when night ends
+- **Auto-restart**: if topper schedule exhausts but body still in bed, restarts
 - **Hard clamp**: setting NEVER goes above 0 (cooling only)
-- **ML sleep stage classifier**: when Apple Watch data is stale, uses a trained Random Forest (JSON, no sklearn) to infer sleep stage from HR/HRV deviation + time-of-night. Falls back to hardcoded heuristic if model not deployed or confidence < 45%.
+- **No Apple Watch / sleep stage dependency** — uses only the topper's built-in body sensors
+- **No PID, ML, or learning** — deterministic behavior, no hidden state drift
 
 ### Key Constants
 | Parameter | Value | Source |
 |---|---|---|
 | USER_BASELINE | bedtime=-8, sleep=-6, wake=-5 | Manual preference (Mar 9-10) |
-| DEGREES_PER_SETTING_POINT | 0.45 | Correlation analysis (5 nights) |
-| DEADBAND_F | 1.5 | Tuned after oscillation bug |
-| LOOP_INTERVAL_SEC | 900 (15 min) | Tuned after oscillation bug |
-| AMBIENT_REFERENCE_F | 74.0 | Historical average |
+| BODY_TEMP_TARGET_F | 83.0 | Comfortable body sensor reading |
+| DEADBAND_F | 1.0 | Don't adjust if error < 1°F |
+| LOOP_INTERVAL_SEC | 300 (5 min) | Responsive but not noisy |
+| MAX_OFFSET_FROM_BASELINE | 3 | Keeps settings in reasonable range |
 | OCCUPANCY_THRESHOLD_F | 78.0 | Below this = nobody in bed |
-| STAGE_CLASSIFIER_MIN_CONFIDENCE | 0.45 | Below this, fall back to heuristic |
+| OCCUPANCY_HOLD_MINUTES | 20 | Hold setting after first detecting body |
 
 ### Known Issues
 - **DEADBAND_F and OCCUPANCY_THRESHOLD_F were missing** (Mar 10-11): These constants were used in the control loop but never defined in the constants section. Caused NameError crash every loop iteration — controller would initialize and read the current setting but never adjust it. Fixed Mar 11 by adding both back. Also fixed LOOP_INTERVAL_SEC (was 300 in code but should have been 900 per tuning).
@@ -61,22 +54,17 @@ PerfectlySnug Topper ← AppDaemon Controller v2 → reads body sensors, ambient
 ### Deploy Commands
 ```bash
 # Controller to AppDaemon (from local network):
-scp appdaemon/sleep_controller_v2.py root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
+scp appdaemon/sleep_controller_v3.py appdaemon/apps.yaml root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
 
 # Controller to AppDaemon (remote via Nabu Casa SSH terminal):
-curl -sL https://raw.githubusercontent.com/mike-mones/PerfectlySnug/main/appdaemon/sleep_controller_v2.py -o /addon_configs/a0d7b954_appdaemon/apps/sleep_controller_v2.py
-ha apps restart a0d7b954_appdaemon
-
-# Stage classifier (train locally, deploy JSON to HA Green):
-scp root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/controller_state.json /tmp/
-python3 ml/train_stage_classifier.py --state /tmp/controller_state.json
-scp ml/models/stage_classifier.json root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
-
-# SleepSync to watch:
-cd ../SleepSync && xcodegen generate && xcodebuild ... && xcrun devicectl device install app --device 00008310-00096A392187A01E build/Build/Products/Release-watchos/SleepSync.app
+curl -sL https://raw.githubusercontent.com/mike-mones/PerfectlySnug/main/appdaemon/sleep_controller_v3.py -o /addon_configs/a0d7b954_appdaemon/apps/sleep_controller_v3.py
+curl -sL https://raw.githubusercontent.com/mike-mones/PerfectlySnug/main/appdaemon/apps.yaml -o /addon_configs/a0d7b954_appdaemon/apps/apps.yaml
 
 # HA core restart (for config.yaml changes):
 ssh root@192.168.0.106 'ha core check && ha core restart'
+
+# Run tests:
+python3 -m pytest PerfectlySnug/tests/test_controller_v3.py -v
 ```
 
 ---
