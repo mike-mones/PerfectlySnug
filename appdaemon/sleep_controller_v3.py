@@ -489,7 +489,9 @@ class SleepController(hass.Hass):
         body_vals = [v for k in ("body_right", "body_center", "body_left")
                      if (v := sensors.get(k)) is not None]
         if body_vals:
-            sensors["body_avg"] = sum(body_vals) / len(body_vals)
+            # Use max sensor to avoid edge sensors masking body heat
+            # (AC cools unoccupied edges while center stays warm)
+            sensors["body_avg"] = max(body_vals)
         return sensors
 
     def _is_sleeping(self, zone):
