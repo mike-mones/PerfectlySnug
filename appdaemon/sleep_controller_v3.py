@@ -41,7 +41,7 @@ USER_BASELINE = {
     "wake":    -5,      # Ease off cooling toward morning
 }
 # Max offset the controller can apply around baseline
-MAX_OFFSET_FROM_BASELINE = 3
+MAX_OFFSET_FROM_BASELINE = 4
 
 # Body temperature target (°F) — single value, no per-stage targets
 BODY_TEMP_TARGET_F = 83.0
