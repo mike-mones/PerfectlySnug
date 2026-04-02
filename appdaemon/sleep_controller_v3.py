@@ -150,6 +150,7 @@ class SleepController(hass.Hass):
             "override_history": [],
             "last_run_progress": 0,
             "last_restart_ts": None,
+            "consecutive_below_target": 0,
         }
 
     # ── Phase Detection ──────────────────────────────────────────────
@@ -357,12 +358,23 @@ class SleepController(hass.Hass):
             if error > 0:
                 # Too warm → cool more (decrease setting)
                 new_setting = current_setting - 1
+                state["consecutive_below_target"] = 0
             else:
-                # Too cool → warm up (increase setting)
+                # Too cool → require 3 consecutive readings before warming
+                # (avoids overreacting to momentary repositioning/bathroom)
+                state["consecutive_below_target"] = state.get("consecutive_below_target", 0) + 1
+                if state["consecutive_below_target"] < 3:
+                    elapsed = (now - datetime.fromisoformat(state["bedtime_ts"])).total_seconds() / 60
+                    self.log(
+                        f"[{zone}] t+{elapsed:.0f}m {phase} | "
+                        f"body={body_avg:.1f}°F target={BODY_TEMP_TARGET_F}°F "
+                        f"err={error:+.1f}°F | below {state['consecutive_below_target']}/3 — holding | "
+                        f"setting={current_setting:+d}")
+                    continue
                 new_setting = current_setting + 1
 
-            # Clamp: always allow full cooling (-10), never heat (0 max)
-            new_setting = max(-10, min(0, new_setting))
+            # Clamp: full cooling (-10) to light cooling (-1), never neutral/heating
+            new_setting = max(-10, min(-1, new_setting))
 
             elapsed = (now - datetime.fromisoformat(state["bedtime_ts"])).total_seconds() / 60
             self.log(
