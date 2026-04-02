@@ -151,6 +151,7 @@ class SleepController(hass.Hass):
             "last_run_progress": 0,
             "last_restart_ts": None,
             "consecutive_below_target": 0,
+            "bed_empty_since": None,
         }
 
     # ── Phase Detection ──────────────────────────────────────────────
@@ -225,19 +226,18 @@ class SleepController(hass.Hass):
                 bedtime = datetime.fromisoformat(state["bedtime_ts"])
                 duration = (now - bedtime).total_seconds() / 3600
 
-                # Auto-restart if topper schedule exhausted but body still in bed
-                prev_progress = state.get("last_run_progress", 0)
+                # Topper's built-in schedule shut off — auto-restart if body in bed
                 body_sensors = self._read_sensors(zone)
                 body_in_bed = (body_sensors.get("body_avg") or 0) >= OCCUPANCY_THRESHOLD_F
-                if prev_progress > 90 and body_in_bed:
-                    self.log(f"[{zone}] Topper shut down (progress={prev_progress}) but body in bed. Auto-restarting!")
+                if body_in_bed:
+                    self.log(f"[{zone}] Topper off but body in bed — auto-restarting! ({duration:.1f}h in)")
                     try:
                         self.call_service("switch/turn_on", entity_id=f"switch.smart_topper_{zone}_side_running")
                     except Exception as svc_err:
                         self.log(f"[{zone}] FAILED to auto-restart: {svc_err}", level="ERROR")
-                    self._notify(f"SleepSync: Topper schedule exhausted ({duration:.1f}h). Auto-restarted.")
                     state["last_run_progress"] = 0
                     state["last_restart_ts"] = now.isoformat()
+                    state["bed_empty_since"] = None
                     continue
 
                 # Wait for restart to take effect
@@ -246,32 +246,38 @@ class SleepController(hass.Hass):
                     self.log(f"[{zone}] Waiting for auto-restart to take effect.")
                     continue
 
-                # ── End of night ──
-                overrides = len(state["override_history"])
-                temps = state["body_temp_history"]
-                avg_t = (sum(temps) / len(temps)) if temps else 0
-                self.log(
-                    f"[{zone}] *** WAKE *** {duration:.1f}h | "
-                    f"body avg {avg_t:.1f}°F | "
-                    f"{overrides} overrides")
-
-                # Reset presets to baseline for next night
-                for phase, entity in ZONE_PRESETS[zone].items():
-                    baseline_val = USER_BASELINE.get(phase, -6)
-                    try:
-                        self.call_service("number/set_value", entity_id=entity, value=baseline_val)
-                    except Exception as exc:
-                        self.log(f"[{zone}] Failed to reset {phase} to {baseline_val}: {exc}", level="ERROR")
-                self.log(f"[{zone}] Presets reset to baseline: {USER_BASELINE}")
-
-                state["bedtime_ts"] = None
-                state["last_settings_pushed"] = {}
-                state["override_history"] = []
-                self._save_state()
+                # Body not in bed and topper off — end session
+                self._end_night(zone, state, now)
                 continue
 
             if not is_sleeping:
                 continue
+
+            # ── Occupancy-based shutoff (topper still running but bed empty) ──
+            body_sensors_check = self._read_sensors(zone)
+            body_present = (body_sensors_check.get("body_avg") or 0) >= OCCUPANCY_THRESHOLD_F
+            if not body_present and state.get("occupancy_hold_done"):
+                # Body was previously detected, now gone
+                if state.get("bed_empty_since") is None:
+                    state["bed_empty_since"] = now.isoformat()
+                    self.log(f"[{zone}] Bed empty — starting 20-min shutoff timer")
+                else:
+                    empty_min = (now - datetime.fromisoformat(state["bed_empty_since"])).total_seconds() / 60
+                    if empty_min >= 20:
+                        self.log(f"[{zone}] Bed empty for {empty_min:.0f}m — turning off topper")
+                        try:
+                            self.call_service("switch/turn_off", entity_id=f"switch.smart_topper_{zone}_side_running")
+                        except Exception as svc_err:
+                            self.log(f"[{zone}] FAILED to turn off: {svc_err}", level="ERROR")
+                        self._end_night(zone, state, now)
+                        continue
+                    else:
+                        self.log(f"[{zone}] Bed empty {empty_min:.0f}/20m — waiting")
+                        continue
+            elif body_present and state.get("bed_empty_since") is not None:
+                # Body returned before 20-min timer expired
+                self.log(f"[{zone}] Body returned — cancelling shutoff timer")
+                state["bed_empty_since"] = None
 
             # ── Manual mode: stop adjusting for the night ──
             if state["manual_mode"]:
@@ -399,6 +405,35 @@ class SleepController(hass.Hass):
         self._loop_count += 1
         if self._loop_count % 10 == 0:
             self._save_state()
+
+    # ── End of Night ───────────────────────────────────────────────
+
+    def _end_night(self, zone, state, now):
+        """Clean up after a sleep session."""
+        bedtime = datetime.fromisoformat(state["bedtime_ts"])
+        duration = (now - bedtime).total_seconds() / 3600
+        overrides = len(state["override_history"])
+        temps = state["body_temp_history"]
+        avg_t = (sum(temps) / len(temps)) if temps else 0
+        self.log(
+            f"[{zone}] *** WAKE *** {duration:.1f}h | "
+            f"body avg {avg_t:.1f}°F | "
+            f"{overrides} overrides")
+
+        # Reset presets to baseline for next night
+        for phase, entity in ZONE_PRESETS[zone].items():
+            baseline_val = USER_BASELINE.get(phase, -6)
+            try:
+                self.call_service("number/set_value", entity_id=entity, value=baseline_val)
+            except Exception as exc:
+                self.log(f"[{zone}] Failed to reset {phase} to {baseline_val}: {exc}", level="ERROR")
+        self.log(f"[{zone}] Presets reset to baseline: {USER_BASELINE}")
+
+        state["bedtime_ts"] = None
+        state["last_settings_pushed"] = {}
+        state["override_history"] = []
+        state["bed_empty_since"] = None
+        self._save_state()
 
     # ── Override Detection ───────────────────────────────────────────
 
