@@ -361,12 +361,7 @@ class SleepController(hass.Hass):
                 # Too cool → warm up (increase setting)
                 new_setting = current_setting + 1
 
-            # Clamp to baseline ± MAX_OFFSET
-            lower = baseline - MAX_OFFSET_FROM_BASELINE
-            upper = baseline + MAX_OFFSET_FROM_BASELINE
-            new_setting = max(lower, min(upper, new_setting))
-
-            # Hard clamp: -10 to 0 (cooling only, never heating)
+            # Clamp: always allow full cooling (-10), never heat (0 max)
             new_setting = max(-10, min(0, new_setting))
 
             elapsed = (now - datetime.fromisoformat(state["bedtime_ts"])).total_seconds() / 60
