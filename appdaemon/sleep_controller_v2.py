@@ -13,7 +13,7 @@ in real-time based on:
 The controller does NOT hardcode temperature targets. Instead, it learns
 from correlation analysis and continuously adapts from manual overrides.
 
-Control loop (every 5 min):
+Control loop (every 3 min):
   1. Read body temp, sleep stage, ambient temp
   2. Look up target body temp for current stage
   3. Compute error (actual - target)
@@ -374,13 +374,18 @@ class SleepController(hass.Hass):
                 
                 # If the native 10-hour limit kicked in (progress ~100) OR Apple Health insists we are still asleep
                 # after a few hours of running, auto-restart the topper to bypass the limit.
-                if apple_asleep and prev_progress > 90:
-                    self.log(f"[{zone}] Topper organically shut down (progress={prev_progress}, stage={apple_stage}), but sleep continues. Auto-restarting!")
+                # Fallback: if sleep stage is stale/unknown but body temp shows someone in bed, restart anyway.
+                body_sensors = self._read_sensors(zone)
+                body_in_bed = (body_sensors.get("body_avg") or 0) >= OCCUPANCY_THRESHOLD_F
+                should_restart = prev_progress > 90 and (apple_asleep or body_in_bed)
+                if should_restart:
+                    restart_reason = f"stage={apple_stage}" if apple_asleep else f"body_in_bed (stage={apple_stage} stale/awake)"
+                    self.log(f"[{zone}] Topper organically shut down (progress={prev_progress}, {restart_reason}), but sleep continues. Auto-restarting!")
                     try:
                         self.call_service("switch/turn_on", entity_id=f"switch.smart_topper_{zone}_side_running")
                     except Exception as svc_err:
                         self.log(f"[{zone}] FAILED to auto-restart topper: {svc_err}", level="ERROR")
-                    self._notify(f"SleepSync: Topper schedule exhausted early ({duration:.1f}h). Auto-restarted to maintain cooling during {apple_stage} sleep.")
+                    self._notify(f"SleepSync: Topper schedule exhausted early ({duration:.1f}h). Auto-restarted ({restart_reason}).")
                     state["last_run_progress"] = 0  # prevent spam while it restarts
                     state["last_restart_ts"] = now.isoformat()
                     continue
@@ -393,6 +398,19 @@ class SleepController(hass.Hass):
                     continue
 
                 self._log_nightly_summary(zone, state, duration)
+
+                # Reset presets to USER_BASELINE so the next night
+                # starts at the intended temperatures, not stale values.
+                for phase, entity in ZONE_PRESETS[zone].items():
+                    baseline_val = USER_BASELINE.get(phase, -6)
+                    try:
+                        self.call_service(
+                            "number/set_value",
+                            entity_id=entity,
+                            value=baseline_val)
+                    except Exception as exc:
+                        self.log(f"[{zone}] Failed to reset {phase} to {baseline_val}: {exc}", level="ERROR")
+                self.log(f"[{zone}] Presets reset to baseline: {USER_BASELINE}")
 
                 state["bedtime_ts"] = None
                 state["last_settings_pushed"] = {}
@@ -595,7 +613,7 @@ class SleepController(hass.Hass):
             target_temp += time_adj
 
             # 5c. Lag compensation
-            lag_samples = int(SETTING_LAG_MINUTES / 5)
+            lag_samples = int(SETTING_LAG_MINUTES * 60 / LOOP_INTERVAL_SEC)
             hist = state["body_temp_history"]
             if len(hist) > lag_samples:
                 effective_body = hist[-lag_samples]

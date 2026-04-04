@@ -1,0 +1,18 @@
+[Unit]
+Description=Health Auto Export Receiver
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=mikemones
+WorkingDirectory=/home/mikemones/health_receiver
+ExecStart=/home/mikemones/health_receiver/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8080 --timeout-keep-alive 30
+Restart=always
+RestartSec=5
+
+# Memory safety: kill the service, not the whole Pi
+MemoryMax=300M
+MemoryHigh=200M
+
+[Install]
+WantedBy=multi-user.target

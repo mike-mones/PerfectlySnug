@@ -95,19 +95,20 @@ class TestNoAppleWatchDependency:
 
 
 class TestStructuralInvariants:
-    """Verify the simplified controller has the essential features."""
+    """Verify the controller has the essential features."""
 
     def test_baseline_reset_at_wake(self):
         """Presets must be reset to USER_BASELINE at end of night."""
         src = _read_source()
-        loop = _extract_method(src, "_control_loop_inner")
-        assert "USER_BASELINE" in loop
-        assert "number/set_value" in loop
+        end_night = _extract_method(src, "_end_night")
+        assert "USER_BASELINE" in end_night
+        assert "number/set_value" in end_night
 
-    def test_no_heating_guard(self):
-        """Controller must never send positive (heating) settings."""
+    def test_hot_threshold_exists(self):
+        """Controller must have a hot safety threshold."""
         src = _read_source()
-        assert "min(0, new_setting)" in src or "min(0," in src
+        loop = _extract_method(src, "_control_loop_inner")
+        assert "BODY_HOT_THRESHOLD_F" in loop
 
     def test_kill_switch_exists(self):
         src = _read_source()
@@ -125,16 +126,12 @@ class TestStructuralInvariants:
         assert "except" in loop
         assert "_save_state" in loop
 
-    def test_max_offset_clamping(self):
-        """Settings must be clamped to baseline ± MAX_OFFSET."""
+    def test_ambient_compensation(self):
+        """Controller must compensate for ambient temperature."""
         src = _read_source()
         loop = _extract_method(src, "_control_loop_inner")
-        assert "MAX_OFFSET_FROM_BASELINE" in loop
-
-    def test_deadband(self):
-        src = _read_source()
-        loop = _extract_method(src, "_control_loop_inner")
-        assert "DEADBAND_F" in loop
+        assert "AMBIENT_REFERENCE_F" in loop
+        assert "AMBIENT_COMPENSATION_PER_F" in loop
 
     def test_auto_restart(self):
         """Topper auto-restart must be preserved."""
@@ -142,41 +139,40 @@ class TestStructuralInvariants:
         loop = _extract_method(src, "_control_loop_inner")
         assert "auto-restart" in loop.lower() or "switch/turn_on" in loop
 
-    def test_writes_all_presets(self):
-        """When adjusting, must write to all presets (bedtime/sleep/wake)."""
+    def test_writes_active_phase_only(self):
+        """When adjusting, must write to active phase only."""
         src = _read_source()
         loop = _extract_method(src, "_control_loop_inner")
-        assert "ZONE_PRESETS[zone].items()" in loop
+        assert "preset_entity" in loop
+        assert 'entity_id=preset_entity' in loop
+
+    def test_multi_night_learning(self):
+        """Controller must have multi-night learning."""
+        src = _read_source()
+        assert "_update_learned" in src
+        assert "_load_learned" in src
+        assert "LEARNING_FILE" in src
 
 
 class TestSimplicity:
-    """Verify the controller stays simple — guard against re-complexifying."""
+    """Verify the controller stays simple."""
 
     def test_line_count(self):
-        """Controller should be under 600 lines."""
+        """Controller should be under 800 lines."""
         src = _read_source()
         lines = src.strip().split('\n')
-        assert len(lines) < 600, f"Controller is {len(lines)} lines — too complex!"
+        assert len(lines) < 800, f"Controller is {len(lines)} lines — too complex!"
 
-    def test_no_continuous_learning(self):
+    def test_no_pid_controller(self):
         src = _read_source()
-        assert "CONTINUOUS_LEARN_RATE" not in src
-        assert "learned_targets" not in src
-
-    def test_no_ambient_compensation(self):
-        src = _read_source()
-        assert "AMBIENT_COMPENSATION" not in src
-        assert "AMBIENT_REFERENCE_F" not in src
+        assert "PID_KP" not in src
+        assert "PID_KI" not in src
+        assert "p_term" not in src
+        assert "i_term" not in src
 
     def test_no_wake_ramp(self):
         src = _read_source()
         assert "WAKE_RAMP" not in src
-
-    def test_single_body_temp_target(self):
-        """Must use a single body temp target, not per-stage targets."""
-        src = _read_source()
-        assert "BODY_TEMP_TARGET_F" in src
-        assert "STAGE_BODY_TARGETS" not in src
 
 
 # ── Behavioral Tests with Mocks ──────────────────────────────────────────
@@ -208,6 +204,7 @@ def _make_controller(entity_states=None):
     c = SleepController.__new__(SleepController)
     c.zones = ["left"]
     c.zone_state = {"left": c._fresh_zone_state()}
+    c.learned = {}  # Multi-night learned adjustments
     c._loop_count = 0
 
     _entity_states = entity_states or {}
@@ -305,14 +302,14 @@ class TestWakeDetection:
 
 
 class TestThresholdControl:
-    def _sleeping_controller(self, body_temp, current_setting=-6):
+    def _sleeping_controller(self, body_temp, current_setting=-6, ambient=70.0):
         """Create a controller that's mid-sleep with given body temp and setting."""
         c = _make_controller({
             "sensor.smart_topper_left_side_run_progress": "50",
             "sensor.smart_topper_left_side_body_sensor_right": str(body_temp),
             "sensor.smart_topper_left_side_body_sensor_center": str(body_temp),
             "sensor.smart_topper_left_side_body_sensor_left": str(body_temp),
-            "sensor.smart_topper_left_side_ambient_temperature": "74",
+            "sensor.smart_topper_left_side_ambient_temperature": str(ambient),
             "number.smart_topper_left_side_start_length_minutes": "60",
             "number.smart_topper_left_side_wake_length_minutes": "30",
             "number.smart_topper_left_side_bedtime_temperature": str(current_setting),
@@ -328,65 +325,71 @@ class TestThresholdControl:
         }
         return c
 
-    def test_too_warm_cools_down(self):
-        """Body temp above target should decrease setting by 1."""
-        c = self._sleeping_controller(body_temp=85.0, current_setting=-6)
+    def test_ambiguous_zone_follows_preference(self):
+        """Body temp 80-85°F should follow preference, not adjust based on sensors."""
+        # At 83°F (ambiguous zone), amb=70 (ref), baseline sleep=-6
+        c = self._sleeping_controller(body_temp=83.0, current_setting=-4, ambient=70.0)
+        calls = []
+        c.call_service = lambda s, **k: calls.append((s, k))
+        c._control_loop_inner(None)
+        set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
+        # Effective = baseline -6 + learned 0 + ambient 0 = -6
+        # Current is -4, so should move toward -6
+        if set_calls:
+            values = [k["value"] for _, k in set_calls]
+            assert all(v == -6 for v in values), f"Expected -6, got {values}"
+
+    def test_hot_safety_cools_down(self):
+        """Body temp above 85°F should trigger safety cooling."""
+        c = self._sleeping_controller(body_temp=86.0, current_setting=-6, ambient=70.0)
+        # Need 2 consecutive hot readings
+        c.zone_state["left"]["hot_streak"] = 1
         calls = []
         c.call_service = lambda s, **k: calls.append((s, k))
         c._control_loop_inner(None)
         set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
         if set_calls:
             values = [k["value"] for _, k in set_calls]
-            assert all(v == -7 for v in values), f"Expected -7, got {values}"
+            assert all(v <= -7 for v in values), f"Expected ≤-7, got {values}"
 
-    def test_too_cool_warms_up(self):
-        """Body temp below target should increase setting by 1."""
-        c = self._sleeping_controller(body_temp=81.0, current_setting=-8)
+    def test_cold_room_warms_setting(self):
+        """Colder room should produce warmer effective setting."""
+        # ambient=66 is 4°F below reference 70, so compensation = +2
+        c = self._sleeping_controller(body_temp=83.0, current_setting=-6, ambient=66.0)
         calls = []
         c.call_service = lambda s, **k: calls.append((s, k))
         c._control_loop_inner(None)
         set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
+        # Effective = baseline -6 + ambient_adj +2 = -4
         if set_calls:
             values = [k["value"] for _, k in set_calls]
-            assert all(v == -7 for v in values), f"Expected -7, got {values}"
+            assert all(v == -4 for v in values), f"Expected -4, got {values}"
 
-    def test_deadband_no_change(self):
-        """Body temp within deadband should NOT change setting."""
-        c = self._sleeping_controller(body_temp=83.5, current_setting=-6)
+    def test_learned_adjustment_applied(self):
+        """Multi-night learned adjustments should shift the effective setting."""
+        c = self._sleeping_controller(body_temp=83.0, current_setting=-6, ambient=70.0)
+        c.learned = {"left": {"sleep": 2}}  # Learned +2 for sleep
         calls = []
         c.call_service = lambda s, **k: calls.append((s, k))
         c._control_loop_inner(None)
         set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
-        assert len(set_calls) == 0, "Should not adjust within deadband"
-
-    def test_clamp_to_max_offset(self):
-        """Setting must not exceed baseline ± MAX_OFFSET."""
-        # Start at -9 (sleep baseline=-6, so offset already -3 = max)
-        # Body is very warm → wants to go colder, but should be clamped
-        c = self._sleeping_controller(body_temp=88.0, current_setting=-9)
-        calls = []
-        c.call_service = lambda s, **k: calls.append((s, k))
-        c._control_loop_inner(None)
-        set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
-        # -9 - 1 = -10, but sleep baseline is -6, max offset 3, so lower bound is -9
-        # Should not go below -9
+        # Effective = baseline -6 + learned +2 = -4
         if set_calls:
             values = [k["value"] for _, k in set_calls]
-            # The floor is baseline - MAX_OFFSET = -6 - 3 = -9
-            assert all(v >= -9 for v in values), f"Setting went below -9: {values}"
+            assert all(v == -4 for v in values), f"Expected -4, got {values}"
 
-    def test_never_heats(self):
-        """Setting must never go positive (heating)."""
-        # Start at 0, body very cold → wants to warm up
-        c = self._sleeping_controller(body_temp=78.5, current_setting=0)
-        # Override baseline clamp for this test
+    def test_override_floor_respected(self):
+        """Manual override floor must prevent cooling below user's choice."""
+        c = self._sleeping_controller(body_temp=83.0, current_setting=-3, ambient=70.0)
+        c.zone_state["left"]["override_floor"] = {"sleep": -3}
         calls = []
         c.call_service = lambda s, **k: calls.append((s, k))
         c._control_loop_inner(None)
         set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
-        if set_calls:
-            values = [k["value"] for _, k in set_calls]
-            assert all(v <= 0 for v in values), f"Heating detected: {values}"
+        # Effective = -6, but floor = -3, so should stay at -3
+        assert len(set_calls) == 0 or all(
+            k["value"] >= -3 for _, k in set_calls
+        ), "Should not go below override floor"
 
 
 class TestKillSwitch:

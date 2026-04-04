@@ -1,36 +1,36 @@
 """
-Simplified Sleep Temperature Controller — AppDaemon App
-========================================================
+Preference-Based Sleep Temperature Controller — AppDaemon App
+==============================================================
 
 Controls the PerfectlySnug topper setting (-10 to +10) based on:
-  - Body sensor temperature (from the topper's built-in sensors)
-  - Phase of night (bedtime → sleep → wake, from elapsed time)
-  - Static user baseline curve (USER_BASELINE)
+  - Learned preference curve (baseline + multi-night override learning)
+  - Ambient room temperature compensation
+  - Body sensor extremes only (>85°F = too hot, used for safety cooling)
 
-Does NOT use: Apple Watch sleep stages, PID control, ML classifiers,
-transfer function learning, or multi-night trend adaptation.
+Body sensors at 80–85°F are AMBIGUOUS — they reflect body-mattress contact
+temperature, not perceived comfort. The controller does NOT chase a body
+temp target. Instead, it follows the user's learned preferences and only
+intervenes when sensors show clear extremes.
 
 Control loop (every 5 min):
   1. Detect if topper is running (occupancy)
   2. Determine phase from elapsed time
-  3. Read body sensors
-  4. If body temp > target: step 1 cooler. If below: step 1 warmer.
-  5. Respect deadband, clamp to baseline ± MAX_OFFSET
-  6. Detect manual overrides → disable controller for the night
-  7. At wake: reset presets to baseline
+  3. Compute effective setting: learned baseline + ambient compensation
+  4. If body sensor > 85°F: step 1 cooler (safety)
+  5. Detect manual overrides → learn for future nights + set tonight's floor
+  6. At wake: save override data, reset presets to learned baseline
 """
 
 import json
 from datetime import datetime
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 import hassapi as hass
 
 # ── Configuration ────────────────────────────────────────────────────────
 
 LOOP_INTERVAL_SEC = 300     # 5 min control loop
-MAX_STEP_PER_LOOP = 1       # ±1 per cycle
-DEADBAND_F = 1.0            # Don't adjust if error < 1°F
 OCCUPANCY_THRESHOLD_F = 78.0  # Body temp below this = nobody in bed
 OCCUPANCY_HOLD_MINUTES = 20  # Hold setting after first detecting body
 
@@ -40,18 +40,31 @@ USER_BASELINE = {
     "sleep":   -6,      # Moderate cooling during bulk of night
     "wake":    -5,      # Ease off cooling toward morning
 }
-# Max offset the controller can apply around baseline
-MAX_OFFSET_FROM_BASELINE = 4
 
-# Body temperature target (°F) — single value, no per-stage targets
-BODY_TEMP_TARGET_F = 83.0
+# Body sensor thresholds — only act on clear extremes
+BODY_HOT_THRESHOLD_F = 85.0   # Above this = definitely too hot, cool down
+BODY_COLD_THRESHOLD_F = 80.0  # Below this while occupied = definitely cold
+# 80–85°F is the "ambiguous zone" — follow preferences, don't adjust
+
+# Ambient temperature compensation
+# Reference ambient: typical room temp where baselines feel right
+AMBIENT_REFERENCE_F = 70.0
+# Per-degree offset: colder room → warmer setting (+0.5 per degree below ref)
+AMBIENT_COMPENSATION_PER_F = 0.5
 
 # Kill switch: rapid manual changes disable controller for the night
 KILL_SWITCH_CHANGES = 3
 KILL_SWITCH_WINDOW_SEC = 20
 
+# Multi-night learning: how many nights of override data to retain
+LEARNING_HISTORY_NIGHTS = 7
+
 # Notification entity
 NOTIFY_SERVICE = "notify/mobile_app_mike_mones_iphone_14"
+
+# InfluxDB logging
+INFLUXDB_URL = "http://a0d7b954-influxdb:8086"
+INFLUXDB_DB = "perfectly_snug"
 
 # ── Entity Mappings ──────────────────────────────────────────────────────
 
@@ -101,6 +114,7 @@ _container = Path("/config/apps")
 _host = Path("/addon_configs/a0d7b954_appdaemon/apps")
 STATE_DIR = _container if _container.exists() else _host
 STATE_FILE = STATE_DIR / "controller_state_v3.json"
+LEARNING_FILE = STATE_DIR / "learned_preferences.json"
 
 
 # ── Main AppDaemon App ──────────────────────────────────────────────────
@@ -109,12 +123,14 @@ class SleepController(hass.Hass):
 
     def initialize(self):
         self.log("=" * 60)
-        self.log("Sleep Controller v3 (simplified) initializing")
+        self.log("Sleep Controller v3 (preference-based) initializing")
 
         self.zones = ["left"]
         self.zone_state = {}
+        self.learned = {}  # Multi-night learned adjustments
 
         self._load_state()
+        self._load_learned()
 
         for zone in self.zones:
             if zone not in self.zone_state:
@@ -133,8 +149,9 @@ class SleepController(hass.Hass):
 
         self.log(f"  Zones: {', '.join(self.zones)}")
         self.log(f"  Baselines: {USER_BASELINE}")
-        self.log(f"  Body temp target: {BODY_TEMP_TARGET_F}°F")
-        self.log(f"  Max offset: ±{MAX_OFFSET_FROM_BASELINE}")
+        self.log(f"  Hot threshold: {BODY_HOT_THRESHOLD_F}°F")
+        self.log(f"  Ambient ref: {AMBIENT_REFERENCE_F}°F")
+        self.log(f"  Learned adjustments: {self.learned}")
         self.log("Controller ready")
         self.log("=" * 60)
 
@@ -148,9 +165,10 @@ class SleepController(hass.Hass):
             "occupancy_detected_ts": None,
             "occupancy_hold_done": False,
             "override_history": [],
+            "override_floor": {},
             "last_run_progress": 0,
             "last_restart_ts": None,
-            "consecutive_below_target": 0,
+            "hot_streak": 0,  # Consecutive readings above BODY_HOT_THRESHOLD
             "bed_empty_since": None,
         }
 
@@ -206,6 +224,7 @@ class SleepController(hass.Hass):
                 state["bedtime_ts"] = now.isoformat()
                 state["last_settings_pushed"] = {}
                 state["override_history"] = []
+                state["override_floor"] = {}
                 state["manual_mode"] = False
                 state["recent_setting_changes"] = []
                 state["body_temp_history"] = []
@@ -332,15 +351,44 @@ class SleepController(hass.Hass):
                 state["recent_setting_changes"].append(datetime.now().timestamp())
                 if self._check_kill_switch(zone, state):
                     continue
-                # Accept the override, don't learn from it
+                # Accept the override
                 state["last_settings_pushed"][phase] = override["actual"]
                 state["override_history"].append(override)
+                # Set a floor — controller must not go below this tonight
+                if override["delta"] > 0:
+                    state["override_floor"][phase] = override["actual"]
+                    self.log(
+                        f"[{zone}] LEARNED: {phase} floor raised to "
+                        f"{override['actual']:+d} (user went warmer)")
+                    self._notify(
+                        f"SleepSync: Learned — {phase} won't go below "
+                        f"{override['actual']:+d} tonight")
+                self._log_to_influx(zone, phase, sensors,
+                                    override["actual"], "override")
                 self._save_state()
                 continue
 
-            # 4. Simple threshold control
+            # 4. Compute effective setting from preferences + ambient
             baseline = USER_BASELINE.get(phase, -6)
-            error = body_avg - BODY_TEMP_TARGET_F
+
+            # Apply multi-night learned adjustment for this phase
+            learned_adj = self.learned.get(zone, {}).get(phase, 0)
+            effective = baseline + learned_adj
+
+            # Ambient compensation: colder room → warmer setting
+            if ambient is not None:
+                ambient_delta = AMBIENT_REFERENCE_F - ambient
+                if ambient_delta > 0:
+                    # Room is colder than reference — warm up
+                    ambient_adj = round(ambient_delta * AMBIENT_COMPENSATION_PER_F)
+                    effective += ambient_adj
+
+            # Clamp to topper range
+            effective = max(-10, min(10, effective))
+
+            # Respect manual override floor
+            floor = state.get("override_floor", {}).get(phase, -10)
+            effective = max(effective, floor)
 
             # Read current setting
             preset_entity = ZONE_PRESETS[zone][phase]
@@ -350,54 +398,49 @@ class SleepController(hass.Hass):
                 continue
             current_setting = int(current_setting)
 
-            # Deadband: don't adjust if error is small
-            if abs(error) < DEADBAND_F:
-                elapsed = (now - datetime.fromisoformat(state["bedtime_ts"])).total_seconds() / 60
-                self.log(
-                    f"[{zone}] t+{elapsed:.0f}m {phase} | "
-                    f"body={body_avg:.1f}°F target={BODY_TEMP_TARGET_F}°F "
-                    f"err={error:+.1f}°F DEADBAND — no change | "
-                    f"setting={current_setting:+d}")
-                continue
+            # 5. Body sensor extreme check — only override preferences
+            #    when sensor data is clearly actionable
+            new_setting = effective
+            action = "preference"
 
-            # Step toward correction
-            if error > 0:
-                # Too warm → cool more (decrease setting)
-                new_setting = current_setting - 1
-                state["consecutive_below_target"] = 0
-            else:
-                # Too cool → require 3 consecutive readings before warming
-                # (avoids overreacting to momentary repositioning/bathroom)
-                state["consecutive_below_target"] = state.get("consecutive_below_target", 0) + 1
-                if state["consecutive_below_target"] < 3:
-                    elapsed = (now - datetime.fromisoformat(state["bedtime_ts"])).total_seconds() / 60
+            if body_avg is not None and body_avg > BODY_HOT_THRESHOLD_F:
+                # Clearly too hot — step cooler from current, don't jump
+                state["hot_streak"] = state.get("hot_streak", 0) + 1
+                if state["hot_streak"] >= 2:
+                    # 2+ consecutive hot readings — cool by 1
+                    new_setting = min(effective, current_setting - 1)
+                    action = "hot_safety"
                     self.log(
-                        f"[{zone}] t+{elapsed:.0f}m {phase} | "
-                        f"body={body_avg:.1f}°F target={BODY_TEMP_TARGET_F}°F "
-                        f"err={error:+.1f}°F | below {state['consecutive_below_target']}/3 — holding | "
-                        f"setting={current_setting:+d}")
-                    continue
-                new_setting = current_setting + 1
+                        f"[{zone}] HOT SAFETY: body={body_avg:.1f}°F > "
+                        f"{BODY_HOT_THRESHOLD_F}°F — cooling")
+            else:
+                state["hot_streak"] = 0
 
-            # Clamp: full cooling (-10) to light cooling (-1), never neutral/heating
-            new_setting = max(-10, min(-1, new_setting))
+            # Clamp final result
+            new_setting = max(-10, min(10, new_setting))
+            new_setting = max(new_setting, floor)
 
             elapsed = (now - datetime.fromisoformat(state["bedtime_ts"])).total_seconds() / 60
+            amb_s = f"{ambient:.0f}" if ambient is not None else "?"
             self.log(
                 f"[{zone}] t+{elapsed:.0f}m {phase} | "
-                f"body={body_avg:.1f}°F target={BODY_TEMP_TARGET_F}°F "
-                f"err={error:+.1f}°F | "
-                f"setting: {current_setting:+d}→{new_setting:+d}")
+                f"body={body_avg:.1f}°F amb={amb_s}°F | "
+                f"base={baseline:+d} learn={learned_adj:+d} "
+                f"eff={effective:+d} | "
+                f"setting: {current_setting:+d}→{new_setting:+d} "
+                f"({action})")
 
-            # 5. Apply if changed — write to ALL presets
+            # 6. Apply if changed — write to active phase only
             if new_setting != current_setting:
-                for p_name, p_entity in ZONE_PRESETS[zone].items():
-                    try:
-                        self.call_service("number/set_value", entity_id=p_entity, value=new_setting)
-                        state["last_settings_pushed"][p_name] = new_setting
-                    except Exception as svc_err:
-                        self.log(f"[{zone}] FAILED to set {p_entity}: {svc_err}", level="ERROR")
-                self.log(f"[{zone}] SET all presets = {new_setting:+d}")
+                try:
+                    self.call_service("number/set_value", entity_id=preset_entity, value=new_setting)
+                    state["last_settings_pushed"][phase] = new_setting
+                except Exception as svc_err:
+                    self.log(f"[{zone}] FAILED to set {preset_entity}: {svc_err}", level="ERROR")
+                self.log(f"[{zone}] SET {phase} = {new_setting:+d}")
+                self._log_to_influx(zone, phase, sensors, new_setting, action)
+            else:
+                self._log_to_influx(zone, phase, sensors, current_setting, "hold")
 
         # Periodic save
         if not hasattr(self, "_loop_count"):
@@ -409,29 +452,40 @@ class SleepController(hass.Hass):
     # ── End of Night ───────────────────────────────────────────────
 
     def _end_night(self, zone, state, now):
-        """Clean up after a sleep session."""
+        """Clean up after a sleep session and update multi-night learning."""
         bedtime = datetime.fromisoformat(state["bedtime_ts"])
         duration = (now - bedtime).total_seconds() / 3600
-        overrides = len(state["override_history"])
+        overrides = state["override_history"]
         temps = state["body_temp_history"]
         avg_t = (sum(temps) / len(temps)) if temps else 0
         self.log(
             f"[{zone}] *** WAKE *** {duration:.1f}h | "
             f"body avg {avg_t:.1f}°F | "
-            f"{overrides} overrides")
+            f"{len(overrides)} overrides")
 
-        # Reset presets to baseline for next night
+        # Multi-night learning: if user made overrides, adjust baselines
+        if overrides:
+            self._update_learned(zone, overrides)
+
+        # Reset presets to learned baseline for next night
         for phase, entity in ZONE_PRESETS[zone].items():
             baseline_val = USER_BASELINE.get(phase, -6)
+            learned_adj = self.learned.get(zone, {}).get(phase, 0)
+            reset_val = max(-10, min(10, baseline_val + learned_adj))
             try:
-                self.call_service("number/set_value", entity_id=entity, value=baseline_val)
+                self.call_service("number/set_value", entity_id=entity, value=reset_val)
             except Exception as exc:
-                self.log(f"[{zone}] Failed to reset {phase} to {baseline_val}: {exc}", level="ERROR")
-        self.log(f"[{zone}] Presets reset to baseline: {USER_BASELINE}")
+                self.log(f"[{zone}] Failed to reset {phase} to {reset_val}: {exc}", level="ERROR")
+        learned_baselines = {
+            p: USER_BASELINE[p] + self.learned.get(zone, {}).get(p, 0)
+            for p in USER_BASELINE
+        }
+        self.log(f"[{zone}] Presets reset to learned baseline: {learned_baselines}")
 
         state["bedtime_ts"] = None
         state["last_settings_pushed"] = {}
         state["override_history"] = []
+        state["override_floor"] = {}
         state["bed_empty_since"] = None
         self._save_state()
 
@@ -528,12 +582,56 @@ class SleepController(hass.Hass):
         sensors = {}
         for key, entity_id in ZONE_SENSORS[zone].items():
             sensors[key] = self._read_entity(entity_id)
-        body_vals = [v for k in ("body_right", "body_center", "body_left")
-                     if (v := sensors.get(k)) is not None]
+
+        # Determine which sensor is the "inner" one (closest to partner).
+        # For the left zone, body_right is inner; for right zone, body_left.
+        if zone == "left":
+            inner_key, outer_key = "body_right", "body_left"
+        else:
+            inner_key, outer_key = "body_left", "body_right"
+
+        # Check if the adjacent zone is significantly hotter — if so, the
+        # inner sensor is reading partner heat bleed, not our body temp.
+        adj_zone = "right" if zone == "left" else "left"
+        adj_sensors = ZONE_SENSORS.get(adj_zone, {})
+        adj_body_keys = ["body_right", "body_center", "body_left"]
+        adj_vals = []
+        for k in adj_body_keys:
+            eid = adj_sensors.get(k)
+            if eid:
+                v = self._read_entity(eid)
+                if v is not None:
+                    adj_vals.append(v)
+        adj_avg = (sum(adj_vals) / len(adj_vals)) if adj_vals else None
+
+        inner_val = sensors.get(inner_key)
+        outer_val = sensors.get(outer_key)
+        exclude_inner = False
+        if (inner_val is not None and outer_val is not None
+                and adj_avg is not None and adj_avg > inner_val
+                and inner_val - outer_val > 5.0):
+            # Inner sensor is >5°F hotter than outer, and adjacent zone is
+            # even hotter → inner sensor is reading partner bleed-through
+            exclude_inner = True
+            self.log(
+                f"[{zone}] Excluding {inner_key} ({inner_val:.1f}°F) — "
+                f"adj zone avg {adj_avg:.1f}°F, outer {outer_val:.1f}°F "
+                f"(bleed-through)")
+
+        use_keys = ["body_center"]
+        if not exclude_inner:
+            use_keys.append(inner_key)
+        use_keys.append(outer_key)
+
+        body_vals = [sensors[k] for k in use_keys if sensors.get(k) is not None]
         if body_vals:
-            # Use max sensor to avoid edge sensors masking body heat
-            # (AC cools unoccupied edges while center stays warm)
-            sensors["body_avg"] = max(body_vals)
+            # Use median to ignore outlier sensors — one edge may read room
+            # temp while another retains residual heat; median tracks the
+            # sensor most representative of actual body temperature.
+            body_vals_sorted = sorted(body_vals)
+            n = len(body_vals_sorted)
+            sensors["body_avg"] = body_vals_sorted[n // 2] if n % 2 else (
+                body_vals_sorted[n // 2 - 1] + body_vals_sorted[n // 2]) / 2
         return sensors
 
     def _is_sleeping(self, zone):
@@ -545,6 +643,47 @@ class SleepController(hass.Hass):
             self.call_service(NOTIFY_SERVICE, message=message, title="SleepSync")
         except (TypeError, AttributeError, ConnectionError) as e:
             self.log(f"Notify failed: {e}", level="WARNING")
+
+    # ── InfluxDB Logging ─────────────────────────────────────────────
+
+    def _log_to_influx(self, zone, phase, sensors, setting, action="hold"):
+        """Write a control-loop data point to InfluxDB."""
+        body_r = sensors.get("body_right")
+        body_c = sensors.get("body_center")
+        body_l = sensors.get("body_left")
+        body_avg = sensors.get("body_avg")
+        ambient = sensors.get("ambient")
+
+        fields = []
+        if body_r is not None:
+            fields.append(f"body_right={body_r}")
+        if body_c is not None:
+            fields.append(f"body_center={body_c}")
+        if body_l is not None:
+            fields.append(f"body_left={body_l}")
+        if body_avg is not None:
+            fields.append(f"body_median={body_avg}")
+        if ambient is not None:
+            fields.append(f"ambient={ambient}")
+        if setting is not None:
+            fields.append(f"setting={setting}i")
+        fields.append(f"hot_threshold={BODY_HOT_THRESHOLD_F}")
+
+        if not fields:
+            return
+
+        tags = f"zone={zone},phase={phase or 'unknown'},action={action}"
+        line = f"sleep_controller,{tags} {','.join(fields)}"
+
+        try:
+            req = Request(
+                f"{INFLUXDB_URL}/write?db={INFLUXDB_DB}&precision=s",
+                data=line.encode(),
+                method="POST",
+            )
+            urlopen(req, timeout=5)
+        except Exception as e:
+            self.log(f"InfluxDB write failed: {e}", level="WARNING")
 
     # ── State Persistence ────────────────────────────────────────────
 
@@ -571,3 +710,56 @@ class SleepController(hass.Hass):
             self.log(f"Loaded state from {STATE_FILE}")
         except (json.JSONDecodeError, KeyError) as e:
             self.log(f"State file corrupted: {e} — starting fresh", level="ERROR")
+
+    # ── Multi-Night Learning ─────────────────────────────────────────
+
+    def _update_learned(self, zone, overrides):
+        """Update learned adjustments from tonight's overrides.
+
+        Strategy: for each phase that was overridden, compute the average
+        delta from baseline. Blend with existing learned value using
+        exponential moving average (alpha=0.3 = 30% new, 70% old).
+        """
+        if zone not in self.learned:
+            self.learned[zone] = {}
+
+        # Group overrides by phase
+        phase_deltas = {}
+        for ov in overrides:
+            p = ov.get("phase")
+            baseline = USER_BASELINE.get(p, -6)
+            # How far the user moved from the baseline
+            delta_from_baseline = ov["actual"] - baseline
+            phase_deltas.setdefault(p, []).append(delta_from_baseline)
+
+        alpha = 0.3  # Learning rate
+        for phase, deltas in phase_deltas.items():
+            avg_delta = sum(deltas) / len(deltas)
+            old = self.learned[zone].get(phase, 0)
+            new = old * (1 - alpha) + avg_delta * alpha
+            # Round to nearest int (topper only accepts integers)
+            self.learned[zone][phase] = round(new)
+            self.log(
+                f"[{zone}] LEARNING: {phase} adj {old:+d} → {round(new):+d} "
+                f"(tonight avg delta: {avg_delta:+.1f})")
+
+        self._save_learned()
+
+    def _save_learned(self):
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            LEARNING_FILE.write_text(json.dumps(self.learned, indent=2))
+        except OSError as e:
+            self.log(f"Failed to save learned prefs: {e}", level="WARNING")
+
+    def _load_learned(self):
+        if not LEARNING_FILE.exists():
+            self.log("No learned preferences — using raw baselines")
+            self.learned = {}
+            return
+        try:
+            self.learned = json.loads(LEARNING_FILE.read_text())
+            self.log(f"Loaded learned preferences: {self.learned}")
+        except (json.JSONDecodeError, KeyError) as e:
+            self.log(f"Learned prefs corrupted: {e}", level="ERROR")
+            self.learned = {}
