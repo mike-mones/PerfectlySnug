@@ -13,6 +13,7 @@ from homeassistant.components.climate import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -141,20 +142,21 @@ class PerfectlySnugClimate(CoordinatorEntity[PerfectlySnugCoordinator], ClimateE
         if temp is not None:
             value = int(temp) + 10  # Convert -10..+10 to 0..20
             value = max(0, min(20, value))
-            await self.coordinator.async_set_setting(
+            if not await self.coordinator.async_set_setting(
                 self._zone, SETTING_L1, value
-            )
+            ):
+                raise HomeAssistantError("Could not reach Smart Topper")
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode. Only toggles SETTING_RUNNING; preserves user's L1 value."""
         if hvac_mode == HVACMode.OFF:
-            await self.coordinator.async_set_setting(self._zone, SETTING_RUNNING, 0)
+            if not await self.coordinator.async_set_setting(self._zone, SETTING_RUNNING, 0):
+                raise HomeAssistantError("Could not reach Smart Topper")
         else:
-            # Start the topper without overwriting the user's temperature setting.
-            # The user controls L1 via the temperature slider or number entity.
             running = self._data.get(SETTING_RUNNING, 0)
             if not running:
-                await self.coordinator.async_set_setting(self._zone, SETTING_RUNNING, 1)
+                if not await self.coordinator.async_set_setting(self._zone, SETTING_RUNNING, 1):
+                    raise HomeAssistantError("Could not reach Smart Topper")
 
     @callback
     def _handle_coordinator_update(self) -> None:

@@ -1,3 +1,5 @@
 sleep_controller:
   module: sleep_controller_v3
   class: SleepController
+  room_temp_entity: sensor.superior_6000s_temperature
+  postgres_host: 192.168.0.75

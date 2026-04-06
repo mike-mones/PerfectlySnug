@@ -393,13 +393,10 @@ class TestThresholdControl:
         c._control_loop_inner(None)
         set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
         # Effective = baseline -7 + learned 0 + ambient 0 = -7
-        # Current is -4, so should move toward -7
-        if set_calls:
-            values = [k["value"] for _, k in set_calls]
-            assert all(v == -7 for v in values), f"Expected -7, got {values}"
-        if set_calls:
-            values = [k["value"] for _, k in set_calls]
-            assert all(v == -7 for v in values), f"Expected -7, got {values}"
+        # Current is -4, diff=3 >= deadband(2), so controller MUST adjust
+        assert len(set_calls) > 0, "Controller should have adjusted (diff >= deadband)"
+        values = [k["value"] for _, k in set_calls]
+        assert all(v == -7 for v in values), f"Expected -7, got {values}"
 
     def test_hot_safety_cools_down(self):
         """Body temp above 85°F should trigger safety cooling."""
@@ -410,9 +407,9 @@ class TestThresholdControl:
         c.call_service = lambda s, **k: calls.append((s, k))
         c._control_loop_inner(None)
         set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
-        if set_calls:
-            values = [k["value"] for _, k in set_calls]
-            assert all(v <= -7 for v in values), f"Expected ≤-7, got {values}"
+        assert len(set_calls) > 0, "Hot safety should have triggered a setting change"
+        values = [k["value"] for _, k in set_calls]
+        assert all(v <= -7 for v in values), f"Expected ≤-7, got {values}"
 
     def test_cold_room_warms_setting(self):
         """Colder room should produce warmer effective setting."""
@@ -423,6 +420,8 @@ class TestThresholdControl:
         c._control_loop_inner(None)
         set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
         # Effective = baseline -7 + ambient_adj +2 = -5
+        # Current is -6, diff=1 < deadband(2) — may NOT change
+        # This is correct: deadband prevents small adjustments
         if set_calls:
             values = [k["value"] for _, k in set_calls]
             assert all(v == -5 for v in values), f"Expected -5, got {values}"
@@ -436,6 +435,7 @@ class TestThresholdControl:
         c._control_loop_inner(None)
         set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
         # Effective = baseline -7 + learned +2 = -5
+        # Current is -6, diff=1 < deadband(2) — may NOT change
         if set_calls:
             values = [k["value"] for _, k in set_calls]
             assert all(v == -5 for v in values), f"Expected -5, got {values}"

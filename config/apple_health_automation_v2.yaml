@@ -6,7 +6,7 @@
     webhook_id: apple_health_import
     allowed_methods:
     - POST
-    local_only: true
+    local_only: false
   actions:
   - action: system_log.write
     data:
@@ -117,7 +117,7 @@
           value: "{{ rhr_val | float(0) }}"
     - if:
       - condition: template
-        value_template: "{{ wrist_val | float(0) > 0 }}"
+        value_template: "{{ wrist_val | float(0) != 0 }}"
       then:
       - action: input_number.set_value
         target:

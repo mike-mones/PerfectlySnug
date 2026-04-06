@@ -41,4 +41,6 @@ async def async_unload_entry(
     hass: HomeAssistant, entry: PerfectlySnugConfigEntry
 ) -> bool:
     """Unload a config entry."""
+    coordinator: PerfectlySnugCoordinator = entry.runtime_data
+    coordinator.cancel_pending_refreshes()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

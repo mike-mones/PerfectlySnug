@@ -51,15 +51,12 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
             update_interval=timedelta(seconds=UPDATE_INTERVAL),
         )
         self.clients = clients
-        # Track what we last set, so we can detect external changes.
-        # Each entry is {setting_id: (value, remaining_grace_cycles)}
         self._last_set: dict[str, dict[int, tuple[int, int]]] = {}
-        # Override event log — capped to prevent unbounded memory growth
         self.override_log: deque[dict[str, Any]] = deque(maxlen=100)
-        # Per-zone last successful update timestamp
         self._zone_last_success: dict[str, datetime] = {}
-        # Last confirmed polled data per zone (separate from optimistic state)
         self._last_polled: dict[str, dict[int, int]] = {}
+        # Timer handles for delayed refreshes — cancelled on unload
+        self._pending_refreshes: list[asyncio.TimerHandle] = []
 
     def is_zone_available(self, zone: str) -> bool:
         """Return True if a zone's data is fresh enough to be considered available."""
@@ -160,9 +157,10 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
             return False
         # Schedule a delayed refresh so the device has time to apply the value
         # before we poll. This prevents the false-override detection race.
-        self.hass.loop.call_later(2.0, lambda: self.hass.async_create_task(
+        handle = self.hass.loop.call_later(2.0, lambda: self.hass.async_create_task(
             self.async_request_refresh()
         ))
+        self._pending_refreshes.append(handle)
         return True
 
     async def async_set_settings(
@@ -180,7 +178,14 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
             for sid in settings:
                 self._last_set.get(zone, {}).pop(sid, None)
             return False
-        self.hass.loop.call_later(2.0, lambda: self.hass.async_create_task(
+        handle = self.hass.loop.call_later(2.0, lambda: self.hass.async_create_task(
             self.async_request_refresh()
         ))
+        self._pending_refreshes.append(handle)
         return True
+
+    def cancel_pending_refreshes(self):
+        """Cancel any pending delayed refresh timers."""
+        for handle in self._pending_refreshes:
+            handle.cancel()
+        self._pending_refreshes.clear()

@@ -484,6 +484,10 @@ class SleepController(hass.Hass):
 
                 # Update tracking immediately (prevents controller from reverting)
                 state["last_settings_pushed"][phase] = override["actual"]
+                # Keep deep/rem in sync since they share L2
+                if phase in ("deep", "rem"):
+                    state["last_settings_pushed"]["deep"] = override["actual"]
+                    state["last_settings_pushed"]["rem"] = override["actual"]
 
                 # Start/restart the debounce timer
                 state["pending_override"] = override
@@ -575,11 +579,10 @@ class SleepController(hass.Hass):
                     total_min = elapsed_total / (progress / 100.0)
                     remaining = total_min - elapsed_total
                     ramp_progress = max(0, min(1, 1 - remaining / PRE_WAKE_RAMP_MIN))
-                    rem_baseline = USER_BASELINE.get("rem", -5)
-                    rem_learned = round(self.learned.get(zone, {}).get("rem", 0))
+                    rem_start = ml_recs.get("rem", USER_BASELINE.get("rem", -5))
                     wake_target = effective  # already computed for wake phase
                     ramp_setting = round(
-                        (rem_baseline + rem_learned) * (1 - ramp_progress) +
+                        rem_start * (1 - ramp_progress) +
                         wake_target * ramp_progress
                     )
                     new_setting = ramp_setting
@@ -630,10 +633,15 @@ class SleepController(hass.Hass):
                 try:
                     self.call_service("number/set_value", entity_id=preset_entity, value=new_setting)
                     state["last_settings_pushed"][phase] = new_setting
+                    # L2 is shared by deep and rem — keep both in sync
+                    # to prevent phantom override detection on phase transition
+                    if phase in ("deep", "rem"):
+                        state["last_settings_pushed"]["deep"] = new_setting
+                        state["last_settings_pushed"]["rem"] = new_setting
                     state["last_setting_change_ts"] = now.isoformat()
+                    self.log(f"[{zone}] SET {phase} = {new_setting:+d}")
                 except Exception as svc_err:
                     self.log(f"[{zone}] FAILED to set {preset_entity}: {svc_err}", level="ERROR")
-                self.log(f"[{zone}] SET {phase} = {new_setting:+d}")
                 self._log_to_postgres(
                     zone, phase, elapsed, sensors, ambient,
                     new_setting, effective, baseline, learned_adj, action)
@@ -826,7 +834,14 @@ class SleepController(hass.Hass):
             return
 
         phase = kwargs.get("phase")
-        pushed = state["last_settings_pushed"].get(phase)
+        # For L2 ("sleep" preset), check against both deep and rem tracking
+        # since the controller stores pushed values under those keys
+        if phase == "sleep":
+            pushed_deep = state["last_settings_pushed"].get("deep")
+            pushed_rem = state["last_settings_pushed"].get("rem")
+            pushed = pushed_deep  # Either works — they're kept in sync
+        else:
+            pushed = state["last_settings_pushed"].get(phase)
         try:
             new_val = int(float(new))
         except (ValueError, TypeError):
@@ -1172,6 +1187,6 @@ class SleepController(hass.Hass):
             if migrated:
                 self._save_learned()
             self.log(f"Loaded learned preferences: {self.learned}")
-        except (json.JSONDecodeError, KeyError) as e:
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
             self.log(f"Learned prefs corrupted: {e}", level="ERROR")
             self.learned = {}
