@@ -32,7 +32,6 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from urllib.request import Request, urlopen
 
 import hassapi as hass
 
@@ -95,10 +94,6 @@ ROOM_TEMP_ENTITY_DEFAULT = "sensor.superior_6000s_temperature"
 
 # Notification entity
 NOTIFY_SERVICE = "notify/mobile_app_mike_mones_iphone_14"
-
-# InfluxDB logging
-INFLUXDB_URL = "http://a0d7b954-influxdb:8086"
-INFLUXDB_DB = "perfectly_snug"
 
 # PostgreSQL logging (Pi at 192.168.0.75)
 POSTGRES_HOST_DEFAULT = "192.168.0.75"
@@ -483,8 +478,6 @@ class SleepController(hass.Hass):
                     f"{override['expected']:+d} → {override['actual']:+d} "
                     f"(delta {override['delta']:+d}) — "
                     f"freezing controller for {OVERRIDE_FREEZE_MIN}m")
-                self._log_to_influx(zone, phase, sensors,
-                                    override["actual"], "override")
                 elapsed = (now - datetime.fromisoformat(
                     state["bedtime_ts"])).total_seconds() / 60
                 self._log_to_postgres(
@@ -606,7 +599,6 @@ class SleepController(hass.Hass):
                 except Exception as svc_err:
                     self.log(f"[{zone}] FAILED to set {preset_entity}: {svc_err}", level="ERROR")
                 self.log(f"[{zone}] SET {phase} = {new_setting:+d}")
-                self._log_to_influx(zone, phase, sensors, new_setting, action)
                 self._log_to_postgres(
                     zone, phase, elapsed, sensors, ambient,
                     new_setting, effective, baseline, learned_adj, action)
@@ -615,7 +607,6 @@ class SleepController(hass.Hass):
                     action = "cooldown"
                 elif new_setting != current_setting and diff < SETTING_DEADBAND:
                     action = "deadband"
-                self._log_to_influx(zone, phase, sensors, current_setting, "hold")
                 self._log_to_postgres(
                     zone, phase, elapsed, sensors, ambient,
                     current_setting, effective, baseline, learned_adj, action
@@ -950,47 +941,6 @@ class SleepController(hass.Hass):
             self.call_service(NOTIFY_SERVICE, message=message, title="SleepSync")
         except (TypeError, AttributeError, ConnectionError) as e:
             self.log(f"Notify failed: {e}", level="WARNING")
-
-    # ── InfluxDB Logging ─────────────────────────────────────────────
-
-    def _log_to_influx(self, zone, phase, sensors, setting, action="hold"):
-        """Write a control-loop data point to InfluxDB."""
-        body_r = sensors.get("body_right")
-        body_c = sensors.get("body_center")
-        body_l = sensors.get("body_left")
-        body_avg = sensors.get("body_avg")
-        ambient = sensors.get("ambient")
-
-        fields = []
-        if body_r is not None:
-            fields.append(f"body_right={body_r}")
-        if body_c is not None:
-            fields.append(f"body_center={body_c}")
-        if body_l is not None:
-            fields.append(f"body_left={body_l}")
-        if body_avg is not None:
-            fields.append(f"body_median={body_avg}")
-        if ambient is not None:
-            fields.append(f"ambient={ambient}")
-        if setting is not None:
-            fields.append(f"setting={setting}i")
-        fields.append(f"hot_threshold={BODY_HOT_THRESHOLD_F}")
-
-        if not fields:
-            return
-
-        tags = f"zone={zone},phase={phase or 'unknown'},action={action}"
-        line = f"sleep_controller,{tags} {','.join(fields)}"
-
-        try:
-            req = Request(
-                f"{INFLUXDB_URL}/write?db={INFLUXDB_DB}&precision=s",
-                data=line.encode(),
-                method="POST",
-            )
-            urlopen(req, timeout=5)
-        except Exception as e:
-            self.log(f"InfluxDB write failed: {e}", level="WARNING")
 
     # ── State Persistence ────────────────────────────────────────────
 
