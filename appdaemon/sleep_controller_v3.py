@@ -289,6 +289,12 @@ class SleepController(hass.Hass):
                     val = self._read_entity(entity)
                     if val is not None:
                         state["last_settings_pushed"][phase] = int(val)
+                # Also populate deep/rem from the sleep preset so override
+                # detection works immediately for all 4 controller phases
+                sleep_val = state["last_settings_pushed"].get("sleep")
+                if sleep_val is not None:
+                    state["last_settings_pushed"].setdefault("deep", sleep_val)
+                    state["last_settings_pushed"].setdefault("rem", sleep_val)
 
                 self.log(f"[{zone}] *** BEDTIME *** presets: {state['last_settings_pushed']}")
                 continue
@@ -443,12 +449,6 @@ class SleepController(hass.Hass):
                 # manual adjustment on the next loop iteration.
                 state["last_settings_pushed"][phase] = override["actual"]
                 state["override_history"].append(override)
-                freeze_until = datetime.now()
-                freeze_until = freeze_until.replace(
-                    minute=freeze_until.minute + OVERRIDE_FREEZE_MIN % 60,
-                    hour=freeze_until.hour + OVERRIDE_FREEZE_MIN // 60,
-                )
-                # Use timedelta for correct arithmetic
                 from datetime import timedelta as _td
                 state["override_freeze_until"] = (
                     datetime.now() + _td(minutes=OVERRIDE_FREEZE_MIN)
@@ -734,9 +734,19 @@ class SleepController(hass.Hass):
         if pushed is not None and new_val == pushed:
             return  # Our own write
 
-        # Only count changes on the active phase
+        # Map preset key to active controller phase for comparison.
+        # Presets: bedtime→L1, sleep→L2, wake→L3
+        # Controller phases: bedtime, deep, rem, wake
+        # L2 ("sleep") is active during both deep and rem phases.
         active_phase = self._get_active_phase(zone, state)
-        if phase != active_phase:
+        phase_matches = False
+        if phase == "bedtime" and active_phase == "bedtime":
+            phase_matches = True
+        elif phase == "sleep" and active_phase in ("deep", "rem"):
+            phase_matches = True
+        elif phase == "wake" and active_phase == "wake":
+            phase_matches = True
+        if not phase_matches:
             return
 
         state["recent_setting_changes"].append(datetime.now().timestamp())
@@ -956,7 +966,7 @@ class SleepController(hass.Hass):
                     override_count=EXCLUDED.override_count,
                     manual_mode=EXCLUDED.manual_mode""",
                 (night_date, bedtime, wake, duration,
-                 pushed.get("bedtime"), pushed.get("sleep"),
+                 pushed.get("bedtime"), pushed.get("deep", pushed.get("sleep")),
                  pushed.get("wake"), avg_body,
                  len(overrides), state.get("manual_mode", False)))
             self.log(f"[{zone}] Nightly summary saved to PostgreSQL")
@@ -1045,6 +1055,17 @@ class SleepController(hass.Hass):
             return
         try:
             self.learned = json.loads(LEARNING_FILE.read_text())
+            # Migrate old "sleep" key → "deep" (from 3-phase to 4-phase)
+            migrated = False
+            for zone in list(self.learned.keys()):
+                if "sleep" in self.learned[zone] and "deep" not in self.learned[zone]:
+                    old_val = self.learned[zone].pop("sleep")
+                    self.learned[zone]["deep"] = old_val
+                    self.learned[zone].setdefault("rem", old_val * 0.7)
+                    migrated = True
+                    self.log(f"[{zone}] Migrated learned 'sleep'→'deep' ({old_val:+.2f})")
+            if migrated:
+                self._save_learned()
             self.log(f"Loaded learned preferences: {self.learned}")
         except (json.JSONDecodeError, KeyError) as e:
             self.log(f"Learned prefs corrupted: {e}", level="ERROR")

@@ -260,7 +260,7 @@ class PerfectlySnugOutputSensor(
         setting_id: int,
         name: str,
         icon: str,
-        unit: str,
+        unit: str | None,
     ) -> None:
         """Initialize."""
         super().__init__(coordinator)

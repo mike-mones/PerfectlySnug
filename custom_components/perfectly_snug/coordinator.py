@@ -78,7 +78,6 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
                 settings = await client.async_get_settings(POLL_SETTINGS)
                 data[zone] = settings
                 self._zone_last_success[zone] = datetime.now(timezone.utc)
-                self._last_polled[zone] = dict(settings)
             except ConnectionError as err:
                 _LOGGER.warning("Failed to update %s zone: %s", zone, err)
                 # Do NOT reuse stale data — leave zone out of data so
@@ -137,6 +136,11 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
                         f"{DOMAIN}_manual_override",
                         override,
                     )
+
+        # Update _last_polled AFTER override detection so next poll can
+        # compare against this poll's values (not against itself).
+        for zone, settings in data.items():
+            self._last_polled[zone] = dict(settings)
 
         return data
 
