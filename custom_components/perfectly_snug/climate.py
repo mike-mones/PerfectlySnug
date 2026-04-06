@@ -105,9 +105,13 @@ class PerfectlySnugClimate(CoordinatorEntity[PerfectlySnugCoordinator], ClimateE
         return None
 
     @property
-    def hvac_mode(self) -> HVACMode:
+    def hvac_mode(self) -> HVACMode | None:
         """Return current HVAC mode."""
-        running = self._data.get(SETTING_RUNNING, 0)
+        if not self._data:
+            return None
+        running = self._data.get(SETTING_RUNNING)
+        if running is None:
+            return None
         if not running:
             return HVACMode.OFF
 
@@ -120,14 +124,17 @@ class PerfectlySnugClimate(CoordinatorEntity[PerfectlySnugCoordinator], ClimateE
         return HVACMode.HEAT_COOL
 
     @property
-    def hvac_action(self) -> HVACAction:
+    def hvac_action(self) -> HVACAction | None:
         """Return current HVAC action."""
-        running = self._data.get(SETTING_RUNNING, 0)
+        if not self._data:
+            return None
+        running = self._data.get(SETTING_RUNNING)
+        if running is None:
+            return None
         if not running:
             return HVACAction.OFF
 
         heater_limit = self._data.get(SETTING_HEATER_LIMIT, 0)
-        cooling = self._data.get(SETTING_COOLING_MODE, 0)
 
         l1 = self._data.get(SETTING_L1, 10)
         if l1 < 10:

@@ -103,6 +103,12 @@ class PhaseModel:
             weight: How much to trust this point (override=1.0, no-override=0.3).
             recency_decay: Decay factor for old data (0.98 = 2% per night).
         """
+        # Guard against None/NaN/inf inputs
+        if room_temp_f is None or optimal_setting is None:
+            return
+        if not math.isfinite(room_temp_f) or not math.isfinite(optimal_setting):
+            return
+
         # Decay existing statistics to favor recent data
         self.sum_x *= recency_decay
         self.sum_y *= recency_decay
@@ -305,7 +311,7 @@ class SleepLearner:
 
             # Override = direct signal: "I want setting X at this room temp"
             # Weight 1.0 for strong signal
-            ov_room = ov.get("room_temp_f", room_temp)
+            ov_room = ov.get("room_temp_f") or room_temp
             zm.phases[phase].update(ov_room, float(actual), weight=1.0)
 
         # 2. Learn from no-override phases (weak confirmation)

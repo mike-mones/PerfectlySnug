@@ -489,6 +489,12 @@ class SleepController(hass.Hass):
                     state["last_settings_pushed"]["deep"] = override["actual"]
                     state["last_settings_pushed"]["rem"] = override["actual"]
 
+                # Flush any existing pending override before replacing
+                old_pending = state.get("pending_override")
+                if old_pending and old_pending.get("actual") != override["actual"]:
+                    state["override_history"].append(old_pending)
+                    self.log(f"[{zone}] Flushed prior pending override: {old_pending['phase']}={old_pending['actual']:+d}")
+
                 # Start/restart the debounce timer
                 state["pending_override"] = override
                 state["pending_override_ts"] = now.isoformat()
@@ -697,24 +703,27 @@ class SleepController(hass.Hass):
         for ov in overrides:
             if "room_temp_f" not in ov:
                 ov["room_temp_f"] = room_temp
-        night_record = NightRecord(
-            night_date=bedtime.date().isoformat(),
-            zone=zone,
-            duration_hours=duration,
-            avg_body_f=avg_t,
-            room_temp_f=room_temp,
-            override_count=len(overrides),
-            overrides=overrides,
-            final_settings=dict(state.get("last_settings_pushed", {})),
-            manual_mode=state.get("manual_mode", False),
-        )
-        self.learner.update_after_night(night_record)
-        self.learner.save()
-        summary = self.learner.get_model_summary(zone)
-        self.log(
-            f"[{zone}] ML learner updated: {summary.get('nights', 0)} nights, "
-            f"phases: {list(summary.get('phases', {}).keys())}"
-        )
+        try:
+            night_record = NightRecord(
+                night_date=bedtime.date().isoformat(),
+                zone=zone,
+                duration_hours=duration,
+                avg_body_f=avg_t,
+                room_temp_f=room_temp,
+                override_count=len(overrides),
+                overrides=overrides,
+                final_settings=dict(state.get("last_settings_pushed", {})),
+                manual_mode=state.get("manual_mode", False),
+            )
+            self.learner.update_after_night(night_record)
+            self.learner.save()
+            summary = self.learner.get_model_summary(zone)
+            self.log(
+                f"[{zone}] ML learner updated: {summary.get('nights', 0)} nights, "
+                f"phases: {list(summary.get('phases', {}).keys())}"
+            )
+        except Exception as ml_err:
+            self.log(f"[{zone}] ML learner update failed (non-fatal): {ml_err}", level="ERROR")
 
         # Log nightly summary to PostgreSQL
         self._log_nightly_summary(zone, state, bedtime, now, duration,

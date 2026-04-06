@@ -55,8 +55,8 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
         self.override_log: deque[dict[str, Any]] = deque(maxlen=100)
         self._zone_last_success: dict[str, datetime] = {}
         self._last_polled: dict[str, dict[int, int]] = {}
-        # Timer handles for delayed refreshes — cancelled on unload
-        self._pending_refreshes: list[asyncio.TimerHandle] = []
+        # Single delayed refresh handle — rescheduled on each set command
+        self._pending_refresh: asyncio.TimerHandle | None = None
 
     def is_zone_available(self, zone: str) -> bool:
         """Return True if a zone's data is fresh enough to be considered available."""
@@ -77,8 +77,9 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
                 self._zone_last_success[zone] = datetime.now(timezone.utc)
             except ConnectionError as err:
                 _LOGGER.warning("Failed to update %s zone: %s", zone, err)
-                # Do NOT reuse stale data — leave zone out of data so
-                # entities report unavailable instead of frozen values.
+                # Clear last_polled so override detection doesn't compare
+                # stale pre-outage data against post-recovery data
+                self._last_polled.pop(zone, None)
 
         tasks = [fetch_zone(z, c) for z, c in self.clients.items()]
         await asyncio.gather(*tasks)
@@ -157,10 +158,7 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
             return False
         # Schedule a delayed refresh so the device has time to apply the value
         # before we poll. This prevents the false-override detection race.
-        handle = self.hass.loop.call_later(2.0, lambda: self.hass.async_create_task(
-            self.async_request_refresh()
-        ))
-        self._pending_refreshes.append(handle)
+        self._schedule_delayed_refresh()
         return True
 
     async def async_set_settings(
@@ -178,14 +176,19 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
             for sid in settings:
                 self._last_set.get(zone, {}).pop(sid, None)
             return False
-        handle = self.hass.loop.call_later(2.0, lambda: self.hass.async_create_task(
-            self.async_request_refresh()
-        ))
-        self._pending_refreshes.append(handle)
+        self._schedule_delayed_refresh()
         return True
 
+    def _schedule_delayed_refresh(self):
+        """Schedule a single delayed refresh, cancelling any prior pending one."""
+        if self._pending_refresh is not None:
+            self._pending_refresh.cancel()
+        self._pending_refresh = self.hass.loop.call_later(
+            2.0, lambda: self.hass.async_create_task(self.async_request_refresh())
+        )
+
     def cancel_pending_refreshes(self):
-        """Cancel any pending delayed refresh timers."""
-        for handle in self._pending_refreshes:
-            handle.cancel()
-        self._pending_refreshes.clear()
+        """Cancel any pending delayed refresh timer."""
+        if self._pending_refresh is not None:
+            self._pending_refresh.cancel()
+            self._pending_refresh = None
