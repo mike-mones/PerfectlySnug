@@ -83,6 +83,11 @@ CHANGE_COOLDOWN_SEC = 900  # 15 minutes
 # Override freeze: after a manual override, freeze controller for this long
 OVERRIDE_FREEZE_MIN = 60
 
+# Override debounce: wait this long after the last change before committing
+# the override to history. Prevents intermediate values (e.g., scrolling
+# through -10 → -8 → -5) from being recorded as separate overrides.
+OVERRIDE_DEBOUNCE_SEC = 60
+
 # Auto-restart debounce: wait this long after restart before allowing _end_night
 AUTO_RESTART_DEBOUNCE_SEC = 300  # 5 minutes
 
@@ -238,6 +243,8 @@ class SleepController(hass.Hass):
             "hot_streak": 0,
             "bed_empty_since": None,
             "override_freeze_until": None,  # Freeze controller after manual override
+            "pending_override": None,       # Debounce: {phase, value, first_seen, ...}
+            "pending_override_ts": None,    # When the pending override was last updated
         }
 
     # ── Phase Detection ──────────────────────────────────────────────
@@ -463,37 +470,59 @@ class SleepController(hass.Hass):
             if len(state["body_temp_history"]) > 24:  # ~2 hours at 5-min intervals
                 state["body_temp_history"] = state["body_temp_history"][-24:]
 
-            # 3. Check for manual override
+            # 3. Check for manual override (with debounce)
+            #    When the user adjusts temperature, they often scroll through
+            #    several values before landing on their choice. We detect the
+            #    change immediately (for freeze + kill switch) but delay
+            #    committing to override_history until OVERRIDE_DEBOUNCE_SEC
+            #    passes with no further changes — capturing only the final value.
             override = self._detect_override(zone, state, phase)
             if override:
                 state["recent_setting_changes"].append(datetime.now().timestamp())
                 if self._check_kill_switch(zone, state):
                     continue
-                # RESPECT the override: adopt the user's value and freeze the
-                # controller for OVERRIDE_FREEZE_MIN minutes. This prevents the
-                # "fighting" behavior where the controller reverts the user's
-                # manual adjustment on the next loop iteration.
+
+                # Update tracking immediately (prevents controller from reverting)
                 state["last_settings_pushed"][phase] = override["actual"]
-                state["override_history"].append(override)
+
+                # Start/restart the debounce timer
+                state["pending_override"] = override
+                state["pending_override_ts"] = now.isoformat()
+
+                # Set freeze immediately (user intent is clear even if value isn't final)
                 from datetime import timedelta as _td
                 state["override_freeze_until"] = (
                     datetime.now() + _td(minutes=OVERRIDE_FREEZE_MIN)
                 ).isoformat()
                 self.log(
-                    f"[{zone}] OVERRIDE: {phase} "
+                    f"[{zone}] OVERRIDE detected: {phase} "
                     f"{override['expected']:+d} → {override['actual']:+d} "
-                    f"(delta {override['delta']:+d}) — "
-                    f"freezing controller for {OVERRIDE_FREEZE_MIN}m")
-                elapsed = (now - datetime.fromisoformat(
-                    state["bedtime_ts"])).total_seconds() / 60
-                self._log_to_postgres(
-                    zone, phase, elapsed, sensors, ambient,
-                    override["actual"], override["actual"],
-                    USER_BASELINE.get(phase, -6),
-                    self.learned.get(zone, {}).get(phase, 0),
-                    "override", override_delta=override["delta"])
+                    f"— debouncing ({OVERRIDE_DEBOUNCE_SEC}s)")
                 self._save_state()
                 continue
+
+            # Check if a pending override has stabilized (debounce expired)
+            pending = state.get("pending_override")
+            pending_ts = state.get("pending_override_ts")
+            if pending and pending_ts:
+                age = (now - datetime.fromisoformat(pending_ts)).total_seconds()
+                if age >= OVERRIDE_DEBOUNCE_SEC:
+                    # Value hasn't changed for OVERRIDE_DEBOUNCE_SEC — commit it
+                    state["override_history"].append(pending)
+                    state["pending_override"] = None
+                    state["pending_override_ts"] = None
+                    elapsed = (now - datetime.fromisoformat(
+                        state["bedtime_ts"])).total_seconds() / 60
+                    self.log(
+                        f"[{zone}] OVERRIDE committed: {pending['phase']} "
+                        f"= {pending['actual']:+d} (settled after {age:.0f}s)")
+                    self._log_to_postgres(
+                        zone, pending["phase"], elapsed, sensors, ambient,
+                        pending["actual"], pending["actual"],
+                        USER_BASELINE.get(pending["phase"], -6),
+                        self.learned.get(zone, {}).get(pending["phase"], 0),
+                        "override", override_delta=pending["delta"])
+                    self._save_state()
 
             # 4. Compute effective setting from ML learner + ambient
             #    The learner blends science baselines with learned preferences
@@ -631,6 +660,15 @@ class SleepController(hass.Hass):
         """Clean up after a sleep session and update multi-night learning."""
         bedtime = datetime.fromisoformat(state["bedtime_ts"])
         duration = (now - bedtime).total_seconds() / 3600
+
+        # Flush any pending debounced override before end-of-night
+        pending = state.get("pending_override")
+        if pending:
+            state["override_history"].append(pending)
+            self.log(f"[{zone}] Flushed pending override at end of night: {pending['phase']}={pending['actual']:+d}")
+            state["pending_override"] = None
+            state["pending_override_ts"] = None
+
         overrides = state["override_history"]
         temps = state["body_temp_history"]
         avg_t = (sum(temps) / len(temps)) if temps else 0
