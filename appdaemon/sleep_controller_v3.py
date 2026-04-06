@@ -37,7 +37,7 @@ from urllib.request import Request, urlopen
 import hassapi as hass
 
 # Add ml/ to path so we can import the learner
-_project_root = Path(__file__).parent.parent
+_project_root = Path(__file__).parent  # apps/ directory (works both locally and on HA Green)
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
@@ -195,6 +195,9 @@ class SleepController(hass.Hass):
 
         # Control loop
         self.run_every(self._control_loop, "now", LOOP_INTERVAL_SEC)
+
+        # Listen for sleep rating notification responses
+        self.listen_event(self._on_sleep_rating, "mobile_app_notification_action")
 
         # Listen for manual setting changes (kill switch)
         for zone in self.zones:
@@ -692,6 +695,9 @@ class SleepController(hass.Hass):
                 self.log(f"[{zone}] Failed to reset {preset_name} to {reset_val}: {exc}", level="ERROR")
         self.log(f"[{zone}] Presets reset to ML recommendations: {ml_recs}")
 
+        # Send morning sleep rating notification
+        self._send_sleep_rating_request(zone, duration, len(overrides), avg_t)
+
         state["bedtime_ts"] = None
         state["last_settings_pushed"] = {}
         state["override_history"] = []
@@ -820,6 +826,52 @@ class SleepController(hass.Hass):
             self._notify("SleepSync: Kill switch activated — manual mode for tonight")
             return True
         return False
+
+    # ── Morning Sleep Rating ────────────────────────────────────────
+
+    def _send_sleep_rating_request(self, zone, duration_h, override_count, avg_body):
+        """Send an actionable iOS notification asking for a sleep quality rating.
+
+        The user taps one of three options. The response is stored in
+        sleep_ratings.jsonl for the ML learner to use as a quality signal.
+        """
+        try:
+            self.call_service(
+                NOTIFY_SERVICE,
+                title="Good morning! ☀️",
+                message=f"How did you sleep? ({duration_h:.1f}h, {override_count} adjustments)",
+                data={
+                    "actions": [
+                        {"action": "SLEEP_RATING_1", "title": "😫 Terrible"},
+                        {"action": "SLEEP_RATING_3", "title": "😐 Okay"},
+                        {"action": "SLEEP_RATING_5", "title": "😴 Great"},
+                    ],
+                    "push": {"interruption-level": "passive"},
+                },
+            )
+            self.log(f"[{zone}] Sent sleep rating notification")
+        except Exception as e:
+            self.log(f"[{zone}] Rating notification failed: {e}", level="WARNING")
+
+    def _on_sleep_rating(self, event_name, data, kwargs):
+        """Handle sleep rating notification response."""
+        action = data.get("action", "")
+        if not action.startswith("SLEEP_RATING_"):
+            return
+        try:
+            rating = int(action.split("_")[-1])
+        except ValueError:
+            return
+        self.log(f"Sleep rating received: {rating}/5")
+        rating_file = STATE_DIR / "sleep_ratings.jsonl"
+        try:
+            with open(rating_file, "a") as f:
+                f.write(json.dumps({
+                    "date": datetime.now().isoformat(),
+                    "rating": rating,
+                }) + "\n")
+        except OSError:
+            pass
 
     # ── Sensor Reading ───────────────────────────────────────────────
 
