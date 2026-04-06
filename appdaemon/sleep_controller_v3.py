@@ -29,11 +29,19 @@ Control loop (every 5 min):
 """
 
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from urllib.request import Request, urlopen
 
 import hassapi as hass
+
+# Add ml/ to path so we can import the learner
+_project_root = Path(__file__).parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+from ml.learner import SleepLearner, NightRecord
 
 # ── Configuration ────────────────────────────────────────────────────────
 
@@ -165,8 +173,18 @@ class SleepController(hass.Hass):
 
         self.zones = ["left"]
         self.zone_state = {}
-        self.learned = {}  # Multi-night learned adjustments
+        self.learned = {}  # Multi-night learned adjustments (legacy, kept for compat)
         self._pg_conn = None  # Lazy PostgreSQL connection
+
+        # ML learner — replaces simple EMA with multi-signal adaptive model
+        self.learner = SleepLearner(STATE_DIR)
+        self.learner.load()
+        if not self.learner.models:
+            # Bootstrap from existing override history
+            count = self.learner.bootstrap_from_override_history()
+            if count > 0:
+                self.learner.save()
+                self.log(f"ML learner bootstrapped from {count} override records")
 
         self._load_state()
         self._load_learned()
@@ -193,6 +211,10 @@ class SleepController(hass.Hass):
         self.log(f"  Room temp: {self.room_temp_entity}")
         self.log(f"  Postgres: {self.pg_host}:{POSTGRES_PORT}/{POSTGRES_DB}")
         self.log(f"  Learned adjustments: {self.learned}")
+        for zone in self.zones:
+            summary = self.learner.get_model_summary(zone)
+            self.log(f"  ML learner [{zone}]: {summary.get('nights', 0)} nights, "
+                     f"status={summary.get('status', 'no_data')}")
         self.log("Controller ready")
         self.log("=" * 60)
 
@@ -471,15 +493,26 @@ class SleepController(hass.Hass):
                 self._save_state()
                 continue
 
-            # 4. Compute effective setting from preferences + ambient
-            baseline = USER_BASELINE.get(phase, -6)
+            # 4. Compute effective setting from ML learner + ambient
+            #    The learner blends science baselines with learned preferences
+            #    based on its confidence level. Low confidence → baselines.
+            #    High confidence → personalized predictions.
+            ml_recs = self.learner.get_recommendations(zone, room_temp_f=ambient)
+            baseline = ml_recs.get(phase, USER_BASELINE.get(phase, -6))
 
-            # Apply multi-night learned adjustment for this phase
+            # Legacy EMA adjustment — applied on top of ML if still present
+            # (will phase out as ML confidence grows)
             learned_adj = round(self.learned.get(zone, {}).get(phase, 0))
-            effective = baseline + learned_adj
+            # Scale legacy adjustment by inverse of ML confidence to avoid double-counting
+            ml_confidence = 0.0
+            if zone in self.learner.models and phase in self.learner.models[zone].phases:
+                ml_confidence = self.learner.models[zone].phases[phase].confidence
+            legacy_scale = max(0.0, 1.0 - ml_confidence)
+            effective = baseline + round(learned_adj * legacy_scale)
 
             # Ambient compensation: colder room → warmer setting
-            if ambient is not None:
+            # (Only applies when ML doesn't already account for room temp)
+            if ambient is not None and ml_confidence < 0.3:
                 ambient_delta = AMBIENT_REFERENCE_F - ambient
                 if ambient_delta > 0:
                     # Room is colder than reference — warm up
@@ -612,31 +645,52 @@ class SleepController(hass.Hass):
             # Persist override history to durable storage before clearing
             self._persist_override_history(zone, bedtime, overrides)
 
+        # Feed the ML learner with tonight's data
+        room_temp = self._read_entity(self.room_temp_entity)
+        # Enrich overrides with room temp for the learner
+        for ov in overrides:
+            if "room_temp_f" not in ov:
+                ov["room_temp_f"] = room_temp
+        night_record = NightRecord(
+            night_date=bedtime.date().isoformat(),
+            zone=zone,
+            duration_hours=duration,
+            avg_body_f=avg_t,
+            room_temp_f=room_temp,
+            override_count=len(overrides),
+            overrides=overrides,
+            final_settings=dict(state.get("last_settings_pushed", {})),
+            manual_mode=state.get("manual_mode", False),
+        )
+        self.learner.update_after_night(night_record)
+        self.learner.save()
+        summary = self.learner.get_model_summary(zone)
+        self.log(
+            f"[{zone}] ML learner updated: {summary.get('nights', 0)} nights, "
+            f"phases: {list(summary.get('phases', {}).keys())}"
+        )
+
         # Log nightly summary to PostgreSQL
         self._log_nightly_summary(zone, state, bedtime, now, duration,
                                   avg_t, overrides)
 
-        # Reset presets to learned baseline for next night.
+        # Reset presets to ML-recommended baseline for next night.
         # Map 4 phases back to 3 topper presets: bedtime→L1, deep/rem→L2, wake→L3
+        ml_recs = self.learner.get_recommendations(zone, room_temp_f=room_temp)
         preset_phase_map = {
             "bedtime": "bedtime",
-            "sleep": "deep",  # L2 uses the cooler "deep" baseline as default
+            "sleep": "deep",
             "wake": "wake",
         }
         for preset_name, entity in ZONE_PRESETS[zone].items():
             phase_key = preset_phase_map.get(preset_name, preset_name)
-            baseline_val = USER_BASELINE.get(phase_key, -6)
-            learned_adj = round(self.learned.get(zone, {}).get(phase_key, 0))
-            reset_val = max(-10, min(10, baseline_val + learned_adj))
+            reset_val = ml_recs.get(phase_key, USER_BASELINE.get(phase_key, -6))
+            reset_val = max(-10, min(10, reset_val))
             try:
                 self.call_service("number/set_value", entity_id=entity, value=reset_val)
             except Exception as exc:
                 self.log(f"[{zone}] Failed to reset {preset_name} to {reset_val}: {exc}", level="ERROR")
-        learned_baselines = {
-            p: USER_BASELINE[p] + round(self.learned.get(zone, {}).get(p, 0))
-            for p in USER_BASELINE
-        }
-        self.log(f"[{zone}] Presets reset to learned baseline: {learned_baselines}")
+        self.log(f"[{zone}] Presets reset to ML recommendations: {ml_recs}")
 
         state["bedtime_ts"] = None
         state["last_settings_pushed"] = {}
