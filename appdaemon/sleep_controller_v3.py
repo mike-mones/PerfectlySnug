@@ -6,19 +6,26 @@ Controls the PerfectlySnug topper setting (-10 to +10) based on:
   - Learned preference curve (baseline + multi-night override learning)
   - Ambient room temperature compensation
   - Body sensor extremes only (>85°F = too hot, used for safety cooling)
+  - 4-phase night profile: bedtime → deep → REM → wake
+  - Pre-wake thermal ramp for gentle morning transition
 
 Body sensors at 80–85°F are AMBIGUOUS — they reflect body-mattress contact
 temperature, not perceived comfort. The controller does NOT chase a body
 temp target. Instead, it follows the user's learned preferences and only
 intervenes when sensors show clear extremes.
 
+Manual overrides are RESPECTED: after a user manually adjusts the setting,
+the controller freezes for OVERRIDE_FREEZE_MIN minutes, then resumes from
+the user's chosen value. Overrides also feed into multi-night learning.
+
 Control loop (every 5 min):
   1. Detect if topper is running (occupancy)
-  2. Determine phase from elapsed time
+  2. Determine phase from elapsed time (bedtime → deep → REM → wake)
   3. Compute effective setting: learned baseline + ambient compensation
   4. If body sensor > 85°F: step 1 cooler (safety)
-  5. Detect manual overrides → learn for future nights + set tonight's floor
-  6. At wake: save override data, reset presets to learned baseline
+  5. Detect manual overrides → freeze controller + learn for future nights
+  6. Pre-wake ramp: gradually shift temperature 30 min before wake
+  7. At wake: save override data, reset presets to learned baseline
 """
 
 import json
@@ -37,9 +44,16 @@ OCCUPANCY_HOLD_MINUTES = 20  # Hold setting after first detecting body
 # User's preferred baseline settings (-10 to +10)
 USER_BASELINE = {
     "bedtime": -8,      # Aggressive cooling at sleep onset
-    "sleep":   -6,      # Moderate cooling during bulk of night
-    "wake":    -5,      # Ease off cooling toward morning
+    "deep":    -7,      # Cooler during first half of night (deep sleep)
+    "rem":     -5,      # Warmer during second half (REM-dominant)
+    "wake":    -4,      # Ease off cooling toward morning
 }
+
+# Phase timing (minutes from bedtime)
+BEDTIME_DURATION_MIN = 60     # First hour = bedtime phase
+DEEP_DURATION_MIN = 240       # Next 4 hours = deep sleep phase
+# After deep, REM phase runs until pre-wake ramp begins
+PRE_WAKE_RAMP_MIN = 30        # Start ramping 30 min before estimated wake
 
 # Body sensor thresholds — only act on clear extremes
 BODY_HOT_THRESHOLD_F = 85.0   # Above this = definitely too hot, cool down
@@ -47,17 +61,29 @@ BODY_COLD_THRESHOLD_F = 80.0  # Below this while occupied = definitely cold
 # 80–85°F is the "ambiguous zone" — follow preferences, don't adjust
 
 # Ambient temperature compensation
-# Reference ambient: typical room temp where baselines feel right
 AMBIENT_REFERENCE_F = 70.0
-# Per-degree offset: colder room → warmer setting (+0.5 per degree below ref)
 AMBIENT_COMPENSATION_PER_F = 0.5
 
 # Kill switch: rapid manual changes disable controller for the night
 KILL_SWITCH_CHANGES = 3
 KILL_SWITCH_WINDOW_SEC = 20
 
+# Deadband: don't change the setting unless computed value differs by this much
+SETTING_DEADBAND = 2
+# Cooldown: minimum seconds between setting changes (topper thermal lag)
+CHANGE_COOLDOWN_SEC = 900  # 15 minutes
+
+# Override freeze: after a manual override, freeze controller for this long
+OVERRIDE_FREEZE_MIN = 60
+
+# Auto-restart debounce: wait this long after restart before allowing _end_night
+AUTO_RESTART_DEBOUNCE_SEC = 300  # 5 minutes
+
 # Multi-night learning: how many nights of override data to retain
 LEARNING_HISTORY_NIGHTS = 7
+
+# Room temperature sensor — configurable via apps.yaml
+ROOM_TEMP_ENTITY_DEFAULT = "sensor.superior_6000s_temperature"
 
 # Notification entity
 NOTIFY_SERVICE = "notify/mobile_app_mike_mones_iphone_14"
@@ -65,6 +91,13 @@ NOTIFY_SERVICE = "notify/mobile_app_mike_mones_iphone_14"
 # InfluxDB logging
 INFLUXDB_URL = "http://a0d7b954-influxdb:8086"
 INFLUXDB_DB = "perfectly_snug"
+
+# PostgreSQL logging (Pi at 192.168.0.75)
+POSTGRES_HOST_DEFAULT = "192.168.0.75"
+POSTGRES_PORT = 5432
+POSTGRES_DB = "sleepdata"
+POSTGRES_USER = "sleepsync"
+POSTGRES_PASS = "sleepsync_local"
 
 # ── Entity Mappings ──────────────────────────────────────────────────────
 
@@ -125,9 +158,15 @@ class SleepController(hass.Hass):
         self.log("=" * 60)
         self.log("Sleep Controller v3 (preference-based) initializing")
 
+        # Configurable settings from apps.yaml
+        self.room_temp_entity = self.args.get(
+            "room_temp_entity", ROOM_TEMP_ENTITY_DEFAULT)
+        self.pg_host = self.args.get("postgres_host", POSTGRES_HOST_DEFAULT)
+
         self.zones = ["left"]
         self.zone_state = {}
         self.learned = {}  # Multi-night learned adjustments
+        self._pg_conn = None  # Lazy PostgreSQL connection
 
         self._load_state()
         self._load_learned()
@@ -151,6 +190,8 @@ class SleepController(hass.Hass):
         self.log(f"  Baselines: {USER_BASELINE}")
         self.log(f"  Hot threshold: {BODY_HOT_THRESHOLD_F}°F")
         self.log(f"  Ambient ref: {AMBIENT_REFERENCE_F}°F")
+        self.log(f"  Room temp: {self.room_temp_entity}")
+        self.log(f"  Postgres: {self.pg_host}:{POSTGRES_PORT}/{POSTGRES_DB}")
         self.log(f"  Learned adjustments: {self.learned}")
         self.log("Controller ready")
         self.log("=" * 60)
@@ -165,17 +206,25 @@ class SleepController(hass.Hass):
             "occupancy_detected_ts": None,
             "occupancy_hold_done": False,
             "override_history": [],
-            "override_floor": {},
             "last_run_progress": 0,
             "last_restart_ts": None,
-            "hot_streak": 0,  # Consecutive readings above BODY_HOT_THRESHOLD
+            "last_setting_change_ts": None,
+            "hot_streak": 0,
             "bed_empty_since": None,
+            "override_freeze_until": None,  # Freeze controller after manual override
         }
 
     # ── Phase Detection ──────────────────────────────────────────────
 
     def _get_active_phase(self, zone, state):
-        """Determine phase from elapsed time: bedtime → sleep → wake."""
+        """Determine phase from elapsed time: bedtime → deep → rem → wake.
+
+        4-phase night profile based on typical sleep architecture:
+          - bedtime: first BEDTIME_DURATION_MIN (cooling for sleep onset)
+          - deep:    next DEEP_DURATION_MIN (cooler for deep/NREM-dominant first half)
+          - rem:     remainder until pre-wake ramp (warmer for REM-dominant second half)
+          - wake:    PRE_WAKE_RAMP_MIN before estimated end (gradual warm-up)
+        """
         if state["bedtime_ts"] is None:
             return None
 
@@ -183,21 +232,25 @@ class SleepController(hass.Hass):
         now = datetime.now()
         elapsed_min = (now - bedtime).total_seconds() / 60.0
 
-        start_len = self._read_entity(ZONE_SCHEDULE[zone]["start_length"]) or 60
-        wake_len = self._read_entity(ZONE_SCHEDULE[zone]["wake_length"]) or 30
-
-        if elapsed_min < start_len:
+        # Phase 1: Bedtime
+        if elapsed_min < BEDTIME_DURATION_MIN:
             return "bedtime"
 
-        # Use run_progress to estimate wake phase
+        # Check run_progress for wake phase detection
         progress = self._read_entity(ZONE_SENSORS[zone]["run_progress"])
         if progress is not None and progress > 0:
             total_min = elapsed_min / (progress / 100.0)
             remaining_min = total_min - elapsed_min
-            if remaining_min <= wake_len:
+            # Phase 4: Pre-wake ramp
+            if remaining_min <= PRE_WAKE_RAMP_MIN:
                 return "wake"
 
-        return "sleep"
+        # Phase 2: Deep sleep (first ~4 hours after bedtime)
+        if elapsed_min < (BEDTIME_DURATION_MIN + DEEP_DURATION_MIN):
+            return "deep"
+
+        # Phase 3: REM-dominant second half
+        return "rem"
 
     # ── Control Loop ─────────────────────────────────────────────────
 
@@ -224,12 +277,12 @@ class SleepController(hass.Hass):
                 state["bedtime_ts"] = now.isoformat()
                 state["last_settings_pushed"] = {}
                 state["override_history"] = []
-                state["override_floor"] = {}
                 state["manual_mode"] = False
                 state["recent_setting_changes"] = []
                 state["body_temp_history"] = []
                 state["occupancy_detected_ts"] = None
                 state["occupancy_hold_done"] = False
+                state["last_setting_change_ts"] = None
 
                 # Read current settings as starting point
                 for phase, entity in ZONE_PRESETS[zone].items():
@@ -247,7 +300,12 @@ class SleepController(hass.Hass):
 
                 # Topper's built-in schedule shut off — auto-restart if body in bed
                 body_sensors = self._read_sensors(zone)
-                body_in_bed = (body_sensors.get("body_avg") or 0) >= OCCUPANCY_THRESHOLD_F
+                body_avg = body_sensors.get("body_avg")
+                # Only consider body present if sensors returned valid data
+                # AND readings are above threshold. None = sensor unavailable,
+                # which should NOT be treated as "bed empty".
+                body_in_bed = body_avg is not None and body_avg >= OCCUPANCY_THRESHOLD_F
+                sensors_unavailable = body_avg is None
                 if body_in_bed:
                     self.log(f"[{zone}] Topper off but body in bed — auto-restarting! ({duration:.1f}h in)")
                     try:
@@ -259,10 +317,15 @@ class SleepController(hass.Hass):
                     state["bed_empty_since"] = None
                     continue
 
-                # Wait for restart to take effect
+                # Wait for restart to take effect (extended debounce)
                 last_restart = state.get("last_restart_ts")
-                if last_restart and (now - datetime.fromisoformat(last_restart)).total_seconds() < 120:
+                if last_restart and (now - datetime.fromisoformat(last_restart)).total_seconds() < AUTO_RESTART_DEBOUNCE_SEC:
                     self.log(f"[{zone}] Waiting for auto-restart to take effect.")
+                    continue
+
+                if sensors_unavailable:
+                    # Sensors are unavailable — don't assume bed is empty
+                    self.log(f"[{zone}] Sensors unavailable (topper off) — waiting for data", level="WARNING")
                     continue
 
                 # Body not in bed and topper off — end session
@@ -274,7 +337,16 @@ class SleepController(hass.Hass):
 
             # ── Occupancy-based shutoff (topper still running but bed empty) ──
             body_sensors_check = self._read_sensors(zone)
-            body_present = (body_sensors_check.get("body_avg") or 0) >= OCCUPANCY_THRESHOLD_F
+            body_avg_check = body_sensors_check.get("body_avg")
+            # Only start bed-empty timer when sensors explicitly read below
+            # threshold. None (unavailable) should NOT trigger shutoff.
+            if body_avg_check is not None:
+                body_present = body_avg_check >= OCCUPANCY_THRESHOLD_F
+            else:
+                # Sensors unavailable — assume body is still present (safe default)
+                body_present = True
+                self.log(f"[{zone}] Sensors unavailable — assuming still in bed", level="WARNING")
+
             if not body_present and state.get("occupancy_hold_done"):
                 # Body was previously detected, now gone
                 if state.get("bed_empty_since") is None:
@@ -302,6 +374,18 @@ class SleepController(hass.Hass):
             if state["manual_mode"]:
                 continue
 
+            # ── Override freeze: respect manual adjustments ──
+            freeze_until = state.get("override_freeze_until")
+            if freeze_until is not None:
+                freeze_dt = datetime.fromisoformat(freeze_until)
+                if now < freeze_dt:
+                    remaining = (freeze_dt - now).total_seconds() / 60
+                    self.log(f"[{zone}] Override freeze — {remaining:.0f}m remaining")
+                    continue
+                else:
+                    state["override_freeze_until"] = None
+                    self.log(f"[{zone}] Override freeze expired — resuming control")
+
             # ── Active sleep control ──
 
             # 1. Determine phase
@@ -312,7 +396,9 @@ class SleepController(hass.Hass):
             # 2. Read body sensors
             sensors = self._read_sensors(zone)
             body_avg = sensors.get("body_avg")
-            ambient = sensors.get("ambient")
+            # Use Levoit room temp for ambient compensation — topper's
+            # "ambient" sensor reads mattress surface heat, not room air
+            ambient = self._read_entity(self.room_temp_entity)
 
             # Occupancy check
             if body_avg is not None and body_avg < OCCUPANCY_THRESHOLD_F:
@@ -351,20 +437,37 @@ class SleepController(hass.Hass):
                 state["recent_setting_changes"].append(datetime.now().timestamp())
                 if self._check_kill_switch(zone, state):
                     continue
-                # Accept the override
+                # RESPECT the override: adopt the user's value and freeze the
+                # controller for OVERRIDE_FREEZE_MIN minutes. This prevents the
+                # "fighting" behavior where the controller reverts the user's
+                # manual adjustment on the next loop iteration.
                 state["last_settings_pushed"][phase] = override["actual"]
                 state["override_history"].append(override)
-                # Set a floor — controller must not go below this tonight
-                if override["delta"] > 0:
-                    state["override_floor"][phase] = override["actual"]
-                    self.log(
-                        f"[{zone}] LEARNED: {phase} floor raised to "
-                        f"{override['actual']:+d} (user went warmer)")
-                    self._notify(
-                        f"SleepSync: Learned — {phase} won't go below "
-                        f"{override['actual']:+d} tonight")
+                freeze_until = datetime.now()
+                freeze_until = freeze_until.replace(
+                    minute=freeze_until.minute + OVERRIDE_FREEZE_MIN % 60,
+                    hour=freeze_until.hour + OVERRIDE_FREEZE_MIN // 60,
+                )
+                # Use timedelta for correct arithmetic
+                from datetime import timedelta as _td
+                state["override_freeze_until"] = (
+                    datetime.now() + _td(minutes=OVERRIDE_FREEZE_MIN)
+                ).isoformat()
+                self.log(
+                    f"[{zone}] OVERRIDE: {phase} "
+                    f"{override['expected']:+d} → {override['actual']:+d} "
+                    f"(delta {override['delta']:+d}) — "
+                    f"freezing controller for {OVERRIDE_FREEZE_MIN}m")
                 self._log_to_influx(zone, phase, sensors,
                                     override["actual"], "override")
+                elapsed = (now - datetime.fromisoformat(
+                    state["bedtime_ts"])).total_seconds() / 60
+                self._log_to_postgres(
+                    zone, phase, elapsed, sensors, ambient,
+                    override["actual"], override["actual"],
+                    USER_BASELINE.get(phase, -6),
+                    self.learned.get(zone, {}).get(phase, 0),
+                    "override", override_delta=override["delta"])
                 self._save_state()
                 continue
 
@@ -372,7 +475,7 @@ class SleepController(hass.Hass):
             baseline = USER_BASELINE.get(phase, -6)
 
             # Apply multi-night learned adjustment for this phase
-            learned_adj = self.learned.get(zone, {}).get(phase, 0)
+            learned_adj = round(self.learned.get(zone, {}).get(phase, 0))
             effective = baseline + learned_adj
 
             # Ambient compensation: colder room → warmer setting
@@ -386,22 +489,40 @@ class SleepController(hass.Hass):
             # Clamp to topper range
             effective = max(-10, min(10, effective))
 
-            # Respect manual override floor
-            floor = state.get("override_floor", {}).get(phase, -10)
-            effective = max(effective, floor)
-
             # Read current setting
-            preset_entity = ZONE_PRESETS[zone][phase]
+            preset_entity = self._get_preset_entity(zone, phase)
             current_setting = self._read_entity(preset_entity)
             if current_setting is None:
                 self.log(f"[{zone}] Can't read {phase} preset", level="WARNING")
                 continue
             current_setting = int(current_setting)
 
-            # 5. Body sensor extreme check — only override preferences
-            #    when sensor data is clearly actionable
+            # 5. Pre-wake thermal ramp: gradually transition toward wake temp
             new_setting = effective
             action = "preference"
+
+            if phase == "wake":
+                # Linearly interpolate from REM baseline toward wake baseline
+                # over the PRE_WAKE_RAMP_MIN period for a gentle transition
+                progress = self._read_entity(ZONE_SENSORS[zone]["run_progress"])
+                if progress is not None and progress > 0:
+                    elapsed_total = (now - datetime.fromisoformat(
+                        state["bedtime_ts"])).total_seconds() / 60
+                    total_min = elapsed_total / (progress / 100.0)
+                    remaining = total_min - elapsed_total
+                    ramp_progress = max(0, min(1, 1 - remaining / PRE_WAKE_RAMP_MIN))
+                    rem_baseline = USER_BASELINE.get("rem", -5)
+                    rem_learned = round(self.learned.get(zone, {}).get("rem", 0))
+                    wake_target = effective  # already computed for wake phase
+                    ramp_setting = round(
+                        (rem_baseline + rem_learned) * (1 - ramp_progress) +
+                        wake_target * ramp_progress
+                    )
+                    new_setting = ramp_setting
+                    action = f"prewake_ramp({ramp_progress:.0%})"
+
+            # 6. Body sensor extreme check — only override preferences
+            #    when sensor data is clearly actionable
 
             if body_avg is not None and body_avg > BODY_HOT_THRESHOLD_F:
                 # Clearly too hot — step cooler from current, don't jump
@@ -418,7 +539,6 @@ class SleepController(hass.Hass):
 
             # Clamp final result
             new_setting = max(-10, min(10, new_setting))
-            new_setting = max(new_setting, floor)
 
             elapsed = (now - datetime.fromisoformat(state["bedtime_ts"])).total_seconds() / 60
             amb_s = f"{ambient:.0f}" if ambient is not None else "?"
@@ -430,17 +550,40 @@ class SleepController(hass.Hass):
                 f"setting: {current_setting:+d}→{new_setting:+d} "
                 f"({action})")
 
-            # 6. Apply if changed — write to active phase only
-            if new_setting != current_setting:
+            # 6. Apply if changed — with deadband and cooldown
+            #    Don't change unless diff >= SETTING_DEADBAND (prevents thrashing)
+            #    Don't change within CHANGE_COOLDOWN_SEC of last change (thermal lag)
+            #    Hot safety bypasses both — it's a safety mechanism
+            diff = abs(new_setting - current_setting)
+            is_safety = (action == "hot_safety")
+            last_change = state.get("last_setting_change_ts")
+            cooldown_ok = (last_change is None or
+                          (now - datetime.fromisoformat(last_change)
+                           ).total_seconds() >= CHANGE_COOLDOWN_SEC)
+            should_apply = (new_setting != current_setting and
+                           (is_safety or (diff >= SETTING_DEADBAND and cooldown_ok)))
+            if should_apply:
                 try:
                     self.call_service("number/set_value", entity_id=preset_entity, value=new_setting)
                     state["last_settings_pushed"][phase] = new_setting
+                    state["last_setting_change_ts"] = now.isoformat()
                 except Exception as svc_err:
                     self.log(f"[{zone}] FAILED to set {preset_entity}: {svc_err}", level="ERROR")
                 self.log(f"[{zone}] SET {phase} = {new_setting:+d}")
                 self._log_to_influx(zone, phase, sensors, new_setting, action)
+                self._log_to_postgres(
+                    zone, phase, elapsed, sensors, ambient,
+                    new_setting, effective, baseline, learned_adj, action)
             else:
+                if new_setting != current_setting and not cooldown_ok:
+                    action = "cooldown"
+                elif new_setting != current_setting and diff < SETTING_DEADBAND:
+                    action = "deadband"
                 self._log_to_influx(zone, phase, sensors, current_setting, "hold")
+                self._log_to_postgres(
+                    zone, phase, elapsed, sensors, ambient,
+                    current_setting, effective, baseline, learned_adj, action
+                    if action in ("cooldown", "deadband") else "hold")
 
         # Periodic save
         if not hasattr(self, "_loop_count"):
@@ -466,18 +609,31 @@ class SleepController(hass.Hass):
         # Multi-night learning: if user made overrides, adjust baselines
         if overrides:
             self._update_learned(zone, overrides)
+            # Persist override history to durable storage before clearing
+            self._persist_override_history(zone, bedtime, overrides)
 
-        # Reset presets to learned baseline for next night
-        for phase, entity in ZONE_PRESETS[zone].items():
-            baseline_val = USER_BASELINE.get(phase, -6)
-            learned_adj = self.learned.get(zone, {}).get(phase, 0)
+        # Log nightly summary to PostgreSQL
+        self._log_nightly_summary(zone, state, bedtime, now, duration,
+                                  avg_t, overrides)
+
+        # Reset presets to learned baseline for next night.
+        # Map 4 phases back to 3 topper presets: bedtime→L1, deep/rem→L2, wake→L3
+        preset_phase_map = {
+            "bedtime": "bedtime",
+            "sleep": "deep",  # L2 uses the cooler "deep" baseline as default
+            "wake": "wake",
+        }
+        for preset_name, entity in ZONE_PRESETS[zone].items():
+            phase_key = preset_phase_map.get(preset_name, preset_name)
+            baseline_val = USER_BASELINE.get(phase_key, -6)
+            learned_adj = round(self.learned.get(zone, {}).get(phase_key, 0))
             reset_val = max(-10, min(10, baseline_val + learned_adj))
             try:
                 self.call_service("number/set_value", entity_id=entity, value=reset_val)
             except Exception as exc:
-                self.log(f"[{zone}] Failed to reset {phase} to {reset_val}: {exc}", level="ERROR")
+                self.log(f"[{zone}] Failed to reset {preset_name} to {reset_val}: {exc}", level="ERROR")
         learned_baselines = {
-            p: USER_BASELINE[p] + self.learned.get(zone, {}).get(p, 0)
+            p: USER_BASELINE[p] + round(self.learned.get(zone, {}).get(p, 0))
             for p in USER_BASELINE
         }
         self.log(f"[{zone}] Presets reset to learned baseline: {learned_baselines}")
@@ -485,9 +641,44 @@ class SleepController(hass.Hass):
         state["bedtime_ts"] = None
         state["last_settings_pushed"] = {}
         state["override_history"] = []
-        state["override_floor"] = {}
         state["bed_empty_since"] = None
+        state["last_setting_change_ts"] = None
+        state["override_freeze_until"] = None
         self._save_state()
+
+    def _persist_override_history(self, zone, bedtime, overrides):
+        """Append override data to a durable file for future ML retraining.
+
+        This prevents the nightly wipe from losing training signal.
+        """
+        history_file = STATE_DIR / "override_history.jsonl"
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            with open(history_file, "a") as f:
+                for ov in overrides:
+                    record = {
+                        "night_date": bedtime.date().isoformat(),
+                        "zone": zone,
+                        **ov,
+                    }
+                    f.write(json.dumps(record, default=str) + "\n")
+            self.log(f"[{zone}] Persisted {len(overrides)} overrides to {history_file}")
+        except OSError as e:
+            self.log(f"[{zone}] Failed to persist overrides: {e}", level="WARNING")
+
+    def _get_preset_entity(self, zone, phase):
+        """Map the 4-phase system to the topper's 3 native presets.
+
+        The topper has L1 (bedtime), L2 (sleep), L3 (wake).
+        Our 4 phases map as: bedtime→L1, deep→L2, rem→L2, wake→L3.
+        """
+        if phase == "bedtime":
+            return ZONE_PRESETS[zone]["bedtime"]
+        elif phase in ("deep", "rem"):
+            return ZONE_PRESETS[zone]["sleep"]
+        elif phase == "wake":
+            return ZONE_PRESETS[zone]["wake"]
+        return ZONE_PRESETS[zone].get("sleep")
 
     # ── Override Detection ───────────────────────────────────────────
 
@@ -497,7 +688,7 @@ class SleepController(hass.Hass):
         if last_pushed is None:
             return None
 
-        preset_entity = ZONE_PRESETS[zone][current_phase]
+        preset_entity = self._get_preset_entity(zone, current_phase)
         actual = self._read_entity(preset_entity)
         if actual is None:
             return None
@@ -687,6 +878,94 @@ class SleepController(hass.Hass):
 
     # ── State Persistence ────────────────────────────────────────────
 
+    def _pg_connect(self):
+        """Lazy PostgreSQL connection with auto-reconnect."""
+        if self._pg_conn is not None:
+            try:
+                self._pg_conn.cursor().execute("SELECT 1")
+                return self._pg_conn
+            except Exception:
+                try:
+                    self._pg_conn.close()
+                except Exception:
+                    pass
+                self._pg_conn = None
+
+        try:
+            import psycopg2
+            self._pg_conn = psycopg2.connect(
+                host=self.pg_host, port=POSTGRES_PORT,
+                dbname=POSTGRES_DB, user=POSTGRES_USER,
+                password=POSTGRES_PASS, connect_timeout=5)
+            self._pg_conn.autocommit = True
+            return self._pg_conn
+        except Exception as e:
+            self.log(f"PostgreSQL connect failed: {e}", level="WARNING")
+            self._pg_conn = None
+            return None
+
+    def _log_to_postgres(self, zone, phase, elapsed, sensors,
+                         room_temp, setting, effective, baseline,
+                         learned_adj, action, override_delta=None):
+        """Write a control-loop reading to PostgreSQL."""
+        conn = self._pg_connect()
+        if conn is None:
+            return
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """INSERT INTO controller_readings
+                   (zone, phase, elapsed_min, body_right_f, body_center_f,
+                    body_left_f, body_avg_f, ambient_f, room_temp_f,
+                    setting, effective, baseline, learned_adj, action,
+                    override_delta)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (zone, phase, elapsed,
+                 sensors.get("body_right"), sensors.get("body_center"),
+                 sensors.get("body_left"), sensors.get("body_avg"),
+                 sensors.get("ambient"), room_temp,
+                 setting, effective, baseline, learned_adj, action,
+                 override_delta))
+        except Exception as e:
+            self.log(f"PostgreSQL reading write failed: {e}", level="WARNING")
+            self._pg_conn = None
+
+    def _log_nightly_summary(self, zone, state, bedtime, wake, duration,
+                             avg_body, overrides):
+        """Write an end-of-night summary row to PostgreSQL."""
+        conn = self._pg_connect()
+        if conn is None:
+            return
+        try:
+            night_date = bedtime.date()
+            pushed = state.get("last_settings_pushed", {})
+            cur = conn.cursor()
+            cur.execute(
+                """INSERT INTO nightly_summary
+                   (night_date, bedtime_ts, wake_ts, duration_hours,
+                    bedtime_setting, sleep_setting, wake_setting,
+                    avg_body_f, override_count, manual_mode)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (night_date) DO UPDATE SET
+                    wake_ts=EXCLUDED.wake_ts,
+                    duration_hours=EXCLUDED.duration_hours,
+                    bedtime_setting=EXCLUDED.bedtime_setting,
+                    sleep_setting=EXCLUDED.sleep_setting,
+                    wake_setting=EXCLUDED.wake_setting,
+                    avg_body_f=EXCLUDED.avg_body_f,
+                    override_count=EXCLUDED.override_count,
+                    manual_mode=EXCLUDED.manual_mode""",
+                (night_date, bedtime, wake, duration,
+                 pushed.get("bedtime"), pushed.get("sleep"),
+                 pushed.get("wake"), avg_body,
+                 len(overrides), state.get("manual_mode", False)))
+            self.log(f"[{zone}] Nightly summary saved to PostgreSQL")
+        except Exception as e:
+            self.log(f"PostgreSQL nightly summary failed: {e}", level="WARNING")
+            self._pg_conn = None
+
+    # ── State Persistence (file-based) ───────────────────────────────
+
     def _save_state(self):
         data = {}
         for zone in self.zones:
@@ -706,7 +985,11 @@ class SleepController(hass.Hass):
         try:
             data = json.loads(STATE_FILE.read_text())
             for zone, zdata in data.items():
-                self.zone_state[zone] = self._fresh_zone_state()
+                fresh = self._fresh_zone_state()
+                saved = zdata.get("state", {})
+                # Merge saved values into fresh template (handles new fields)
+                fresh.update({k: v for k, v in saved.items() if k in fresh})
+                self.zone_state[zone] = fresh
             self.log(f"Loaded state from {STATE_FILE}")
         except (json.JSONDecodeError, KeyError) as e:
             self.log(f"State file corrupted: {e} — starting fresh", level="ERROR")
@@ -735,12 +1018,15 @@ class SleepController(hass.Hass):
         alpha = 0.3  # Learning rate
         for phase, deltas in phase_deltas.items():
             avg_delta = sum(deltas) / len(deltas)
-            old = self.learned[zone].get(phase, 0)
+            old = self.learned[zone].get(phase, 0.0)
+            if not isinstance(old, float):
+                old = float(old)
             new = old * (1 - alpha) + avg_delta * alpha
-            # Round to nearest int (topper only accepts integers)
-            self.learned[zone][phase] = round(new)
+            # Store as float to avoid rounding trap; round only when applying
+            self.learned[zone][phase] = round(new, 2)
             self.log(
-                f"[{zone}] LEARNING: {phase} adj {old:+d} → {round(new):+d} "
+                f"[{zone}] LEARNING: {phase} adj {old:+.1f} → {new:+.2f} "
+                f"(applied as {round(new):+d}) "
                 f"(tonight avg delta: {avg_delta:+.1f})")
 
         self._save_learned()

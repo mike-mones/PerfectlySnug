@@ -127,6 +127,13 @@ class PerfectlySnugTempSensor(
         }
 
     @property
+    def available(self) -> bool:
+        """Return True only if this zone's data is fresh."""
+        if not super().available:
+            return False
+        return self.coordinator.is_zone_available(self._zone)
+
+    @property
     def native_value(self) -> float | None:
         """Return the sensor value."""
         if self.coordinator.data and self._zone in self.coordinator.data:
@@ -165,6 +172,13 @@ class PerfectlySnugProgressSensor(
             "manufacturer": MANUFACTURER,
             "model": MODEL,
         }
+
+    @property
+    def available(self) -> bool:
+        """Return True only if this zone's data is fresh."""
+        if not super().available:
+            return False
+        return self.coordinator.is_zone_available(self._zone)
 
     @property
     def native_value(self) -> int | None:
@@ -208,6 +222,13 @@ class PerfectlySnugPIDSensor(
             "manufacturer": MANUFACTURER,
             "model": MODEL,
         }
+
+    @property
+    def available(self) -> bool:
+        """Return True only if this zone's data is fresh."""
+        if not super().available:
+            return False
+        return self.coordinator.is_zone_available(self._zone)
 
     @property
     def native_value(self) -> float | None:
@@ -255,6 +276,13 @@ class PerfectlySnugOutputSensor(
             "manufacturer": MANUFACTURER,
             "model": MODEL,
         }
+
+    @property
+    def available(self) -> bool:
+        """Return True only if this zone's data is fresh."""
+        if not super().available:
+            return False
+        return self.coordinator.is_zone_available(self._zone)
 
     @property
     def native_value(self) -> int | None:

@@ -21,6 +21,10 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.0  # seconds, doubles each attempt
+
 
 def raw_to_celsius(raw: int) -> float:
     """Convert raw sensor value to Celsius. Only valid for TA, TSR, TSC, TSL, TempSP."""
@@ -107,101 +111,158 @@ class TopperClient:
     async def async_get_settings(
         self, setting_ids: list[int] | None = None
     ) -> dict[int, int]:
-        """Fetch settings from the topper."""
+        """Fetch settings from the topper with retry on failure."""
         if setting_ids is None:
             setting_ids = POLL_SETTINGS
 
-        readings: dict[int, int] = {}
-        try:
-            async with websockets.connect(
-                self.url,
-                origin=WS_ORIGIN,
-                ping_interval=None,
-                close_timeout=5,
-                open_timeout=5,
-            ) as ws:
-                # Send in batches of 8
-                for i in range(0, len(setting_ids), 8):
-                    batch = setting_ids[i : i + 8]
-                    await ws.send(self._build_get_settings(batch))
-                    await asyncio.sleep(0.2)
+        last_err: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                return await self._get_settings_once(setting_ids)
+            except Exception as err:
+                last_err = err
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    _LOGGER.debug(
+                        "Retry %d/%d for %s in %.1fs: %s",
+                        attempt + 1, MAX_RETRIES, self.ip, delay, err,
+                    )
+                    await asyncio.sleep(delay)
 
-                # Collect responses
-                deadline = asyncio.get_event_loop().time() + 10
-                while asyncio.get_event_loop().time() < deadline:
-                    try:
-                        msg = await asyncio.wait_for(ws.recv(), timeout=3)
-                        if isinstance(msg, bytes):
-                            readings.update(self._parse_response(msg))
-                        if len(readings) >= len(setting_ids):
-                            break
-                    except asyncio.TimeoutError:
+        _LOGGER.error("Failed to get settings from %s after %d attempts: %s",
+                       self.ip, MAX_RETRIES, last_err)
+        raise ConnectionError(f"Cannot reach topper at {self.ip}") from last_err
+
+    async def _get_settings_once(self, setting_ids: list[int]) -> dict[int, int]:
+        """Single attempt to fetch settings."""
+        readings: dict[int, int] = {}
+        loop = asyncio.get_running_loop()
+        async with websockets.connect(
+            self.url,
+            origin=WS_ORIGIN,
+            ping_interval=None,
+            close_timeout=5,
+            open_timeout=5,
+        ) as ws:
+            for i in range(0, len(setting_ids), 8):
+                batch = setting_ids[i : i + 8]
+                await ws.send(self._build_get_settings(batch))
+                await asyncio.sleep(0.2)
+
+            deadline = loop.time() + 10
+            while loop.time() < deadline:
+                try:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=3)
+                    if isinstance(msg, bytes):
+                        readings.update(self._parse_response(msg))
+                    if len(readings) >= len(setting_ids):
                         break
-        except Exception as err:
-            _LOGGER.error("Failed to get settings from %s: %s", self.ip, err)
-            raise ConnectionError(f"Cannot reach topper at {self.ip}") from err
+                except asyncio.TimeoutError:
+                    break
 
         return readings
 
-    async def async_set_setting(self, setting_id: int, value: int) -> bool:
-        """Set a single setting on the topper."""
-        try:
-            async with websockets.connect(
-                self.url,
-                origin=WS_ORIGIN,
-                ping_interval=None,
-                close_timeout=5,
-                open_timeout=5,
-            ) as ws:
-                cmd = self._build_set_setting(setting_id, value)
+    async def async_set_setting(self, setting_id: int, value: int) -> dict[int, int]:
+        """Set a single setting on the topper. Returns confirmed values from device.
+
+        Raises ConnectionError on failure after retries (instead of silently
+        returning False).
+        """
+        last_err: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                return await self._set_setting_once(setting_id, value)
+            except Exception as err:
+                last_err = err
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    _LOGGER.debug(
+                        "Retry set %d=%d on %s (%d/%d) in %.1fs: %s",
+                        setting_id, value, self.ip,
+                        attempt + 1, MAX_RETRIES, delay, err,
+                    )
+                    await asyncio.sleep(delay)
+
+        _LOGGER.error("Failed to set setting %d=%d on %s after %d attempts: %s",
+                       setting_id, value, self.ip, MAX_RETRIES, last_err)
+        raise ConnectionError(
+            f"Cannot set {setting_id}={value} on {self.ip}"
+        ) from last_err
+
+    async def _set_setting_once(self, setting_id: int, value: int) -> dict[int, int]:
+        """Single attempt to set a setting. Returns device-confirmed values."""
+        confirmed: dict[int, int] = {}
+        async with websockets.connect(
+            self.url,
+            origin=WS_ORIGIN,
+            ping_interval=None,
+            close_timeout=5,
+            open_timeout=5,
+        ) as ws:
+            cmd = self._build_set_setting(setting_id, value)
+            await ws.send(cmd)
+            await asyncio.sleep(0.5)
+
+            # Read and parse device responses instead of discarding them
+            try:
+                while True:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=1)
+                    if isinstance(msg, bytes):
+                        confirmed.update(self._parse_response(msg))
+            except asyncio.TimeoutError:
+                pass
+
+        return confirmed
+
+    async def async_set_settings(self, settings: dict[int, int]) -> dict[int, int]:
+        """Set multiple settings on the topper. Returns confirmed values.
+
+        Raises ConnectionError on failure after retries.
+        """
+        last_err: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                return await self._set_settings_once(settings)
+            except Exception as err:
+                last_err = err
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    _LOGGER.debug(
+                        "Retry set_settings on %s (%d/%d) in %.1fs: %s",
+                        self.ip, attempt + 1, MAX_RETRIES, delay, err,
+                    )
+                    await asyncio.sleep(delay)
+
+        _LOGGER.error("Failed to set settings on %s after %d attempts: %s",
+                       self.ip, MAX_RETRIES, last_err)
+        raise ConnectionError(f"Cannot set settings on {self.ip}") from last_err
+
+    async def _set_settings_once(self, settings: dict[int, int]) -> dict[int, int]:
+        """Single attempt to set multiple settings. Returns confirmed values."""
+        confirmed: dict[int, int] = {}
+        async with websockets.connect(
+            self.url,
+            origin=WS_ORIGIN,
+            ping_interval=None,
+            close_timeout=5,
+            open_timeout=5,
+        ) as ws:
+            for sid, val in settings.items():
+                cmd = self._build_set_setting(sid, val)
                 await ws.send(cmd)
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.3)
 
-                # Drain any responses
-                try:
-                    while True:
-                        await asyncio.wait_for(ws.recv(), timeout=1)
-                except asyncio.TimeoutError:
-                    pass
+            await asyncio.sleep(0.5)
+            # Parse device responses
+            try:
+                while True:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=1)
+                    if isinstance(msg, bytes):
+                        confirmed.update(self._parse_response(msg))
+            except asyncio.TimeoutError:
+                pass
 
-            return True
-        except Exception as err:
-            _LOGGER.error(
-                "Failed to set setting %d=%d on %s: %s",
-                setting_id,
-                value,
-                self.ip,
-                err,
-            )
-            return False
-
-    async def async_set_settings(self, settings: dict[int, int]) -> bool:
-        """Set multiple settings on the topper."""
-        try:
-            async with websockets.connect(
-                self.url,
-                origin=WS_ORIGIN,
-                ping_interval=None,
-                close_timeout=5,
-                open_timeout=5,
-            ) as ws:
-                for sid, val in settings.items():
-                    cmd = self._build_set_setting(sid, val)
-                    await ws.send(cmd)
-                    await asyncio.sleep(0.3)
-
-                await asyncio.sleep(0.5)
-                # Drain responses
-                try:
-                    while True:
-                        await asyncio.wait_for(ws.recv(), timeout=1)
-                except asyncio.TimeoutError:
-                    pass
-
-            return True
-        except Exception as err:
-            _LOGGER.error("Failed to set settings on %s: %s", self.ip, err)
-            return False
+        return confirmed
 
     def format_settings(self, raw: dict[int, int]) -> dict[str, Any]:
         """Format raw settings into a friendly dict."""

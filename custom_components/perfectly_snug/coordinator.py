@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from collections import deque
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -25,6 +26,14 @@ _LOGGER = logging.getLogger(__name__)
 # Settings that count as "user adjustable" for override detection
 OVERRIDE_SETTINGS = {SETTING_L1, SETTING_L2, SETTING_L3, SETTING_FOOT_WARMER, SETTING_COOLING_MODE}
 
+# Grace period after a set command: skip override detection for this many poll
+# cycles so the device has time to apply our value and report it back.
+_SET_GRACE_CYCLES = 2
+
+# Max age (seconds) before a zone's data is considered stale and entities go
+# unavailable instead of showing frozen values.
+ZONE_STALE_TIMEOUT = 120  # 2 minutes (4 missed polls at 30s interval)
+
 
 class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]]):
     """Coordinator to poll both topper zones."""
@@ -42,10 +51,23 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
             update_interval=timedelta(seconds=UPDATE_INTERVAL),
         )
         self.clients = clients
-        # Track what we last set, so we can detect external changes
-        self._last_set: dict[str, dict[int, int]] = {}
-        # Override event log: list of {zone, setting_id, old, new, delta, timestamp}
-        self.override_log: list[dict[str, Any]] = []
+        # Track what we last set, so we can detect external changes.
+        # Each entry is {setting_id: (value, remaining_grace_cycles)}
+        self._last_set: dict[str, dict[int, tuple[int, int]]] = {}
+        # Override event log — capped to prevent unbounded memory growth
+        self.override_log: deque[dict[str, Any]] = deque(maxlen=100)
+        # Per-zone last successful update timestamp
+        self._zone_last_success: dict[str, datetime] = {}
+        # Last confirmed polled data per zone (separate from optimistic state)
+        self._last_polled: dict[str, dict[int, int]] = {}
+
+    def is_zone_available(self, zone: str) -> bool:
+        """Return True if a zone's data is fresh enough to be considered available."""
+        last = self._zone_last_success.get(zone)
+        if last is None:
+            return False
+        age = (datetime.now(timezone.utc) - last).total_seconds()
+        return age < ZONE_STALE_TIMEOUT
 
     async def _async_update_data(self) -> dict[str, dict[int, int]]:
         """Fetch data from both zones and detect manual overrides."""
@@ -55,10 +77,12 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
             try:
                 settings = await client.async_get_settings(POLL_SETTINGS)
                 data[zone] = settings
+                self._zone_last_success[zone] = datetime.now(timezone.utc)
+                self._last_polled[zone] = dict(settings)
             except ConnectionError as err:
                 _LOGGER.warning("Failed to update %s zone: %s", zone, err)
-                if self.data and zone in self.data:
-                    data[zone] = self.data[zone]
+                # Do NOT reuse stale data — leave zone out of data so
+                # entities report unavailable instead of frozen values.
 
         tasks = [fetch_zone(z, c) for z, c in self.clients.items()]
         await asyncio.gather(*tasks)
@@ -66,47 +90,53 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
         if not data:
             raise UpdateFailed("Could not reach any topper zone")
 
-        # Detect manual overrides
+        # Detect manual overrides (only on zones we successfully polled)
         for zone, settings in data.items():
             if zone not in self._last_set:
-                # First poll — initialize tracking, no override detection yet
                 self._last_set[zone] = {}
-                continue
 
-            prev = self.data.get(zone, {}) if self.data else {}
+            prev = self._last_polled.get(zone, {})
             for sid in OVERRIDE_SETTINGS:
                 if sid not in settings or sid not in prev:
                     continue
+
                 new_val = settings[sid]
                 old_val = prev[sid]
-                expected = self._last_set[zone].get(sid)
+
+                # Decrement grace cycles for tracked settings
+                tracked = self._last_set[zone].get(sid)
+                if tracked is not None:
+                    expected_val, grace_remaining = tracked
+                    if grace_remaining > 0:
+                        # Still in grace period — don't detect overrides
+                        self._last_set[zone][sid] = (expected_val, grace_remaining - 1)
+                        continue
+                    if new_val == expected_val:
+                        # Device confirmed our value — stop tracking
+                        self._last_set[zone].pop(sid, None)
+                        continue
+                    # Grace expired and device has a different value — clear
+                    self._last_set[zone].pop(sid, None)
 
                 if new_val != old_val:
-                    # Value changed. Did WE change it?
-                    if expected is not None and new_val == expected:
-                        # We set this value — not an override
-                        self._last_set[zone].pop(sid, None)
-                    else:
-                        # External change — manual override!
-                        delta = new_val - old_val
-                        override = {
-                            "zone": zone,
-                            "setting_id": sid,
-                            "old_value": old_val,
-                            "new_value": new_val,
-                            "delta": delta,
-                            "timestamp": datetime.now().isoformat(),
-                        }
-                        self.override_log.append(override)
-                        _LOGGER.info(
-                            "Manual override detected: %s setting %d: %d → %d (delta %+d)",
-                            zone, sid, old_val, new_val, delta,
-                        )
-                        # Fire an HA event so automations can react
-                        self.hass.bus.async_fire(
-                            f"{DOMAIN}_manual_override",
-                            override,
-                        )
+                    delta = new_val - old_val
+                    override = {
+                        "zone": zone,
+                        "setting_id": sid,
+                        "old_value": old_val,
+                        "new_value": new_val,
+                        "delta": delta,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                    self.override_log.append(override)
+                    _LOGGER.info(
+                        "Manual override detected: %s setting %d: %d → %d (delta %+d)",
+                        zone, sid, old_val, new_val, delta,
+                    )
+                    self.hass.bus.async_fire(
+                        f"{DOMAIN}_manual_override",
+                        override,
+                    )
 
         return data
 
@@ -117,14 +147,19 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
         client = self.clients.get(zone)
         if not client:
             return False
-        # Track that we're the ones setting this
-        self._last_set.setdefault(zone, {})[setting_id] = value
-        result = await client.async_set_setting(setting_id, value)
-        if result:
-            if self.data and zone in self.data:
-                self.data[zone][setting_id] = value
-            await self.async_request_refresh()
-        return result
+        # Track that we're setting this value, with grace cycles
+        self._last_set.setdefault(zone, {})[setting_id] = (value, _SET_GRACE_CYCLES)
+        try:
+            await client.async_set_setting(setting_id, value)
+        except ConnectionError:
+            self._last_set.get(zone, {}).pop(setting_id, None)
+            return False
+        # Schedule a delayed refresh so the device has time to apply the value
+        # before we poll. This prevents the false-override detection race.
+        self.hass.loop.call_later(2.0, lambda: self.hass.async_create_task(
+            self.async_request_refresh()
+        ))
+        return True
 
     async def async_set_settings(
         self, zone: str, settings: dict[int, int]
@@ -133,12 +168,15 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
         client = self.clients.get(zone)
         if not client:
             return False
-        # Track all values we're setting
         for sid, val in settings.items():
-            self._last_set.setdefault(zone, {})[sid] = val
-        result = await client.async_set_settings(settings)
-        if result:
-            if self.data and zone in self.data:
-                self.data[zone].update(settings)
-            await self.async_request_refresh()
-        return result
+            self._last_set.setdefault(zone, {})[sid] = (val, _SET_GRACE_CYCLES)
+        try:
+            await client.async_set_settings(settings)
+        except ConnectionError:
+            for sid in settings:
+                self._last_set.get(zone, {}).pop(sid, None)
+            return False
+        self.hass.loop.call_later(2.0, lambda: self.hass.async_create_task(
+            self.async_request_refresh()
+        ))
+        return True

@@ -132,6 +132,33 @@ class TestStructuralInvariants:
         loop = _extract_method(src, "_control_loop_inner")
         assert "AMBIENT_REFERENCE_F" in loop
         assert "AMBIENT_COMPENSATION_PER_F" in loop
+        assert "room_temp_entity" in loop
+
+    def test_override_freeze(self):
+        """Controller must freeze after a manual override."""
+        src = _read_source()
+        assert "OVERRIDE_FREEZE_MIN" in src
+        assert "override_freeze_until" in src
+
+    def test_four_phases(self):
+        """Controller must have bedtime, deep, rem, and wake phases."""
+        src = _read_source()
+        assert "DEEP_DURATION_MIN" in src
+        assert '"deep"' in src
+        assert '"rem"' in src
+
+    def test_persist_override_history(self):
+        """Override history must be persisted before clearing."""
+        src = _read_source()
+        assert "_persist_override_history" in src
+        assert "override_history.jsonl" in src
+
+    def test_room_temp_configurable(self):
+        """Room temp entity must be configurable via apps.yaml args."""
+        src = _read_source()
+        init = _extract_method(src, "initialize")
+        assert "room_temp_entity" in init
+        assert "self.args" in init
 
     def test_auto_restart(self):
         """Topper auto-restart must be preserved."""
@@ -158,10 +185,10 @@ class TestSimplicity:
     """Verify the controller stays simple."""
 
     def test_line_count(self):
-        """Controller should be under 800 lines."""
+        """Controller should be under 1100 lines (increased for 4-phase + pre-wake)."""
         src = _read_source()
         lines = src.strip().split('\n')
-        assert len(lines) < 800, f"Controller is {len(lines)} lines — too complex!"
+        assert len(lines) < 1100, f"Controller is {len(lines)} lines — too complex!"
 
     def test_no_pid_controller(self):
         src = _read_source()
@@ -170,9 +197,11 @@ class TestSimplicity:
         assert "p_term" not in src
         assert "i_term" not in src
 
-    def test_no_wake_ramp(self):
+    def test_has_prewake_ramp(self):
+        """Controller should have pre-wake ramp logic."""
         src = _read_source()
-        assert "WAKE_RAMP" not in src
+        assert "PRE_WAKE_RAMP_MIN" in src
+        assert "prewake_ramp" in src
 
 
 # ── Behavioral Tests with Mocks ──────────────────────────────────────────
@@ -206,6 +235,10 @@ def _make_controller(entity_states=None):
     c.zone_state = {"left": c._fresh_zone_state()}
     c.learned = {}  # Multi-night learned adjustments
     c._loop_count = 0
+    c.args = {}  # AppDaemon args
+    c.room_temp_entity = ctrl_module.ROOM_TEMP_ENTITY_DEFAULT
+    c.pg_host = ctrl_module.POSTGRES_HOST_DEFAULT
+    c._pg_conn = None
 
     _entity_states = entity_states or {}
 
@@ -266,10 +299,14 @@ class TestWakeDetection:
         """On wake, presets must be reset to USER_BASELINE values."""
         c = _make_controller({
             "sensor.smart_topper_left_side_run_progress": "0",  # Stopped
+            # Body sensors explicitly below threshold = bed empty
+            "sensor.smart_topper_left_side_body_sensor_right": "72",
+            "sensor.smart_topper_left_side_body_sensor_center": "72",
+            "sensor.smart_topper_left_side_body_sensor_left": "72",
         })
         # Simulate a completed night
         c.zone_state["left"]["bedtime_ts"] = (datetime.now() - timedelta(hours=8)).isoformat()
-        c.zone_state["left"]["last_run_progress"] = 50  # Not > 90, so no auto-restart
+        c.zone_state["left"]["last_run_progress"] = 50
         c.zone_state["left"]["body_temp_history"] = [82.0, 83.0]
 
         calls = []
@@ -284,15 +321,18 @@ class TestWakeDetection:
         set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
         assert len(set_calls) == 3, f"Expected 3 set_value calls, got {len(set_calls)}"
 
-        # Verify correct values
+        # Verify correct values (now mapped: bedtime→-8, sleep→deep(-7), wake→-4)
         values_by_entity = {k["entity_id"]: k["value"] for _, k in set_calls}
         assert values_by_entity["number.smart_topper_left_side_bedtime_temperature"] == -8
-        assert values_by_entity["number.smart_topper_left_side_sleep_temperature"] == -6
-        assert values_by_entity["number.smart_topper_left_side_wake_temperature"] == -5
+        assert values_by_entity["number.smart_topper_left_side_sleep_temperature"] == -7
+        assert values_by_entity["number.smart_topper_left_side_wake_temperature"] == -4
 
     def test_wake_clears_bedtime_ts(self):
         c = _make_controller({
             "sensor.smart_topper_left_side_run_progress": "0",
+            "sensor.smart_topper_left_side_body_sensor_right": "72",
+            "sensor.smart_topper_left_side_body_sensor_center": "72",
+            "sensor.smart_topper_left_side_body_sensor_left": "72",
         })
         c.zone_state["left"]["bedtime_ts"] = (datetime.now() - timedelta(hours=7)).isoformat()
         c.zone_state["left"]["last_run_progress"] = 50
@@ -303,13 +343,18 @@ class TestWakeDetection:
 
 class TestThresholdControl:
     def _sleeping_controller(self, body_temp, current_setting=-6, ambient=70.0):
-        """Create a controller that's mid-sleep with given body temp and setting."""
+        """Create a controller that's mid-sleep with given body temp and setting.
+
+        Sets elapsed time to 2 hours, which places it in the 'deep' phase
+        (past the 60-min bedtime, before the 4h deep phase ends).
+        """
         c = _make_controller({
             "sensor.smart_topper_left_side_run_progress": "50",
             "sensor.smart_topper_left_side_body_sensor_right": str(body_temp),
             "sensor.smart_topper_left_side_body_sensor_center": str(body_temp),
             "sensor.smart_topper_left_side_body_sensor_left": str(body_temp),
             "sensor.smart_topper_left_side_ambient_temperature": str(ambient),
+            "sensor.superior_6000s_temperature": str(ambient),
             "number.smart_topper_left_side_start_length_minutes": "60",
             "number.smart_topper_left_side_wake_length_minutes": "30",
             "number.smart_topper_left_side_bedtime_temperature": str(current_setting),
@@ -320,24 +365,28 @@ class TestThresholdControl:
         c.zone_state["left"]["occupancy_hold_done"] = True
         c.zone_state["left"]["last_settings_pushed"] = {
             "bedtime": current_setting,
-            "sleep": current_setting,
+            "deep": current_setting,
+            "rem": current_setting,
             "wake": current_setting,
         }
         return c
 
     def test_ambiguous_zone_follows_preference(self):
         """Body temp 80-85°F should follow preference, not adjust based on sensors."""
-        # At 83°F (ambiguous zone), amb=70 (ref), baseline sleep=-6
+        # At 83°F (ambiguous zone), amb=70 (ref), baseline deep=-7
         c = self._sleeping_controller(body_temp=83.0, current_setting=-4, ambient=70.0)
         calls = []
         c.call_service = lambda s, **k: calls.append((s, k))
         c._control_loop_inner(None)
         set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
-        # Effective = baseline -6 + learned 0 + ambient 0 = -6
-        # Current is -4, so should move toward -6
+        # Effective = baseline -7 + learned 0 + ambient 0 = -7
+        # Current is -4, so should move toward -7
         if set_calls:
             values = [k["value"] for _, k in set_calls]
-            assert all(v == -6 for v in values), f"Expected -6, got {values}"
+            assert all(v == -7 for v in values), f"Expected -7, got {values}"
+        if set_calls:
+            values = [k["value"] for _, k in set_calls]
+            assert all(v == -7 for v in values), f"Expected -7, got {values}"
 
     def test_hot_safety_cools_down(self):
         """Body temp above 85°F should trigger safety cooling."""
@@ -360,36 +409,39 @@ class TestThresholdControl:
         c.call_service = lambda s, **k: calls.append((s, k))
         c._control_loop_inner(None)
         set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
-        # Effective = baseline -6 + ambient_adj +2 = -4
+        # Effective = baseline -7 + ambient_adj +2 = -5
         if set_calls:
             values = [k["value"] for _, k in set_calls]
-            assert all(v == -4 for v in values), f"Expected -4, got {values}"
+            assert all(v == -5 for v in values), f"Expected -5, got {values}"
 
     def test_learned_adjustment_applied(self):
         """Multi-night learned adjustments should shift the effective setting."""
         c = self._sleeping_controller(body_temp=83.0, current_setting=-6, ambient=70.0)
-        c.learned = {"left": {"sleep": 2}}  # Learned +2 for sleep
+        c.learned = {"left": {"deep": 2}}  # Learned +2 for deep phase
         calls = []
         c.call_service = lambda s, **k: calls.append((s, k))
         c._control_loop_inner(None)
         set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
-        # Effective = baseline -6 + learned +2 = -4
+        # Effective = baseline -7 + learned +2 = -5
         if set_calls:
             values = [k["value"] for _, k in set_calls]
-            assert all(v == -4 for v in values), f"Expected -4, got {values}"
+            assert all(v == -5 for v in values), f"Expected -5, got {values}"
 
-    def test_override_floor_respected(self):
-        """Manual override floor must prevent cooling below user's choice."""
+    def test_override_triggers_freeze(self):
+        """Manual override should freeze the controller for OVERRIDE_FREEZE_MIN."""
+        # Controller last pushed -7 for deep phase, but user changed to -3
         c = self._sleeping_controller(body_temp=83.0, current_setting=-3, ambient=70.0)
-        c.zone_state["left"]["override_floor"] = {"sleep": -3}
+        # Override: we pushed -7, but entity now reads -3
+        c.zone_state["left"]["last_settings_pushed"]["deep"] = -7
         calls = []
         c.call_service = lambda s, **k: calls.append((s, k))
         c._control_loop_inner(None)
+        # Override should be detected and freeze should be set
+        state = c.zone_state["left"]
+        assert state["override_freeze_until"] is not None, "Override freeze should be set"
+        # Controller should NOT have pushed a new setting (it froze after override)
         set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
-        # Effective = -6, but floor = -3, so should stay at -3
-        assert len(set_calls) == 0 or all(
-            k["value"] >= -3 for _, k in set_calls
-        ), "Should not go below override floor"
+        assert len(set_calls) == 0, "Controller should freeze, not push a setting"
 
 
 class TestKillSwitch:
@@ -476,8 +528,8 @@ class TestOverrideDetection:
             "number.smart_topper_left_side_sleep_temperature": "-4",
         })
         c.zone_state["left"]["bedtime_ts"] = datetime.now().isoformat()
-        c.zone_state["left"]["last_settings_pushed"] = {"sleep": -6}
-        override = c._detect_override("left", c.zone_state["left"], "sleep")
+        c.zone_state["left"]["last_settings_pushed"] = {"deep": -6}
+        override = c._detect_override("left", c.zone_state["left"], "deep")
         assert override is not None
         assert override["delta"] == 2
         assert override["actual"] == -4
@@ -487,8 +539,8 @@ class TestOverrideDetection:
             "number.smart_topper_left_side_sleep_temperature": "-6",
         })
         c.zone_state["left"]["bedtime_ts"] = datetime.now().isoformat()
-        c.zone_state["left"]["last_settings_pushed"] = {"sleep": -6}
-        override = c._detect_override("left", c.zone_state["left"], "sleep")
+        c.zone_state["left"]["last_settings_pushed"] = {"deep": -6}
+        override = c._detect_override("left", c.zone_state["left"], "deep")
         assert override is None
 
 
@@ -503,15 +555,22 @@ class TestPhaseDetection:
         state["bedtime_ts"] = (datetime.now() - timedelta(minutes=30)).isoformat()
         assert c._get_active_phase("left", state) == "bedtime"
 
-    def test_sleep_phase(self):
+    def test_deep_phase(self):
         c = _make_controller({
-            "number.smart_topper_left_side_start_length_minutes": "60",
-            "number.smart_topper_left_side_wake_length_minutes": "30",
-            "sensor.smart_topper_left_side_run_progress": "50",
+            "sensor.smart_topper_left_side_run_progress": "30",
         })
         state = c.zone_state["left"]
-        state["bedtime_ts"] = (datetime.now() - timedelta(hours=3)).isoformat()
-        assert c._get_active_phase("left", state) == "sleep"
+        state["bedtime_ts"] = (datetime.now() - timedelta(hours=2)).isoformat()
+        assert c._get_active_phase("left", state) == "deep"
+
+    def test_rem_phase(self):
+        c = _make_controller({
+            "sensor.smart_topper_left_side_run_progress": "70",
+        })
+        state = c.zone_state["left"]
+        # 6 hours in = past bedtime (1h) + deep (4h), should be REM
+        state["bedtime_ts"] = (datetime.now() - timedelta(hours=6)).isoformat()
+        assert c._get_active_phase("left", state) == "rem"
 
 
 class TestAutoRestart:
@@ -551,3 +610,57 @@ class TestAutoRestart:
 
         switch_calls = [(s, k) for s, k in calls if s == "switch/turn_on"]
         assert len(switch_calls) == 0, "Should NOT auto-restart when bed is empty"
+
+
+class TestOverrideFreeze:
+    """Verify the override freeze mechanism."""
+
+    def test_freeze_prevents_adjustment(self):
+        """During freeze, controller should not adjust settings."""
+        c = _make_controller({
+            "sensor.smart_topper_left_side_run_progress": "50",
+            "sensor.smart_topper_left_side_body_sensor_right": "83",
+            "sensor.smart_topper_left_side_body_sensor_center": "83",
+            "sensor.smart_topper_left_side_body_sensor_left": "83",
+            "sensor.smart_topper_left_side_ambient_temperature": "70",
+            "sensor.superior_6000s_temperature": "70",
+            "number.smart_topper_left_side_start_length_minutes": "60",
+            "number.smart_topper_left_side_wake_length_minutes": "30",
+            "number.smart_topper_left_side_sleep_temperature": "-3",
+        })
+        c.zone_state["left"]["bedtime_ts"] = (datetime.now() - timedelta(hours=2)).isoformat()
+        c.zone_state["left"]["occupancy_hold_done"] = True
+        c.zone_state["left"]["last_settings_pushed"] = {"deep": -3}
+        # Set freeze to 30 minutes from now
+        c.zone_state["left"]["override_freeze_until"] = (
+            datetime.now() + timedelta(minutes=30)
+        ).isoformat()
+
+        calls = []
+        c.call_service = lambda s, **k: calls.append((s, k))
+        c._control_loop_inner(None)
+
+        set_calls = [(s, k) for s, k in calls if s == "number/set_value"]
+        assert len(set_calls) == 0, "Should not adjust during override freeze"
+
+
+class TestSensorUnavailability:
+    """Verify sensor unavailability is not conflated with empty bed."""
+
+    def test_unavailable_sensors_dont_trigger_shutoff(self):
+        """If sensors return None, bed should be assumed occupied (safe default)."""
+        c = _make_controller({
+            "sensor.smart_topper_left_side_run_progress": "50",
+            # All body sensors unavailable (None)
+        })
+        c.zone_state["left"]["bedtime_ts"] = (datetime.now() - timedelta(hours=4)).isoformat()
+        c.zone_state["left"]["occupancy_hold_done"] = True
+
+        calls = []
+        c.call_service = lambda s, **k: calls.append((s, k))
+        c._control_loop_inner(None)
+
+        # Should NOT have turned off the topper
+        off_calls = [(s, k) for s, k in calls if s == "switch/turn_off"]
+        assert len(off_calls) == 0, "Should NOT turn off topper when sensors are unavailable"
+        assert c.zone_state["left"]["bed_empty_since"] is None, "Should not start empty-bed timer"

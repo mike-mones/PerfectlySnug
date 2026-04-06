@@ -78,6 +78,13 @@ class PerfectlySnugSwitch(
         }
 
     @property
+    def available(self) -> bool:
+        """Return True only if this zone's data is fresh."""
+        if not super().available:
+            return False
+        return self.coordinator.is_zone_available(self._zone)
+
+    @property
     def is_on(self) -> bool | None:
         """Return true if switch is on."""
         if self.coordinator.data and self._zone in self.coordinator.data:

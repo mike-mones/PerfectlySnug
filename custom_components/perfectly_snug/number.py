@@ -22,6 +22,10 @@ from .const import (
 )
 from .coordinator import PerfectlySnugCoordinator
 
+import logging
+
+_LOGGER = logging.getLogger(__name__)
+
 # L1/L2/L3 use an offset: raw 0-20 on device = display -10 to +10 in the app.
 # Negative = cooling, zero = neutral, positive = warming.
 _TEMP_OFFSET = 10
@@ -123,6 +127,13 @@ class PerfectlySnugNumber(
         }
 
     @property
+    def available(self) -> bool:
+        """Return True only if this zone's data is fresh."""
+        if not super().available:
+            return False
+        return self.coordinator.is_zone_available(self._zone)
+
+    @property
     def native_value(self) -> float | None:
         """Return current value (with offset applied for L1/L2/L3)."""
         if self.coordinator.data and self._zone in self.coordinator.data:
@@ -138,11 +149,13 @@ class PerfectlySnugNumber(
         if self._setting_id == SETTING_FOOT_WARMER:
             from .const import SETTING_HEATER_LIMIT
             if int_val == 0:
+                _LOGGER.info("Foot warmer off → also setting HEATER_LIMIT=0")
                 await self.coordinator.async_set_settings(
                     self._zone,
                     {SETTING_HEATER_LIMIT: 0, SETTING_FOOT_WARMER: 0},
                 )
             else:
+                _LOGGER.info("Foot warmer=%d → setting HEATER_LIMIT=100", int_val)
                 await self.coordinator.async_set_settings(
                     self._zone,
                     {SETTING_FOOT_WARMER: int_val, SETTING_HEATER_LIMIT: 100},

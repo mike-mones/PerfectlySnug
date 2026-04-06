@@ -74,6 +74,13 @@ class PerfectlySnugClimate(CoordinatorEntity[PerfectlySnugCoordinator], ClimateE
         }
 
     @property
+    def available(self) -> bool:
+        """Return True only if this zone's data is fresh."""
+        if not super().available:
+            return False
+        return self.coordinator.is_zone_available(self._zone)
+
+    @property
     def _data(self) -> dict[int, int]:
         """Get zone data."""
         if self.coordinator.data and self._zone in self.coordinator.data:
@@ -139,21 +146,15 @@ class PerfectlySnugClimate(CoordinatorEntity[PerfectlySnugCoordinator], ClimateE
             )
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Set HVAC mode. Can start/stop the topper via SETTING_RUNNING."""
+        """Set HVAC mode. Only toggles SETTING_RUNNING; preserves user's L1 value."""
         if hvac_mode == HVACMode.OFF:
             await self.coordinator.async_set_setting(self._zone, SETTING_RUNNING, 0)
-        elif hvac_mode == HVACMode.COOL:
-            await self.coordinator.async_set_settings(
-                self._zone, {SETTING_RUNNING: 1, SETTING_L1: 5}
-            )
-        elif hvac_mode == HVACMode.HEAT:
-            await self.coordinator.async_set_settings(
-                self._zone, {SETTING_RUNNING: 1, SETTING_L1: 15}
-            )
-        elif hvac_mode == HVACMode.HEAT_COOL:
-            await self.coordinator.async_set_settings(
-                self._zone, {SETTING_RUNNING: 1, SETTING_L1: 10}
-            )
+        else:
+            # Start the topper without overwriting the user's temperature setting.
+            # The user controls L1 via the temperature slider or number entity.
+            running = self._data.get(SETTING_RUNNING, 0)
+            if not running:
+                await self.coordinator.async_set_setting(self._zone, SETTING_RUNNING, 1)
 
     @callback
     def _handle_coordinator_update(self) -> None:
