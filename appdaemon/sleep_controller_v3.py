@@ -748,6 +748,7 @@ class SleepController(hass.Hass):
         if actual != last_pushed:
             sensors = self._read_sensors(zone)
             body = sensors.get("body_avg")
+            room_temp = self._read_entity(self.room_temp_entity)
             bedtime_dt = datetime.fromisoformat(state["bedtime_ts"])
             mins = (datetime.now() - bedtime_dt).total_seconds() / 60
             self.log(
@@ -762,6 +763,7 @@ class SleepController(hass.Hass):
                 "delta": actual - last_pushed,
                 "timestamp": datetime.now().isoformat(),
                 "body_temp": body,
+                "room_temp_f": room_temp,
             }
         return None
 
