@@ -81,7 +81,7 @@ SETTING_DEADBAND = 2
 CHANGE_COOLDOWN_SEC = 900  # 15 minutes
 
 # Override freeze: after a manual override, freeze controller for this long
-OVERRIDE_FREEZE_MIN = 60
+OVERRIDE_FREEZE_MIN = 15
 
 # Override debounce: wait this long after the last change before committing
 # the override to history. Prevents intermediate values (e.g., scrolling
