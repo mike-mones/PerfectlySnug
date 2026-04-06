@@ -55,12 +55,14 @@ class TestNoAppleWatchDependency:
         assert "apple_health_sleep_stage" not in src
 
     def test_no_health_entities(self):
+        """Controller should not depend on Apple Watch for control decisions,
+        but MAY read health data for ML learning at end of night."""
         src = _read_source()
         assert "HEALTH_ENTITIES" not in src
-        assert "apple_health_hr" not in src
-        assert "apple_health_hrv" not in src
-        assert "apple_health_respiratory_rate" not in src
-        assert "apple_health_wrist_temp" not in src
+        # These should NOT appear in the control loop — only in _end_night
+        loop = _extract_method(src, "_control_loop_inner")
+        assert "apple_health_hr" not in loop
+        assert "apple_health_hrv" not in loop
 
     def test_no_stage_classifier(self):
         src = _read_source()
@@ -132,7 +134,7 @@ class TestStructuralInvariants:
         loop = _extract_method(src, "_control_loop_inner")
         assert "AMBIENT_REFERENCE_F" in loop
         assert "AMBIENT_COMPENSATION_PER_F" in loop
-        assert "room_temp_entity" in loop
+        assert "_read_room_temp" in loop
 
     def test_override_freeze(self):
         """Controller must freeze after a manual override."""

@@ -46,15 +46,23 @@ class NightRecord:
     overrides: list[dict] = field(default_factory=list)
     final_settings: dict[str, int] = field(default_factory=dict)
     manual_mode: bool = False
+    # Health data from SleepSync (captured at end of night from HA entities)
+    avg_hr: Optional[float] = None
+    avg_hrv: Optional[float] = None
+    sleep_stage: Optional[str] = None
+    user_rating: Optional[int] = None  # 1-5 from morning notification
 
     @property
     def quality_score(self) -> float:
         """Score 0-1 where 1 = perfect night (no overrides, good duration).
 
-        - No overrides = settings were comfortable = 1.0
-        - More overrides = settings were wrong = lower score
-        - Very short nights (<4h) or very long (>10h) penalized slightly
+        When a user_rating is available (1-5 from morning notification),
+        it takes priority as the strongest quality signal.
         """
+        # User rating is the strongest signal when available
+        if self.user_rating is not None:
+            return max(0.0, min(1.0, (self.user_rating - 1) / 4.0))
+
         override_penalty = min(1.0, self.override_count * 0.2)
         duration_score = 1.0
         if self.duration_hours < 4:
@@ -386,12 +394,19 @@ class SleepLearner:
 
         for key, overrides in nights.items():
             zone = overrides[0].get("zone", "left")
+            # Use room temp from the first override if available
+            stored_room = None
+            for ov in overrides:
+                rt = ov.get("room_temp_f")
+                if rt is not None:
+                    stored_room = rt
+                    break
             night = NightRecord(
                 night_date=overrides[0].get("night_date", "unknown"),
                 zone=zone,
-                duration_hours=8.0,  # Assume average
-                avg_body_f=82.0,     # Assume average
-                room_temp_f=70.0,    # Assume reference
+                duration_hours=8.0,
+                avg_body_f=82.0,
+                room_temp_f=stored_room or 70.0,
                 override_count=len(overrides),
                 overrides=overrides,
                 final_settings={},

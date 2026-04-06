@@ -5,6 +5,7 @@ from __future__ import annotations
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -161,9 +162,10 @@ class PerfectlySnugNumber(
                     {SETTING_FOOT_WARMER: int_val, SETTING_HEATER_LIMIT: 100},
                 )
         else:
-            await self.coordinator.async_set_setting(
+            if not await self.coordinator.async_set_setting(
                 self._zone, self._setting_id, int_val
-            )
+            ):
+                raise HomeAssistantError("Could not reach Smart Topper")
 
     @callback
     def _handle_coordinator_update(self) -> None:

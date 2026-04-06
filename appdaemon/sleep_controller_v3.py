@@ -437,7 +437,7 @@ class SleepController(hass.Hass):
             body_avg = sensors.get("body_avg")
             # Use Levoit room temp for ambient compensation — topper's
             # "ambient" sensor reads mattress surface heat, not room air
-            ambient = self._read_entity(self.room_temp_entity)
+            ambient = self._read_room_temp()
 
             # Occupancy check
             if body_avg is not None and body_avg < OCCUPANCY_THRESHOLD_F:
@@ -698,11 +698,16 @@ class SleepController(hass.Hass):
             self._persist_override_history(zone, bedtime, overrides)
 
         # Feed the ML learner with tonight's data
-        room_temp = self._read_entity(self.room_temp_entity)
+        room_temp = self._read_room_temp()
         # Enrich overrides with room temp for the learner
         for ov in overrides:
             if "room_temp_f" not in ov:
                 ov["room_temp_f"] = room_temp
+        # Read health data from HA entities (populated by SleepSync)
+        avg_hr = self._read_entity("input_number.apple_health_hr_avg")
+        avg_hrv = self._read_entity("input_number.apple_health_hrv")
+        # Read latest sleep rating if available
+        user_rating = self._read_latest_sleep_rating()
         try:
             night_record = NightRecord(
                 night_date=bedtime.date().isoformat(),
@@ -714,6 +719,9 @@ class SleepController(hass.Hass):
                 overrides=overrides,
                 final_settings=dict(state.get("last_settings_pushed", {})),
                 manual_mode=state.get("manual_mode", False),
+                avg_hr=avg_hr,
+                avg_hrv=avg_hrv,
+                user_rating=user_rating,
             )
             self.learner.update_after_night(night_record)
             self.learner.save()
@@ -809,7 +817,7 @@ class SleepController(hass.Hass):
         if actual != last_pushed:
             sensors = self._read_sensors(zone)
             body = sensors.get("body_avg")
-            room_temp = self._read_entity(self.room_temp_entity)
+            room_temp = self._read_room_temp()
             bedtime_dt = datetime.fromisoformat(state["bedtime_ts"])
             mins = (datetime.now() - bedtime_dt).total_seconds() / 60
             self.log(
@@ -935,9 +943,41 @@ class SleepController(hass.Hass):
                     "rating": rating,
                 }) + "\n")
         except OSError:
+            self.log("Failed to save sleep rating", level="WARNING")
+
+    def _read_latest_sleep_rating(self):
+        """Read the most recent sleep rating from sleep_ratings.jsonl.
+
+        Returns the rating (1-5) if one was recorded today, else None.
+        """
+        rating_file = STATE_DIR / "sleep_ratings.jsonl"
+        if not rating_file.exists():
+            return None
+        try:
+            last_line = None
+            with open(rating_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        last_line = line
+            if last_line:
+                record = json.loads(last_line)
+                # Only use rating if from today
+                rating_date = record.get("date", "")[:10]
+                today = datetime.now().strftime("%Y-%m-%d")
+                if rating_date == today:
+                    return record.get("rating")
+        except (json.JSONDecodeError, OSError):
             pass
+        return None
 
     # ── Sensor Reading ───────────────────────────────────────────────
+
+    # Sanity bounds — values outside these ranges indicate sensor malfunction
+    ROOM_TEMP_MIN_F = 40.0
+    ROOM_TEMP_MAX_F = 110.0
+    BODY_TEMP_MIN_F = 50.0
+    BODY_TEMP_MAX_F = 120.0
 
     def _read_entity(self, entity_id):
         state = self.get_state(entity_id)
@@ -949,10 +989,31 @@ class SleepController(hass.Hass):
             self.log(f"Entity {entity_id} not numeric: {state!r}", level="WARNING")
             return None
 
+    def _read_room_temp(self):
+        """Read room temperature with sanity bounds."""
+        val = self._read_entity(self.room_temp_entity)
+        if val is not None and not (self.ROOM_TEMP_MIN_F <= val <= self.ROOM_TEMP_MAX_F):
+            self.log(f"Room temp {val:.1f}F outside sane range [{self.ROOM_TEMP_MIN_F}-{self.ROOM_TEMP_MAX_F}] — ignoring",
+                     level="WARNING")
+            return None
+        return val
+
+    def terminate(self):
+        """Called by AppDaemon on clean shutdown — save state."""
+        self.log("Controller terminating — saving state")
+        self._save_state()
+
     def _read_sensors(self, zone):
         sensors = {}
         for key, entity_id in ZONE_SENSORS[zone].items():
-            sensors[key] = self._read_entity(entity_id)
+            val = self._read_entity(entity_id)
+            # Sanity check body sensor readings
+            if key.startswith("body_") and val is not None:
+                if not (self.BODY_TEMP_MIN_F <= val <= self.BODY_TEMP_MAX_F):
+                    self.log(f"[{zone}] {key}={val:.1f}F outside sane range — treating as unavailable",
+                             level="WARNING")
+                    val = None
+            sensors[key] = val
 
         # Determine which sensor is the "inner" one (closest to partner).
         # For the left zone, body_right is inner; for right zone, body_left.

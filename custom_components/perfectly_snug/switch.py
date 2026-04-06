@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -94,11 +95,13 @@ class PerfectlySnugSwitch(
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on."""
-        await self.coordinator.async_set_setting(self._zone, self._setting_id, 1)
+        if not await self.coordinator.async_set_setting(self._zone, self._setting_id, 1):
+            raise HomeAssistantError("Could not reach Smart Topper")
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off."""
-        await self.coordinator.async_set_setting(self._zone, self._setting_id, 0)
+        if not await self.coordinator.async_set_setting(self._zone, self._setting_id, 0):
+            raise HomeAssistantError("Could not reach Smart Topper")
 
     @callback
     def _handle_coordinator_update(self) -> None:
