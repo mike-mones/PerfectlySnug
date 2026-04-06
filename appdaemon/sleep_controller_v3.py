@@ -111,6 +111,9 @@ ZONE_SENSORS = {
         "body_left":    "sensor.smart_topper_left_side_body_sensor_left",
         "ambient":      "sensor.smart_topper_left_side_ambient_temperature",
         "run_progress":  "sensor.smart_topper_left_side_run_progress",
+        "blower_pct":   "sensor.smart_topper_left_side_blower_output",
+        "heater_head_pct": "sensor.smart_topper_left_side_heater_head_output",
+        "heater_foot_pct": "sensor.smart_topper_left_side_heater_foot_output",
     },
     "right": {
         "body_right":   "sensor.smart_topper_right_side_body_sensor_right",
@@ -118,6 +121,9 @@ ZONE_SENSORS = {
         "body_left":    "sensor.smart_topper_right_side_body_sensor_left",
         "ambient":      "sensor.smart_topper_right_side_ambient_temperature",
         "run_progress":  "sensor.smart_topper_right_side_run_progress",
+        "blower_pct":   "sensor.smart_topper_right_side_blower_output",
+        "heater_head_pct": "sensor.smart_topper_right_side_heater_head_output",
+        "heater_foot_pct": "sensor.smart_topper_right_side_heater_foot_output",
     },
 }
 
@@ -764,6 +770,9 @@ class SleepController(hass.Hass):
                 "timestamp": datetime.now().isoformat(),
                 "body_temp": body,
                 "room_temp_f": room_temp,
+                "blower_pct": sensors.get("blower_pct"),
+                "heater_head_pct": sensors.get("heater_head_pct"),
+                "heater_foot_pct": sensors.get("heater_foot_pct"),
             }
         return None
 
