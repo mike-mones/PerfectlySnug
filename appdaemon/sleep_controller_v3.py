@@ -77,6 +77,7 @@ AMBIENT_COLD_THRESHOLD_F = 65.0           # Below this, ramp compensation harder
 AMBIENT_COLD_EXTRA_PER_F = 0.5            # Extra compensation per °F below threshold
 AMBIENT_FLOOR_TEMP_F = 60.0               # Below this, force minimum setting
 AMBIENT_FLOOR_SETTING = 0                 # Never cool below neutral in a freezing room
+MAX_AMBIENT_COMPENSATED_SETTING = 0       # Never heat — user runs warm. 0 = neutral ceiling.
 
 # Kill switch: rapid manual changes disable controller for the night
 KILL_SWITCH_CHANGES = 3
@@ -585,6 +586,10 @@ class SleepController(hass.Hass):
                         f"[{zone}] Cold room floor: room={ambient:.0f}°F "
                         f"≤ {AMBIENT_FLOOR_TEMP_F}°F, clamped to >={AMBIENT_FLOOR_SETTING:+d}"
                     )
+
+            # Never heat — user runs warm, heating always makes them too hot.
+            # Ambient compensation can bring us to neutral (0) but never above.
+            effective = min(MAX_AMBIENT_COMPENSATED_SETTING, effective)
 
             # Clamp to topper range
             effective = max(-10, min(10, effective))
