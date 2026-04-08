@@ -81,7 +81,7 @@ MAX_AMBIENT_COMPENSATED_SETTING = 0       # Never heat — user runs warm. 0 = n
 
 # Kill switch: rapid manual changes disable controller for the night
 KILL_SWITCH_CHANGES = 3
-KILL_SWITCH_WINDOW_SEC = 20
+KILL_SWITCH_WINDOW_SEC = 300              # 5 min window (was 20s — too tight)
 
 # Deadband: don't change the setting unless computed value differs by this much
 SETTING_DEADBAND = 2
@@ -89,7 +89,7 @@ SETTING_DEADBAND = 2
 CHANGE_COOLDOWN_SEC = 900  # 15 minutes
 
 # Override freeze: after a manual override, freeze controller for this long
-OVERRIDE_FREEZE_MIN = 15
+OVERRIDE_FREEZE_MIN = 60                  # 1 hour (was 15 min — too short, controller fought user)
 
 # Override debounce: wait this long after the last change before committing
 # the override to history. Prevents intermediate values (e.g., scrolling
@@ -253,6 +253,8 @@ class SleepController(hass.Hass):
             "override_freeze_until": None,  # Freeze controller after manual override
             "pending_override": None,       # Debounce: {phase, value, first_seen, ...}
             "pending_override_ts": None,    # When the pending override was last updated
+            "last_override_value": None,    # User's last manual setting value
+            "override_floor": None,         # Don't go colder than this after override
         }
 
     # ── Phase Detection ──────────────────────────────────────────────
@@ -431,7 +433,17 @@ class SleepController(hass.Hass):
                     continue
                 else:
                     state["override_freeze_until"] = None
-                    self.log(f"[{zone}] Override freeze expired — resuming control")
+                    # Resume from user's chosen value, not controller's old target.
+                    # The user overrode for a reason — respect it as a floor.
+                    user_val = state.get("last_override_value")
+                    if user_val is not None:
+                        state["override_floor"] = user_val
+                        self.log(
+                            f"[{zone}] Override freeze expired — resuming with "
+                            f"floor={user_val:+d} (user's last override)"
+                        )
+                    else:
+                        self.log(f"[{zone}] Override freeze expired — resuming control")
 
             # ── Active sleep control ──
 
@@ -512,10 +524,11 @@ class SleepController(hass.Hass):
                 state["override_freeze_until"] = (
                     datetime.now() + _td(minutes=OVERRIDE_FREEZE_MIN)
                 ).isoformat()
+                state["last_override_value"] = override["actual"]
                 self.log(
                     f"[{zone}] OVERRIDE detected: {phase} "
                     f"{override['expected']:+d} → {override['actual']:+d} "
-                    f"— debouncing ({OVERRIDE_DEBOUNCE_SEC}s)")
+                    f"— freezing {OVERRIDE_FREEZE_MIN}m, floor={override['actual']:+d}")
                 self._save_state()
                 continue
 
@@ -590,6 +603,17 @@ class SleepController(hass.Hass):
             # Never heat — user runs warm, heating always makes them too hot.
             # Ambient compensation can bring us to neutral (0) but never above.
             effective = min(MAX_AMBIENT_COMPENSATED_SETTING, effective)
+
+            # Override floor: after a manual override, never go colder than
+            # what the user chose. They overrode because they were uncomfortable.
+            override_floor = state.get("override_floor")
+            if override_floor is not None:
+                if effective < override_floor:
+                    self.log(
+                        f"[{zone}] Override floor: computed {effective:+d} "
+                        f"< user's {override_floor:+d}, using floor"
+                    )
+                    effective = override_floor
 
             # Clamp to topper range
             effective = max(-10, min(10, effective))
