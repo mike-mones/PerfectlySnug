@@ -170,6 +170,13 @@ class SleepControllerV4(hass.Hass):
         if not self._is_sleeping():
             return
 
+        # Responsive cooling watchdog — ALWAYS runs, even during freeze.
+        # This is safety-critical: firmware stability depends on it.
+        rc_state = self.get_state(E_RESPONSIVE_COOLING)
+        if rc_state == "off":
+            self.log("WARNING: Responsive cooling was OFF — re-enabling", level="WARNING")
+            self.call_service("switch/turn_on", entity_id=E_RESPONSIVE_COOLING)
+
         # Manual mode (kill switch) — hands off for the night
         if self._state["manual_mode"]:
             return
@@ -201,12 +208,6 @@ class SleepControllerV4(hass.Hass):
         # Gap 1: Robust occupancy detection
         if not self._check_occupancy(body_center, now):
             return
-
-        # Gap 3: Responsive cooling watchdog — re-enable if something turned it off
-        rc_state = self.get_state(E_RESPONSIVE_COOLING)
-        if rc_state != "on":
-            self.log("WARNING: Responsive cooling was OFF — re-enabling", level="WARNING")
-            self.call_service("switch/turn_on", entity_id=E_RESPONSIVE_COOLING)
 
         sleep_start = self._state.get("sleep_start")
         if not sleep_start:
@@ -478,6 +479,18 @@ class SleepControllerV4(hass.Hass):
                  bedtime_setting, override_count, manual_mode, controller_ver,
                  total_sleep_min, deep_sleep_min, rem_sleep_min, core_sleep_min, awake_min)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (night_date) DO UPDATE SET
+                 wake_ts = EXCLUDED.wake_ts,
+                 duration_hours = EXCLUDED.duration_hours,
+                 bedtime_setting = EXCLUDED.bedtime_setting,
+                 override_count = EXCLUDED.override_count,
+                 manual_mode = EXCLUDED.manual_mode,
+                 controller_ver = EXCLUDED.controller_ver,
+                 total_sleep_min = EXCLUDED.total_sleep_min,
+                 deep_sleep_min = EXCLUDED.deep_sleep_min,
+                 rem_sleep_min = EXCLUDED.rem_sleep_min,
+                 core_sleep_min = EXCLUDED.core_sleep_min,
+                 awake_min = EXCLUDED.awake_min
             """, (
                 datetime.fromisoformat(sleep_start).date(),
                 sleep_start,
