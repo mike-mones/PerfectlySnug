@@ -14,7 +14,8 @@ Run: uvicorn app:app --host 0.0.0.0 --port 8080
 
 import logging
 import os
-from datetime import datetime, timedelta
+import urllib.request
+from datetime import datetime, timedelta, timezone
 
 import json
 
@@ -31,6 +32,10 @@ DB_PORT = os.environ.get("DB_PORT", "5432")
 DB_NAME = os.environ.get("DB_NAME", "sleepdata")
 DB_USER = os.environ.get("DB_USER", "sleepsync")
 DB_PASS = os.environ.get("DB_PASS", "sleepsync_local")
+
+# Optional: Home Assistant API for entity updates (fallback if automation misses)
+HA_URL = os.environ.get("HA_URL", "http://192.168.0.106:8123")
+HA_TOKEN = os.environ.get("HA_TOKEN", "")
 
 app = FastAPI(title="Health Receiver", version="1.0")
 
@@ -265,6 +270,97 @@ def _store_sleep_summary(conn, record: dict):
     log.info("Stored sleep summary for %s (%.1fh total)", night_date, total_sleep_hrs)
 
 
+# ── Real-time Sleep Stage (from SleepSync) ───────────────────────────
+
+def _night_date_for(ts: datetime):
+    """Assign a timestamp to its sleep night (before noon → previous day)."""
+    local = ts.astimezone()
+    if local.hour < 12:
+        return (local - timedelta(days=1)).date()
+    return local.date()
+
+
+def _store_sleep_stage_realtime(conn, records: list, source: str = "sleepsync"):
+    """Store a real-time sleep stage sample from SleepSync.
+
+    Maintains proper segments: extends the current segment if the stage
+    hasn't changed, otherwise closes it and opens a new one.
+    """
+    if not records:
+        return
+
+    stage = records[0].get("stage", "unknown")
+    if stage == "unknown":
+        return
+
+    now = datetime.now(timezone.utc)
+    night_date = _night_date_for(now)
+
+    with conn.cursor() as cur:
+        # Find the most recent segment for tonight from this source
+        cur.execute("""
+            SELECT id, stage, start_ts FROM sleep_segments
+            WHERE night_date = %s AND source = %s
+            ORDER BY start_ts DESC LIMIT 1
+        """, (night_date, source))
+        prev = cur.fetchone()
+
+        if prev:
+            prev_id, prev_stage, prev_start = prev
+            if prev_stage == stage:
+                # Same stage — extend the segment
+                cur.execute("""
+                    UPDATE sleep_segments
+                    SET end_ts = %s,
+                        duration_min = EXTRACT(EPOCH FROM (%s - start_ts)) / 60.0
+                    WHERE id = %s
+                """, (now, now, prev_id))
+            else:
+                # Stage changed — close previous, open new
+                cur.execute("""
+                    UPDATE sleep_segments
+                    SET end_ts = %s,
+                        duration_min = EXTRACT(EPOCH FROM (%s - start_ts)) / 60.0
+                    WHERE id = %s
+                """, (now, now, prev_id))
+                cur.execute("""
+                    INSERT INTO sleep_segments
+                        (night_date, start_ts, end_ts, stage, duration_min, source)
+                    VALUES (%s, %s, %s, %s, 0, %s)
+                """, (night_date, now, now, stage, source))
+        else:
+            # First segment of the night
+            cur.execute("""
+                INSERT INTO sleep_segments
+                    (night_date, start_ts, end_ts, stage, duration_min, source)
+                VALUES (%s, %s, %s, %s, 0, %s)
+            """, (night_date, now, now, stage, source))
+
+    conn.commit()
+    log.info("Sleep stage: %s (night %s)", stage, night_date)
+
+    # Best-effort HA entity update (in case the webhook automation didn't fire)
+    _update_ha_sleep_stage(stage)
+
+
+def _update_ha_sleep_stage(stage: str):
+    """Update input_text.apple_health_sleep_stage via HA REST API (best-effort)."""
+    if not HA_TOKEN:
+        return
+    try:
+        url = f"{HA_URL}/api/services/input_text/set_value"
+        data = json.dumps({
+            "entity_id": "input_text.apple_health_sleep_stage",
+            "value": stage,
+        }).encode()
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("Authorization", f"Bearer {HA_TOKEN}")
+        req.add_header("Content-Type", "application/json")
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        log.warning("HA entity update failed (non-critical): %s", e)
+
+
 # ── General Metrics ──────────────────────────────────────────────────
 
 def _store_metric(conn, metric_name: str, units: str, records: list):
@@ -275,15 +371,20 @@ def _store_metric(conn, metric_name: str, units: str, records: list):
     """
     rows = []
     for rec in records:
-        try:
-            ts = parse_date(rec.get("date") or rec.get("start") or rec.get("startDate"))
-        except (KeyError, ValueError, TypeError):
-            continue
+        date_field = rec.get("date") or rec.get("start") or rec.get("startDate")
+        if date_field:
+            try:
+                ts = parse_date(date_field)
+            except (ValueError, TypeError):
+                continue
+        else:
+            # SleepSync real-time format: no date field → use current time
+            ts = datetime.now(timezone.utc)
 
         value = rec.get("qty") or rec.get("Avg")
         value_min = rec.get("Min")
         value_max = rec.get("Max")
-        source = rec.get("source")
+        source = rec.get("source") or "sleepsync"
 
         if value is None and value_min is None:
             continue
@@ -388,6 +489,9 @@ async def receive_health(request: Request):
                     for rec in records:
                         _store_sleep_summary(conn, rec)
                         sleep_stored += 1
+            elif name == "sleep_stage":
+                _store_sleep_stage_realtime(conn, records)
+                sleep_stored += 1
             else:
                 _store_metric(conn, name, units, records)
                 stored += len(records)
@@ -552,6 +656,9 @@ async def upload_file(file: UploadFile = File(...)):
                     for rec in records:
                         _store_sleep_summary(conn, rec)
                         sleep_stored += 1
+            elif name == "sleep_stage":
+                _store_sleep_stage_realtime(conn, records)
+                sleep_stored += 1
             else:
                 _store_metric(conn, name, units, records)
                 stored += len(records)
