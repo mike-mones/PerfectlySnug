@@ -91,9 +91,10 @@ MIN_CHANGE_INTERVAL_SEC = 1800      # Don't change L1 more than once per 30 min
 KILL_SWITCH_CHANGES = 3             # 3 manual changes in this window...
 KILL_SWITCH_WINDOW_SEC = 300        # ...within 5 min = manual mode for night
 
-# Occupancy
-BODY_OCCUPIED_THRESHOLD_F = 78.0    # Body sensor above this = someone in bed
-BODY_EMPTY_TIMEOUT_MIN = 20         # Body below threshold for this long = empty bed
+# Occupancy — body sensors read 67-70°F empty, 80-89°F occupied
+BODY_OCCUPIED_THRESHOLD_F = 74.0    # Getting-in threshold (ramp from 70→80 takes a few min)
+BODY_EMPTY_THRESHOLD_F = 72.0       # Below this, start the empty-bed timer
+BODY_EMPTY_TIMEOUT_MIN = 20         # Must stay below empty threshold for this long
 
 # Entities (left side only — right side uses stock firmware)
 E_BEDTIME_TEMP = "number.smart_topper_left_side_bedtime_temperature"
@@ -134,6 +135,7 @@ class SleepControllerV4(hass.Hass):
             "override_freeze_until": None,
             "manual_mode": False,       # Kill switch triggered
             "recent_changes": [],       # Timestamps of recent manual changes
+            "body_below_since": None,   # When body first dropped below BODY_EMPTY_THRESHOLD_F
         }
         self._load_state()
         self._pg_conn = None
@@ -149,6 +151,9 @@ class SleepControllerV4(hass.Hass):
 
         # Listen for manual setting changes (override detection)
         self.listen_state(self._on_setting_change, E_BEDTIME_TEMP)
+
+        # Gap 5: If sleep_mode is already ON (mid-night restart), resume
+        self._check_midnight_restart()
 
         self.log("Controller v4 ready — working WITH firmware PID")
         self.log(f"  Cycles: {CYCLE_SETTINGS}")
@@ -193,9 +198,15 @@ class SleepControllerV4(hass.Hass):
         sleep_stage = self._read_str(E_SLEEP_STAGE)
         body_center = self._read_float(E_BODY_CENTER)
 
-        # Check occupancy
-        if body_center is not None and body_center < BODY_OCCUPIED_THRESHOLD_F:
-            return  # Nobody in bed
+        # Gap 1: Robust occupancy detection
+        if not self._check_occupancy(body_center, now):
+            return
+
+        # Gap 3: Responsive cooling watchdog — re-enable if something turned it off
+        rc_state = self.get_state(E_RESPONSIVE_COOLING)
+        if rc_state != "on":
+            self.log("WARNING: Responsive cooling was OFF — re-enabling", level="WARNING")
+            self.call_service("switch/turn_on", entity_id=E_RESPONSIVE_COOLING)
 
         sleep_start = self._state.get("sleep_start")
         if not sleep_start:
@@ -204,7 +215,7 @@ class SleepControllerV4(hass.Hass):
         elapsed_min = (now - datetime.fromisoformat(sleep_start)).total_seconds() / 60
 
         # Determine setting from sleep cycle position
-        setting = self._compute_setting(elapsed_min, room_temp, sleep_stage)
+        setting, room_temp_comp, data_source = self._compute_setting(elapsed_min, room_temp, sleep_stage)
 
         # Apply override floor — never go colder than user's last override
         floor = self._state.get("override_floor")
@@ -215,41 +226,57 @@ class SleepControllerV4(hass.Hass):
         # Apply
         current = self._read_float(E_BEDTIME_TEMP)
         if current is not None and int(current) != setting:
+            cycle_num = self._get_cycle_num(elapsed_min)
             self.log(
-                f"Cycle {self._get_cycle_num(elapsed_min)}, "
+                f"Cycle {cycle_num}, "
                 f"elapsed={elapsed_min:.0f}m, room={room_temp}°F, "
-                f"stage={sleep_stage}: {int(current):+d} → {setting:+d}"
+                f"stage={sleep_stage}, src={data_source}, "
+                f"room_comp={room_temp_comp:+d}: "
+                f"{int(current):+d} → {setting:+d}"
             )
             self._set_l1(setting)
             self._state["last_change_ts"] = now.isoformat()
-            self._log_to_postgres(elapsed_min, room_temp, sleep_stage, body_center, setting)
+            self._log_to_postgres(
+                elapsed_min, room_temp, sleep_stage, body_center, setting,
+                cycle_num=cycle_num, room_temp_comp=room_temp_comp,
+                data_source=data_source, override_floor=floor,
+            )
             self._save_state()
 
     def _compute_setting(self, elapsed_min, room_temp, sleep_stage):
-        """Compute L1 setting from cycle position + room temp."""
+        """Compute L1 setting from cycle position + room temp.
+
+        Returns (setting, room_temp_comp, data_source) where:
+          room_temp_comp: degrees of room temp compensation applied
+          data_source: 'stage' or 'time_cycle'
+        """
+        room_temp_comp = 0
 
         # If we have real sleep stage data, use it directly
         if sleep_stage and sleep_stage not in ("unknown", ""):
             setting = self._setting_for_stage(sleep_stage)
+            data_source = "stage"
         else:
             # Fall back to time-based cycle estimation
             cycle_num = self._get_cycle_num(elapsed_min)
             setting = CYCLE_SETTINGS.get(cycle_num, CYCLE_SETTINGS[max(CYCLE_SETTINGS.keys())])
+            data_source = "time_cycle"
 
         # Room temperature compensation — physics, always applied
         if room_temp is not None:
             delta = AMBIENT_REFERENCE_F - room_temp
             if delta > 0:
-                comp = delta * AMBIENT_COMP_PER_F
+                room_temp_comp = delta * AMBIENT_COMP_PER_F
                 if room_temp < AMBIENT_COLD_THRESHOLD_F:
-                    comp += (AMBIENT_COLD_THRESHOLD_F - room_temp) * AMBIENT_COLD_EXTRA_PER_F
-                setting += round(comp)
+                    room_temp_comp += (AMBIENT_COLD_THRESHOLD_F - room_temp) * AMBIENT_COLD_EXTRA_PER_F
+                room_temp_comp = round(room_temp_comp)
+                setting += room_temp_comp
 
         # Hard cap — never heat
         setting = min(MAX_SETTING, setting)
         setting = max(-10, setting)
 
-        return setting
+        return setting, room_temp_comp, data_source
 
     def _setting_for_stage(self, stage):
         """Map Apple Health sleep stage to ideal setting."""
@@ -277,9 +304,15 @@ class SleepControllerV4(hass.Hass):
             self._state["override_freeze_until"] = None
             self._state["recent_changes"] = []
             self._state["last_change_ts"] = None
-            # Set initial aggressive cooling
-            self._set_l1(CYCLE_SETTINGS[1])
-            self._state["last_setting"] = CYCLE_SETTINGS[1]
+            self._state["body_below_since"] = None
+            # Gap 2: Compute cycle 1 with room temp compensation
+            # If pre-cool had the topper at -10, the firmware's responsive cooling
+            # will handle the transition smoothly — just set our target.
+            room_temp = self._read_float(E_ROOM_TEMP)
+            initial_setting, comp, _ = self._compute_setting(0, room_temp, None)
+            self.log(f"  Initial L1={initial_setting:+d} (room={room_temp}°F, comp={comp:+d})")
+            self._set_l1(initial_setting)
+            self._state["last_setting"] = initial_setting
             self._save_state()
 
         elif new == "off" and old == "on":
@@ -336,6 +369,64 @@ class SleepControllerV4(hass.Hass):
         if len(recent) >= KILL_SWITCH_CHANGES:
             self.log(f"KILL SWITCH — {len(recent)} changes in {KILL_SWITCH_WINDOW_SEC}s. Manual mode for the night.")
             self._state["manual_mode"] = True
+
+    # ── Occupancy & Restart ─────────────────────────────────────────
+
+    def _check_occupancy(self, body_center, now):
+        """Return True if someone is in bed, False if empty.
+
+        Logic: sleep_mode is ON (already checked by caller).
+        - body_center > 74°F → occupied (handles the 70→80 ramp during getting in)
+        - body_center < 72°F for 20+ min → empty (bathroom break / woke up)
+        - body_center is None → assume occupied (sensor glitch, don't skip)
+        """
+        if body_center is None:
+            return True
+
+        if body_center >= BODY_OCCUPIED_THRESHOLD_F:
+            self._state["body_below_since"] = None
+            return True
+
+        if body_center < BODY_EMPTY_THRESHOLD_F:
+            below_since = self._state.get("body_below_since")
+            if below_since is None:
+                self._state["body_below_since"] = now.isoformat()
+                return True  # Just dropped — give it time
+            elapsed = (now - datetime.fromisoformat(below_since)).total_seconds() / 60
+            if elapsed >= BODY_EMPTY_TIMEOUT_MIN:
+                self.log(f"Bed appears empty — body={body_center:.1f}°F for {elapsed:.0f}m")
+                return False
+            return True  # Not long enough yet
+
+        # Between EMPTY (72) and OCCUPIED (74) — hysteresis zone, assume occupied
+        return True
+
+    def _check_midnight_restart(self):
+        """Gap 5: If AppDaemon restarts while sleeping, resume from correct position."""
+        if not self._is_sleeping():
+            return
+
+        if self._state.get("sleep_start"):
+            elapsed = (datetime.now() - datetime.fromisoformat(self._state["sleep_start"])).total_seconds() / 60
+            self.log(f"MID-NIGHT RESTART: sleep_mode is ON, "
+                     f"sleep_start from state file, elapsed={elapsed:.0f}m")
+            return
+
+        # No sleep_start in state — try to recover from HA entity last_changed
+        try:
+            last_changed = self.get_state(E_SLEEP_MODE, attribute="last_changed")
+            if last_changed:
+                self._state["sleep_start"] = last_changed
+                elapsed = (datetime.now() - datetime.fromisoformat(last_changed)).total_seconds() / 60
+                self.log(f"MID-NIGHT RESTART: Recovered sleep_start from "
+                         f"last_changed={last_changed}, elapsed={elapsed:.0f}m")
+                self._save_state()
+            else:
+                self.log("MID-NIGHT RESTART: sleep_mode ON but cannot determine start time",
+                         level="WARNING")
+        except Exception as e:
+            self.log(f"MID-NIGHT RESTART: Failed to recover sleep_start: {e}",
+                     level="WARNING")
 
     # ── Helpers ──────────────────────────────────────────────────────
 
@@ -396,7 +487,7 @@ class SleepControllerV4(hass.Hass):
                 len(self._state.get("recent_changes", [])),
                 self._state.get("manual_mode", False),
                 "v4",
-                (deep or 0 + rem or 0 + core or 0) * 60 if deep else None,
+                ((deep or 0) + (rem or 0) + (core or 0)) * 60 if deep else None,
                 (deep or 0) * 60 if deep else None,
                 (rem or 0) * 60 if rem else None,
                 (core or 0) * 60 if core else None,
@@ -407,7 +498,9 @@ class SleepControllerV4(hass.Hass):
         except Exception as e:
             self.log(f"Failed to save nightly summary: {e}", level="WARNING")
 
-    def _log_to_postgres(self, elapsed_min, room_temp, sleep_stage, body_center, setting):
+    def _log_to_postgres(self, elapsed_min, room_temp, sleep_stage, body_center, setting,
+                        cycle_num=None, room_temp_comp=0, data_source="unknown",
+                        override_floor=None):
         """Log a controller reading to Postgres."""
         try:
             conn = self._get_pg()
@@ -419,28 +512,38 @@ class SleepControllerV4(hass.Hass):
             body_right = self._read_float(E_BODY_RIGHT)
             ambient = self._read_float("sensor.smart_topper_left_side_ambient_temperature")
 
-            cycle = self._get_cycle_num(elapsed_min)
+            if cycle_num is None:
+                cycle_num = self._get_cycle_num(elapsed_min)
+
+            # Build notes with Gap 4 metadata
+            notes = (
+                f"cycle={cycle_num} src={data_source} "
+                f"room_comp={room_temp_comp:+d}"
+            )
+            if override_floor is not None:
+                notes += f" floor={override_floor:+d}"
 
             cur.execute("""
                 INSERT INTO controller_readings
                 (ts, zone, phase, elapsed_min, body_right_f, body_center_f,
                  body_left_f, body_avg_f, ambient_f, room_temp_f,
-                 setting, effective, baseline, action)
-                VALUES (NOW(), 'left', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 setting, effective, baseline, action, notes)
+                VALUES (NOW(), 'left', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
-                sleep_stage or f"cycle_{cycle}",
+                sleep_stage or f"cycle_{cycle_num}",
                 elapsed_min,
                 body_right, body_center, body_left,
-                body_center,  # body_avg — use center as primary
+                body_center,
                 ambient, room_temp,
                 setting, setting,
-                CYCLE_SETTINGS.get(cycle, -5),
+                CYCLE_SETTINGS.get(cycle_num, -5),
                 "set",
+                notes,
             ))
             conn.commit()
         except Exception as e:
             self.log(f"Postgres log failed: {e}", level="WARNING")
-            self._pg_conn = None  # Reset connection on failure
+            self._pg_conn = None
 
     def _log_override(self, value):
         """Log a manual override to Postgres."""
@@ -483,10 +586,22 @@ class SleepControllerV4(hass.Hass):
                 user=PG_USER, password=PG_PASS,
                 connect_timeout=5,
             )
+            self._ensure_schema(self._pg_conn)
             return self._pg_conn
         except Exception as e:
             self.log(f"Postgres connect failed: {e}", level="WARNING")
             return None
+
+    def _ensure_schema(self, conn):
+        """Add notes column to controller_readings if missing."""
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                ALTER TABLE controller_readings ADD COLUMN IF NOT EXISTS notes TEXT
+            """)
+            conn.commit()
+        except Exception:
+            conn.rollback()
 
     def _save_state(self):
         try:
