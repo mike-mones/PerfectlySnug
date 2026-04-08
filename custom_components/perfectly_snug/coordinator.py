@@ -11,6 +11,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .client import TopperClient
 from .const import (
+    CONF_ROOM_TEMP_ENTITY,
     DOMAIN,
     POLL_SETTINGS,
     SETTING_L1,
@@ -42,6 +43,7 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
         self,
         hass: HomeAssistant,
         clients: dict[str, TopperClient],
+        room_temp_entity: str | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -51,6 +53,8 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
             update_interval=timedelta(seconds=UPDATE_INTERVAL),
         )
         self.clients = clients
+        self.room_temp_entity = room_temp_entity
+        self.room_temp: float | None = None
         self._last_set: dict[str, dict[int, tuple[int, int]]] = {}
         self.override_log: deque[dict[str, Any]] = deque(maxlen=100)
         self._zone_last_success: dict[str, datetime] = {}
@@ -69,6 +73,15 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
     async def _async_update_data(self) -> dict[str, dict[int, int]]:
         """Fetch data from both zones and detect manual overrides."""
         data: dict[str, dict[int, int]] = {}
+
+        # Read external room temperature sensor if configured
+        if self.room_temp_entity:
+            state = self.hass.states.get(self.room_temp_entity)
+            if state and state.state not in ("unknown", "unavailable"):
+                try:
+                    self.room_temp = float(state.state)
+                except (ValueError, TypeError):
+                    pass
 
         async def fetch_zone(zone: str, client: TopperClient) -> None:
             try:

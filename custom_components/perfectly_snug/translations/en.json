@@ -15,5 +15,16 @@
       "cannot_connect": "Cannot connect to topper at this IP. Make sure it's powered on and connected to WiFi.",
       "ip_required": "IP address is required."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Perfectly Snug Options",
+        "description": "The topper's built-in ambient sensor reads 5-10\u00b0F higher than actual room temperature. Specify an external room temperature sensor for accurate ambient data ({room_temp_hint}).",
+        "data": {
+          "room_temp_entity": "Room Temperature Sensor Entity ID"
+        }
+      }
+    }
   }
 }

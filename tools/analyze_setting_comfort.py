@@ -41,9 +41,10 @@ def analyze_night(date, start_utc, end_utc, zone="left"):
         f"GROUP BY time(5m) fill(previous)"
     )
 
+    # Use dehumidifier for real room temp instead of topper's inflated ambient
     ambient = influx_query(
         f'SELECT mean(value) FROM "°F" '
-        f"WHERE entity_id = '{prefix}_ambient_temperature' "
+        f"WHERE entity_id = 'superior_6000s_temperature' "
         f"AND time >= '{start_utc}' AND time <= '{end_utc}' "
         f"GROUP BY time(5m) fill(previous)"
     )

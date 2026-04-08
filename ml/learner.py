@@ -41,6 +41,8 @@ class NightRecord:
     zone: str
     duration_hours: float
     avg_body_f: float
+    # IMPORTANT: Use real room temp from dehumidifier (sensor.superior_6000s_temperature),
+    # NOT the topper's onboard ambient sensor which reads 5-10°F too high.
     room_temp_f: Optional[float]
     override_count: int
     overrides: list[dict] = field(default_factory=list)

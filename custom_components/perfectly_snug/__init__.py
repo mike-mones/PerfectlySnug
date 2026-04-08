@@ -6,7 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .client import TopperClient
-from .const import CONF_LEFT_IP, CONF_RIGHT_IP, CONF_SINGLE_ZONE, DOMAIN, PLATFORMS
+from .const import CONF_LEFT_IP, CONF_RIGHT_IP, CONF_ROOM_TEMP_ENTITY, CONF_SINGLE_ZONE, DOMAIN, PLATFORMS
 from .coordinator import PerfectlySnugCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,13 +28,29 @@ async def async_setup_entry(
         if right_ip:
             clients["right"] = TopperClient(right_ip)
 
-    coordinator = PerfectlySnugCoordinator(hass, clients)
+    room_temp_entity = entry.options.get(CONF_ROOM_TEMP_ENTITY, "")
+    coordinator = PerfectlySnugCoordinator(
+        hass, clients, room_temp_entity=room_temp_entity or None
+    )
     await coordinator.async_config_entry_first_refresh()
 
     entry.runtime_data = coordinator
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _async_options_updated(
+    hass: HomeAssistant, entry: PerfectlySnugConfigEntry
+) -> None:
+    """Handle options update — update room temp entity on the coordinator."""
+    coordinator: PerfectlySnugCoordinator = entry.runtime_data
+    new_entity = entry.options.get(CONF_ROOM_TEMP_ENTITY, "")
+    coordinator.room_temp_entity = new_entity or None
+    if not new_entity:
+        coordinator.room_temp = None
+    _LOGGER.info("Room temperature sensor updated to: %s", new_entity or "(disabled)")
 
 
 async def async_unload_entry(

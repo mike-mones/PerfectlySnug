@@ -130,7 +130,7 @@ def load_run_data(run):
     body_l = ha_history(f"sensor.smart_topper_{ZONE}_side_body_sensor_left", s, e)
     body_c = ha_history(f"sensor.smart_topper_{ZONE}_side_body_sensor_center", s, e)
     body_r = ha_history(f"sensor.smart_topper_{ZONE}_side_body_sensor_right", s, e)
-    ambient = ha_history(f"sensor.smart_topper_{ZONE}_side_ambient_temperature", s, e)
+    ambient = ha_history("sensor.superior_6000s_temperature", s, e)
     bedtime_h = ha_history(f"number.smart_topper_{ZONE}_side_bedtime_temperature", s, e)
     sleep_h = ha_history(f"number.smart_topper_{ZONE}_side_sleep_temperature", s, e)
     wake_h = ha_history(f"number.smart_topper_{ZONE}_side_wake_temperature", s, e)

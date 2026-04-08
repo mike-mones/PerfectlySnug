@@ -5,10 +5,11 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.core import callback
 
 from .client import TopperClient
-from .const import CONF_LEFT_IP, CONF_RIGHT_IP, CONF_SINGLE_ZONE, DOMAIN
+from .const import CONF_LEFT_IP, CONF_RIGHT_IP, CONF_ROOM_TEMP_ENTITY, CONF_SINGLE_ZONE, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -17,6 +18,12 @@ class PerfectlySnugConfigFlow(ConfigFlow, domain=DOMAIN):
     """Config flow for Perfectly Snug Smart Topper."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        """Return the options flow handler."""
+        return PerfectlySnugOptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -64,4 +71,36 @@ class PerfectlySnugConfigFlow(ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
+        )
+
+
+class PerfectlySnugOptionsFlow(OptionsFlow):
+    """Options flow to configure room temperature sensor."""
+
+    def __init__(self, config_entry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current = self.config_entry.options.get(CONF_ROOM_TEMP_ENTITY, "")
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_ROOM_TEMP_ENTITY,
+                        default=current,
+                    ): str,
+                }
+            ),
+            description_placeholders={
+                "room_temp_hint": "e.g. sensor.superior_6000s_temperature"
+            },
         )

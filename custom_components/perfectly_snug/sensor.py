@@ -92,6 +92,13 @@ async def async_setup_entry(
             PerfectlySnugProgressSensor(coordinator, zone, entry)
         )
 
+    # Add room temperature sensor if an external entity is configured
+    if coordinator.room_temp_entity:
+        first_zone = next(iter(coordinator.clients))
+        entities.append(
+            PerfectlySnugRoomTempSensor(coordinator, first_zone, entry)
+        )
+
     async_add_entities(entities)
 
 
@@ -290,6 +297,50 @@ class PerfectlySnugOutputSensor(
         if self.coordinator.data and self._zone in self.coordinator.data:
             return self.coordinator.data[self._zone].get(self._setting_id)
         return None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self.async_write_ha_state()
+
+
+class PerfectlySnugRoomTempSensor(
+    CoordinatorEntity[PerfectlySnugCoordinator], SensorEntity
+):
+    """Room temperature sensor sourced from an external HA entity.
+
+    The topper's onboard ambient sensor reads 5-10°F higher than actual room
+    temperature because it picks up radiated body heat. This sensor exposes
+    the real room temperature from a user-configured external sensor.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.FAHRENHEIT
+    _attr_icon = "mdi:home-thermometer"
+
+    def __init__(
+        self,
+        coordinator: PerfectlySnugCoordinator,
+        zone: str,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialize."""
+        super().__init__(coordinator)
+        self._zone = zone
+        self._attr_unique_id = f"{entry.entry_id}_room_temperature"
+        self._attr_name = "Room Temperature"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{entry.entry_id}_{zone}")},
+            "name": f"Smart Topper {zone.title()} Side",
+            "manufacturer": MANUFACTURER,
+            "model": MODEL,
+        }
+
+    @property
+    def native_value(self) -> float | None:
+        """Return room temperature from the external sensor."""
+        return self.coordinator.room_temp
 
     @callback
     def _handle_coordinator_update(self) -> None:

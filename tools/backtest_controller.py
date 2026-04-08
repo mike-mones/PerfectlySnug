@@ -76,9 +76,11 @@ def pull_overnight_data(date_str: str, zone: str = "left") -> list[dict]:
     """
     body_data = influx_query(q)
 
+    # Use dehumidifier sensor for real room temp instead of topper's onboard
+    # ambient sensor which reads 5-10°F too high due to radiated body heat
     q_ambient = f"""
     SELECT mean(value) FROM "°F"
-    WHERE entity_id = '{entity_prefix}_ambient_temperature'
+    WHERE entity_id = 'superior_6000s_temperature'
       AND time >= '{start_str}' AND time <= '{end_str}'
     GROUP BY time(5m) fill(previous)
     """

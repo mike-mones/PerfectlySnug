@@ -14,6 +14,7 @@ entities = {
     'L_bC':  'sensor.smart_topper_left_side_body_sensor_center',
     'L_bL':  'sensor.smart_topper_left_side_body_sensor_left',
     'L_amb': 'sensor.smart_topper_left_side_ambient_temperature',
+    'room':  'sensor.superior_6000s_temperature',
     'R_bL':  'sensor.smart_topper_right_side_body_sensor_left',
     'R_bC':  'sensor.smart_topper_right_side_body_sensor_center',
     'R_bR':  'sensor.smart_topper_right_side_body_sensor_right',

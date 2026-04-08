@@ -102,15 +102,24 @@ if body_center:
 else:
     check("Body sensor exists", False, "Entity not found!")
 
-# Check ambient sensor
-ambient = get_state("sensor.smart_topper_left_side_ambient_temperature")
+# Check ambient sensor (use real room temp, not topper's inflated reading)
+ambient = get_state("sensor.superior_6000s_temperature")
+topper_ambient = get_state("sensor.smart_topper_left_side_ambient_temperature")
 if ambient:
     try:
         temp = float(ambient["state"])
-        check("Ambient sensor reading", 50 < temp < 95,
-              f"Ambient: {temp}°F")
+        check("Room temperature (dehumidifier)", 50 < temp < 95,
+              f"Room: {temp}°F")
     except (ValueError, TypeError):
-        check("Ambient sensor reading", False, f"State: {ambient['state']}")
+        check("Room temperature reading", False, f"State: {ambient['state']}")
+if topper_ambient:
+    try:
+        topper_temp = float(topper_ambient["state"])
+        delta = topper_temp - float(ambient["state"]) if ambient else 0
+        check("Topper ambient sensor (inflated)", True,
+              f"Topper reads: {topper_temp}°F (delta +{delta:.1f}°F vs room)")
+    except (ValueError, TypeError):
+        pass
 
 # ── LINK 3: Current topper temps ────────────────────────────────────
 print("━━ LINK 3: Topper Temperature Settings ━━")
@@ -246,6 +255,7 @@ try:
         "sensor.smart_topper_left_side_body_sensor_center",
         "sensor.smart_topper_left_side_body_sensor_left",
         "sensor.smart_topper_left_side_ambient_temperature",
+        "sensor.superior_6000s_temperature",
         "input_number.apple_health_hr_avg",
         "input_number.apple_health_hrv",
         "input_text.apple_health_sleep_stage",

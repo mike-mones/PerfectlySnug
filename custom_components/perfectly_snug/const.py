@@ -7,6 +7,7 @@ MODEL = "Smart Topper"
 CONF_LEFT_IP = "left_ip"
 CONF_RIGHT_IP = "right_ip"
 CONF_SINGLE_ZONE = "single_zone"
+CONF_ROOM_TEMP_ENTITY = "room_temp_entity"
 
 # WebSocket
 WS_ENDPOINT = "/PSWS"

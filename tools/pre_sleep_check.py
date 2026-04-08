@@ -72,7 +72,8 @@ def main():
     try:
         sensors = {
             "body_center": "sensor.smart_topper_left_side_body_sensor_center",
-            "ambient": "sensor.smart_topper_left_side_ambient_temperature",
+            "topper_ambient": "sensor.smart_topper_left_side_ambient_temperature",
+            "room_temp": "sensor.superior_6000s_temperature",
             "run_progress": "sensor.smart_topper_left_side_run_progress",
         }
         for name, entity_id in sensors.items():
