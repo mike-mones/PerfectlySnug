@@ -9,3 +9,4 @@ docs/captures/
 docs/proxy_logs/
 docs/ws_logs/
 docs/web_dump/
+.env
