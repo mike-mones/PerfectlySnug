@@ -68,8 +68,15 @@ BODY_COLD_THRESHOLD_F = 80.0  # Below this while occupied = definitely cold
 # 80–85°F is the "ambiguous zone" — follow preferences, don't adjust
 
 # Ambient temperature compensation
+# The topper blows room-temp air to cool/heat. In a cold room, even mild
+# cooling settings blast freezing air. Compensation must be aggressive enough
+# to switch from cooling to heating when the room is very cold.
 AMBIENT_REFERENCE_F = 70.0
-AMBIENT_COMPENSATION_PER_F = 0.5
+AMBIENT_COMPENSATION_PER_F = 0.8          # Base rate (was 0.5 — too timid)
+AMBIENT_COLD_THRESHOLD_F = 65.0           # Below this, ramp compensation harder
+AMBIENT_COLD_EXTRA_PER_F = 0.5            # Extra compensation per °F below threshold
+AMBIENT_FLOOR_TEMP_F = 60.0               # Below this, force minimum setting
+AMBIENT_FLOOR_SETTING = 0                 # Never cool below neutral in a freezing room
 
 # Kill switch: rapid manual changes disable controller for the night
 KILL_SWITCH_CHANGES = 3
@@ -552,13 +559,32 @@ class SleepController(hass.Hass):
             effective = baseline + round(learned_adj * legacy_scale)
 
             # Ambient compensation: colder room → warmer setting
-            # (Only applies when ML doesn't already account for room temp)
-            if ambient is not None and ml_confidence < 0.3:
+            # ALWAYS applies regardless of ML confidence — the ML learns
+            # preferences at ~70°F; room temp compensation is a separate
+            # physical reality that the ML can't override. You can't cool
+            # someone with 61°F air and expect the same result as 70°F air.
+            if ambient is not None:
                 ambient_delta = AMBIENT_REFERENCE_F - ambient
                 if ambient_delta > 0:
-                    # Room is colder than reference — warm up
-                    ambient_adj = round(ambient_delta * AMBIENT_COMPENSATION_PER_F)
-                    effective += ambient_adj
+                    # Base compensation
+                    ambient_adj = ambient_delta * AMBIENT_COMPENSATION_PER_F
+                    # Extra ramp for very cold rooms (<65°F)
+                    if ambient < AMBIENT_COLD_THRESHOLD_F:
+                        cold_extra = (AMBIENT_COLD_THRESHOLD_F - ambient) * AMBIENT_COLD_EXTRA_PER_F
+                        ambient_adj += cold_extra
+                    effective += round(ambient_adj)
+                    self.log(
+                        f"[{zone}] Ambient comp: room={ambient:.0f}°F "
+                        f"adj=+{round(ambient_adj)} → effective={effective:+d}"
+                    )
+
+                # Hard floor: in a freezing room, never actively cool
+                if ambient <= AMBIENT_FLOOR_TEMP_F:
+                    effective = max(AMBIENT_FLOOR_SETTING, effective)
+                    self.log(
+                        f"[{zone}] Cold room floor: room={ambient:.0f}°F "
+                        f"≤ {AMBIENT_FLOOR_TEMP_F}°F, clamped to >={AMBIENT_FLOOR_SETTING:+d}"
+                    )
 
             # Clamp to topper range
             effective = max(-10, min(10, effective))
