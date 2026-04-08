@@ -79,9 +79,9 @@ CYCLE_SETTINGS = {
 CYCLE_DURATION_MIN = 90
 
 # Room temperature compensation
-AMBIENT_REFERENCE_F = 70.0          # Calibration point — settings tuned for this room temp
+AMBIENT_REFERENCE_F = 68.0          # Calibration point — 7-day overnight average is 68.3°F
 AMBIENT_COMP_PER_F = 0.8            # Base: +0.8 setting per °F below reference
-AMBIENT_COLD_THRESHOLD_F = 65.0     # Below this, extra compensation kicks in
+AMBIENT_COLD_THRESHOLD_F = 63.0     # Below this, extra compensation kicks in
 AMBIENT_COLD_EXTRA_PER_F = 0.5      # Additional per °F below threshold
 MAX_SETTING = 0                     # NEVER heat — user runs warm
 
