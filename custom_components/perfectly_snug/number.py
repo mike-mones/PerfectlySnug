@@ -151,16 +151,18 @@ class PerfectlySnugNumber(
             from .const import SETTING_HEATER_LIMIT
             if int_val == 0:
                 _LOGGER.info("Foot warmer off → also setting HEATER_LIMIT=0")
-                await self.coordinator.async_set_settings(
+                if not await self.coordinator.async_set_settings(
                     self._zone,
                     {SETTING_HEATER_LIMIT: 0, SETTING_FOOT_WARMER: 0},
-                )
+                ):
+                    raise HomeAssistantError("Could not reach Smart Topper")
             else:
                 _LOGGER.info("Foot warmer=%d → setting HEATER_LIMIT=100", int_val)
-                await self.coordinator.async_set_settings(
+                if not await self.coordinator.async_set_settings(
                     self._zone,
                     {SETTING_FOOT_WARMER: int_val, SETTING_HEATER_LIMIT: 100},
-                )
+                ):
+                    raise HomeAssistantError("Could not reach Smart Topper")
         else:
             if not await self.coordinator.async_set_setting(
                 self._zone, self._setting_id, int_val

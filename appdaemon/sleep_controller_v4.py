@@ -45,6 +45,8 @@ Sensor reliability (verified with empty bed, topper on/off):
 """
 
 import json
+import os
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -224,10 +226,18 @@ class SleepControllerV4(hass.Hass):
             self.log(f"Override floor: computed {setting:+d} < floor {floor:+d}, using floor")
             setting = floor
 
+        # Compute body average from all 3 sensors
+        body_left = self._read_float(E_BODY_LEFT)
+        body_right = self._read_float(E_BODY_RIGHT)
+        body_vals = [v for v in (body_left, body_center, body_right) if v is not None]
+        body_avg = sum(body_vals) / len(body_vals) if body_vals else body_center
+
+        cycle_num = self._get_cycle_num(elapsed_min)
+
         # Apply
         current = self._read_float(E_BEDTIME_TEMP)
-        if current is not None and int(current) != setting:
-            cycle_num = self._get_cycle_num(elapsed_min)
+        changed = current is not None and int(current) != setting
+        if changed:
             self.log(
                 f"Cycle {cycle_num}, "
                 f"elapsed={elapsed_min:.0f}m, room={room_temp}°F, "
@@ -237,12 +247,17 @@ class SleepControllerV4(hass.Hass):
             )
             self._set_l1(setting)
             self._state["last_change_ts"] = now.isoformat()
-            self._log_to_postgres(
-                elapsed_min, room_temp, sleep_stage, body_center, setting,
-                cycle_num=cycle_num, room_temp_comp=room_temp_comp,
-                data_source=data_source, override_floor=floor,
-            )
             self._save_state()
+
+        # Log every iteration to Postgres for telemetry (not just changes)
+        action = "set" if changed else "hold"
+        self._log_to_postgres(
+            elapsed_min, room_temp, sleep_stage, body_center, setting,
+            cycle_num=cycle_num, room_temp_comp=room_temp_comp,
+            data_source=data_source, override_floor=floor,
+            body_avg=body_avg, body_left=body_left, body_right=body_right,
+            action=action,
+        )
 
     def _compute_setting(self, elapsed_min, room_temp, sleep_stage):
         """Compute L1 setting from cycle position + room temp.
@@ -314,6 +329,7 @@ class SleepControllerV4(hass.Hass):
             self.log(f"  Initial L1={initial_setting:+d} (room={room_temp}°F, comp={comp:+d})")
             self._set_l1(initial_setting)
             self._state["last_setting"] = initial_setting
+            self._state["initial_setting"] = initial_setting  # For nightly summary
             self._save_state()
 
         elif new == "off" and old == "on":
@@ -346,7 +362,11 @@ class SleepControllerV4(hass.Hass):
         now = datetime.now()
         self.log(f"MANUAL OVERRIDE: {old_val:+d} → {new_val:+d}")
 
-        # Record for kill switch detection
+        # Record for kill switch detection (cap list to prevent unbounded growth)
+        cutoff = now.timestamp() - KILL_SWITCH_WINDOW_SEC
+        self._state["recent_changes"] = [
+            t for t in self._state["recent_changes"] if t > cutoff
+        ]
         self._state["recent_changes"].append(now.timestamp())
         self._check_kill_switch()
 
@@ -357,7 +377,7 @@ class SleepControllerV4(hass.Hass):
         self._state["override_floor"] = new_val
         self._state["last_setting"] = new_val
 
-        self._log_override(new_val)
+        self._log_override(new_val, delta=new_val - old_val)
         self._save_state()
 
     def _check_kill_switch(self):
@@ -496,7 +516,7 @@ class SleepControllerV4(hass.Hass):
                 sleep_start,
                 datetime.now().isoformat(),
                 (datetime.now() - datetime.fromisoformat(sleep_start)).total_seconds() / 3600,
-                self._state.get("last_setting"),
+                self._state.get("initial_setting", self._state.get("last_setting")),
                 len(self._state.get("recent_changes", [])),
                 self._state.get("manual_mode", False),
                 "v4",
@@ -513,7 +533,8 @@ class SleepControllerV4(hass.Hass):
 
     def _log_to_postgres(self, elapsed_min, room_temp, sleep_stage, body_center, setting,
                         cycle_num=None, room_temp_comp=0, data_source="unknown",
-                        override_floor=None):
+                        override_floor=None, body_avg=None, body_left=None,
+                        body_right=None, action="set"):
         """Log a controller reading to Postgres."""
         try:
             conn = self._get_pg()
@@ -521,9 +542,16 @@ class SleepControllerV4(hass.Hass):
                 return
             cur = conn.cursor()
 
-            body_left = self._read_float(E_BODY_LEFT)
-            body_right = self._read_float(E_BODY_RIGHT)
+            if body_left is None:
+                body_left = self._read_float(E_BODY_LEFT)
+            if body_right is None:
+                body_right = self._read_float(E_BODY_RIGHT)
             ambient = self._read_float("sensor.smart_topper_left_side_ambient_temperature")
+
+            # Compute real body average if not provided
+            if body_avg is None:
+                body_vals = [v for v in (body_left, body_center, body_right) if v is not None]
+                body_avg = sum(body_vals) / len(body_vals) if body_vals else body_center
 
             if cycle_num is None:
                 cycle_num = self._get_cycle_num(elapsed_min)
@@ -535,6 +563,8 @@ class SleepControllerV4(hass.Hass):
             )
             if override_floor is not None:
                 notes += f" floor={override_floor:+d}"
+            if sleep_stage:
+                notes += f" stage={sleep_stage}"
 
             cur.execute("""
                 INSERT INTO controller_readings
@@ -546,11 +576,11 @@ class SleepControllerV4(hass.Hass):
                 sleep_stage or f"cycle_{cycle_num}",
                 elapsed_min,
                 body_right, body_center, body_left,
-                body_center,
+                body_avg,
                 ambient, room_temp,
                 setting, setting,
                 CYCLE_SETTINGS.get(cycle_num, -5),
-                "set",
+                action,
                 notes,
             ))
             conn.commit()
@@ -558,7 +588,7 @@ class SleepControllerV4(hass.Hass):
             self.log(f"Postgres log failed: {e}", level="WARNING")
             self._pg_conn = None
 
-    def _log_override(self, value):
+    def _log_override(self, value, delta=None):
         """Log a manual override to Postgres."""
         try:
             conn = self._get_pg()
@@ -578,7 +608,7 @@ class SleepControllerV4(hass.Hass):
                 (ts, zone, phase, elapsed_min, body_center_f, room_temp_f,
                  setting, effective, action, override_delta)
                 VALUES (NOW(), 'left', 'override', %s, %s, %s, %s, %s, 'override', %s)
-            """, (elapsed, body, room_temp, value, value, value))
+            """, (elapsed, body, room_temp, value, value, delta))
             conn.commit()
         except Exception as e:
             self.log(f"Override log failed: {e}", level="WARNING")
@@ -618,8 +648,16 @@ class SleepControllerV4(hass.Hass):
 
     def _save_state(self):
         try:
-            with open(STATE_FILE, "w") as f:
-                json.dump(self._state, f, indent=2, default=str)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=str(STATE_DIR), suffix=".tmp", prefix="ctrl_state_"
+            )
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(self._state, f, indent=2, default=str)
+                os.replace(tmp_path, str(STATE_FILE))
+            except Exception:
+                os.unlink(tmp_path)
+                raise
         except Exception as e:
             self.log(f"State save failed: {e}", level="WARNING")
 
