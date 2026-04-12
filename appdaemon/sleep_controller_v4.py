@@ -47,7 +47,7 @@ Sensor reliability (verified with empty bed, topper on/off):
 import json
 import os
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import hassapi as hass
@@ -137,7 +137,6 @@ class SleepControllerV4(hass.Hass):
             "last_change_ts": None,     # When we last changed L1
             "override_floor": None,     # User's last manual value (floor)
             "override_floor_ts": None,  # When the floor was set
-            "override_freeze_until": None,
             "manual_mode": False,       # Kill switch triggered
             "recent_changes": [],       # Timestamps of recent manual changes
             "override_count": 0,        # Total overrides this night
@@ -187,17 +186,14 @@ class SleepControllerV4(hass.Hass):
         if self._state["manual_mode"]:
             return
 
-        # Override freeze — respect the user
-        freeze_until = self._state.get("override_freeze_until")
-        if freeze_until:
-            freeze_dt = datetime.fromisoformat(freeze_until)
-            if now < freeze_dt:
-                remaining = (freeze_dt - now).total_seconds() / 60
+        # Override freeze — derived from override_floor_ts (first 60 min = freeze)
+        floor_ts = self._state.get("override_floor_ts")
+        if floor_ts:
+            floor_age_min = (now - datetime.fromisoformat(floor_ts)).total_seconds() / 60
+            if floor_age_min < OVERRIDE_FREEZE_MIN:
+                remaining = OVERRIDE_FREEZE_MIN - floor_age_min
                 self.log(f"Override freeze — {remaining:.0f}m remaining")
                 return
-            else:
-                self._state["override_freeze_until"] = None
-                self.log("Override freeze expired")
 
         # Rate limit — don't change more than once per MIN_CHANGE_INTERVAL_SEC
         last_change = self._state.get("last_change_ts")
@@ -208,6 +204,10 @@ class SleepControllerV4(hass.Hass):
 
         # Compute the right setting
         room_temp = self._read_float(E_ROOM_TEMP)
+        # Plausibility guard — reject sensor glitches outside sane range
+        if room_temp is not None and not (40.0 <= room_temp <= 100.0):
+            self.log(f"Room temp {room_temp}°F out of range — ignoring", level="WARNING")
+            room_temp = None
         sleep_stage = self._read_str(E_SLEEP_STAGE)
         body_center = self._read_float(E_BODY_CENTER)
         body_left = self._read_float(E_BODY_LEFT)
@@ -221,9 +221,8 @@ class SleepControllerV4(hass.Hass):
         # Occupancy detection using max sensor (side sleepers may only warm one sensor)
         if not self._check_occupancy(body_max, now):
             # Log empty-bed period to Postgres for telemetry continuity
-            sleep_start = self._state.get("sleep_start")
-            if sleep_start:
-                elapsed_min = (now - datetime.fromisoformat(sleep_start)).total_seconds() / 60
+            elapsed_min = self._elapsed_min()
+            if elapsed_min > 0:
                 self._log_to_postgres(
                     elapsed_min, room_temp, sleep_stage, body_center,
                     self._state.get("last_setting", -8),
@@ -236,7 +235,7 @@ class SleepControllerV4(hass.Hass):
         if not sleep_start:
             return
 
-        elapsed_min = (now - datetime.fromisoformat(sleep_start)).total_seconds() / 60
+        elapsed_min = self._elapsed_min()
 
         # Determine setting from sleep cycle position
         setting, room_temp_comp, data_source = self._compute_setting(elapsed_min, room_temp, sleep_stage)
@@ -343,10 +342,10 @@ class SleepControllerV4(hass.Hass):
         if new == "on" and old != "on":
             self.log("Sleep mode ON — starting night")
             self._state["sleep_start"] = datetime.now().isoformat()
+            self._state["sleep_start_epoch"] = datetime.now().timestamp()
             self._state["manual_mode"] = False
             self._state["override_floor"] = None
             self._state["override_floor_ts"] = None
-            self._state["override_freeze_until"] = None
             self._state["recent_changes"] = []
             self._state["override_count"] = 0
             self._state["last_change_ts"] = None
@@ -401,11 +400,9 @@ class SleepControllerV4(hass.Hass):
         self._state["recent_changes"].append(now.timestamp())
         self._check_kill_switch()
 
-        # Set freeze and floor
-        self._state["override_freeze_until"] = (
-            now + timedelta(minutes=OVERRIDE_FREEZE_MIN)
-        ).isoformat()
-        self._state["override_floor"] = new_val
+        # Set floor (freeze is derived from floor_ts — first 60 min)
+        # Clamp floor to MAX_SETTING — user runs warm, floor must never allow heating
+        self._state["override_floor"] = min(new_val, MAX_SETTING)
         self._state["override_floor_ts"] = now.isoformat()
         self._state["last_setting"] = new_val
         self._state["override_count"] = self._state.get("override_count", 0) + 1
@@ -498,6 +495,17 @@ class SleepControllerV4(hass.Hass):
         state = self.get_state(E_SLEEP_MODE)
         return state == "on"
 
+    def _elapsed_min(self):
+        """Get minutes since sleep started, using epoch seconds (DST-safe)."""
+        epoch = self._state.get("sleep_start_epoch")
+        if epoch:
+            return (datetime.now().timestamp() - epoch) / 60
+        # Fallback: parse ISO string (may drift ±60 min on DST change)
+        sleep_start = self._state.get("sleep_start")
+        if sleep_start:
+            return (datetime.now() - datetime.fromisoformat(sleep_start)).total_seconds() / 60
+        return 0
+
     def _set_l1(self, value):
         value = max(-10, min(MAX_SETTING, int(value)))
         self.call_service("number/set_value", entity_id=E_BEDTIME_TEMP, value=value)
@@ -585,10 +593,6 @@ class SleepControllerV4(hass.Hass):
                 return
             cur = conn.cursor()
 
-            if body_left is None:
-                body_left = self._read_float(E_BODY_LEFT)
-            if body_right is None:
-                body_right = self._read_float(E_BODY_RIGHT)
             ambient = self._read_float("sensor.smart_topper_left_side_ambient_temperature")
 
             # Compute real body average if not provided
@@ -613,8 +617,8 @@ class SleepControllerV4(hass.Hass):
                 INSERT INTO controller_readings
                 (ts, zone, phase, elapsed_min, body_right_f, body_center_f,
                  body_left_f, body_avg_f, ambient_f, room_temp_f,
-                 setting, effective, baseline, action, notes)
-                VALUES (NOW(), 'left', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 setting, effective, baseline, action, notes, controller_version)
+                VALUES (NOW(), 'left', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'v4')
             """, (
                 sleep_stage if sleep_stage and sleep_stage not in ("unknown", "") else f"cycle_{cycle_num}",
                 elapsed_min,
@@ -664,6 +668,10 @@ class SleepControllerV4(hass.Hass):
                 self._pg_conn.cursor().execute("SELECT 1")
                 return self._pg_conn
             except Exception:
+                try:
+                    self._pg_conn.close()
+                except Exception:
+                    pass
                 self._pg_conn = None
         try:
             import psycopg2
@@ -673,22 +681,10 @@ class SleepControllerV4(hass.Hass):
                 connect_timeout=3,
                 options="-c statement_timeout=3000",  # 3s max per query
             )
-            self._ensure_schema(self._pg_conn)
             return self._pg_conn
         except Exception as e:
             self.log(f"Postgres connect failed: {e}", level="WARNING")
             return None
-
-    def _ensure_schema(self, conn):
-        """Add notes column to controller_readings if missing."""
-        try:
-            cur = conn.cursor()
-            cur.execute("""
-                ALTER TABLE controller_readings ADD COLUMN IF NOT EXISTS notes TEXT
-            """)
-            conn.commit()
-        except Exception:
-            conn.rollback()
 
     def _save_state(self):
         try:
