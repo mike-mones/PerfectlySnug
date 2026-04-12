@@ -258,7 +258,10 @@ class SleepControllerV4(hass.Hass):
 
         # Apply
         current = self._read_float(E_BEDTIME_TEMP)
-        changed = current is not None and int(current) != setting
+        if current is None:
+            self.log("Bedtime temp entity unavailable — skipping", level="WARNING")
+            return
+        changed = int(current) != setting
         if changed:
             self.log(
                 f"Cycle {cycle_num}, "
@@ -370,6 +373,7 @@ class SleepControllerV4(hass.Hass):
             self.log("Sleep mode OFF — ending night")
             self._end_night()
             self._state["sleep_start"] = None
+            self._state["sleep_start_epoch"] = None
             self._state["manual_mode"] = False
             self._state["override_floor"] = None
             self._state["override_floor_ts"] = None
@@ -643,6 +647,10 @@ class SleepControllerV4(hass.Hass):
             conn.commit()
         except Exception as e:
             self.log(f"Postgres log failed: {e}", level="WARNING")
+            try:
+                self._pg_conn.close()
+            except Exception:
+                pass
             self._pg_conn = None
 
     def _log_override(self, value, delta=None):
@@ -666,13 +674,19 @@ class SleepControllerV4(hass.Hass):
             conn.commit()
         except Exception as e:
             self.log(f"Override log failed: {e}", level="WARNING")
+            try:
+                self._pg_conn.close()
+            except Exception:
+                pass
             self._pg_conn = None
 
     def _get_pg(self):
         """Get or create Postgres connection."""
         if self._pg_conn is not None:
             try:
-                self._pg_conn.cursor().execute("SELECT 1")
+                cur = self._pg_conn.cursor()
+                cur.execute("SELECT 1")
+                cur.close()
                 return self._pg_conn
             except Exception:
                 try:
