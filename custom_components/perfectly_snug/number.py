@@ -169,6 +169,11 @@ class PerfectlySnugNumber(
             ):
                 raise HomeAssistantError("Could not reach Smart Topper")
 
+        # Optimistic update — show new value immediately, next poll confirms
+        if self.coordinator.data and self._zone in self.coordinator.data:
+            self.coordinator.data[self._zone][self._setting_id] = int_val
+            self.async_write_ha_state()
+
     @callback
     def _handle_coordinator_update(self) -> None:
         self.async_write_ha_state()

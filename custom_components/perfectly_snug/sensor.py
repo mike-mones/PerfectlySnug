@@ -293,9 +293,13 @@ class PerfectlySnugOutputSensor(
 
     @property
     def native_value(self) -> int | None:
-        """Return output value."""
+        """Return output value. Returns 0 when topper is off (firmware freezes last value)."""
         if self.coordinator.data and self._zone in self.coordinator.data:
-            return self.coordinator.data[self._zone].get(self._setting_id)
+            from .const import SETTING_RUNNING
+            zone_data = self.coordinator.data[self._zone]
+            if not zone_data.get(SETTING_RUNNING):
+                return 0
+            return zone_data.get(self._setting_id)
         return None
 
     @callback

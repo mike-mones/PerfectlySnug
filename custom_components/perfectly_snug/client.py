@@ -44,6 +44,7 @@ class TopperClient:
         self.ip = ip
         self.url = f"ws://{ip}{WS_ENDPOINT}"
         self._tx_id = 0
+        self._io_lock = asyncio.Lock()
 
     def _next_tx_id(self) -> int:
         """Get next transaction ID."""
@@ -115,23 +116,24 @@ class TopperClient:
         if setting_ids is None:
             setting_ids = POLL_SETTINGS
 
-        last_err: Exception | None = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                return await self._get_settings_once(setting_ids)
-            except Exception as err:
-                last_err = err
-                if attempt < MAX_RETRIES - 1:
-                    delay = RETRY_BASE_DELAY * (2 ** attempt)
-                    _LOGGER.debug(
-                        "Retry %d/%d for %s in %.1fs: %s",
-                        attempt + 1, MAX_RETRIES, self.ip, delay, err,
-                    )
-                    await asyncio.sleep(delay)
+        async with self._io_lock:
+            last_err: Exception | None = None
+            for attempt in range(MAX_RETRIES):
+                try:
+                    return await self._get_settings_once(setting_ids)
+                except Exception as err:
+                    last_err = err
+                    if attempt < MAX_RETRIES - 1:
+                        delay = RETRY_BASE_DELAY * (2 ** attempt)
+                        _LOGGER.debug(
+                            "Retry %d/%d for %s in %.1fs: %s",
+                            attempt + 1, MAX_RETRIES, self.ip, delay, err,
+                        )
+                        await asyncio.sleep(delay)
 
-        _LOGGER.error("Failed to get settings from %s after %d attempts: %s",
-                       self.ip, MAX_RETRIES, last_err)
-        raise ConnectionError(f"Cannot reach topper at {self.ip}") from last_err
+            _LOGGER.error("Failed to get settings from %s after %d attempts: %s",
+                           self.ip, MAX_RETRIES, last_err)
+            raise ConnectionError(f"Cannot reach topper at {self.ip}") from last_err
 
     async def _get_settings_once(self, setting_ids: list[int]) -> dict[int, int]:
         """Single attempt to fetch settings."""
@@ -168,26 +170,27 @@ class TopperClient:
         Raises ConnectionError on failure after retries (instead of silently
         returning False).
         """
-        last_err: Exception | None = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                return await self._set_setting_once(setting_id, value)
-            except Exception as err:
-                last_err = err
-                if attempt < MAX_RETRIES - 1:
-                    delay = RETRY_BASE_DELAY * (2 ** attempt)
-                    _LOGGER.debug(
-                        "Retry set %d=%d on %s (%d/%d) in %.1fs: %s",
-                        setting_id, value, self.ip,
-                        attempt + 1, MAX_RETRIES, delay, err,
-                    )
-                    await asyncio.sleep(delay)
+        async with self._io_lock:
+            last_err: Exception | None = None
+            for attempt in range(MAX_RETRIES):
+                try:
+                    return await self._set_setting_once(setting_id, value)
+                except Exception as err:
+                    last_err = err
+                    if attempt < MAX_RETRIES - 1:
+                        delay = RETRY_BASE_DELAY * (2 ** attempt)
+                        _LOGGER.debug(
+                            "Retry set %d=%d on %s (%d/%d) in %.1fs: %s",
+                            setting_id, value, self.ip,
+                            attempt + 1, MAX_RETRIES, delay, err,
+                        )
+                        await asyncio.sleep(delay)
 
-        _LOGGER.error("Failed to set setting %d=%d on %s after %d attempts: %s",
-                       setting_id, value, self.ip, MAX_RETRIES, last_err)
-        raise ConnectionError(
-            f"Cannot set {setting_id}={value} on {self.ip}"
-        ) from last_err
+            _LOGGER.error("Failed to set setting %d=%d on %s after %d attempts: %s",
+                           setting_id, value, self.ip, MAX_RETRIES, last_err)
+            raise ConnectionError(
+                f"Cannot set {setting_id}={value} on {self.ip}"
+            ) from last_err
 
     async def _set_setting_once(self, setting_id: int, value: int) -> dict[int, int]:
         """Single attempt to set a setting. Returns device-confirmed values."""
@@ -219,23 +222,24 @@ class TopperClient:
 
         Raises ConnectionError on failure after retries.
         """
-        last_err: Exception | None = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                return await self._set_settings_once(settings)
-            except Exception as err:
-                last_err = err
-                if attempt < MAX_RETRIES - 1:
-                    delay = RETRY_BASE_DELAY * (2 ** attempt)
-                    _LOGGER.debug(
-                        "Retry set_settings on %s (%d/%d) in %.1fs: %s",
-                        self.ip, attempt + 1, MAX_RETRIES, delay, err,
-                    )
-                    await asyncio.sleep(delay)
+        async with self._io_lock:
+            last_err: Exception | None = None
+            for attempt in range(MAX_RETRIES):
+                try:
+                    return await self._set_settings_once(settings)
+                except Exception as err:
+                    last_err = err
+                    if attempt < MAX_RETRIES - 1:
+                        delay = RETRY_BASE_DELAY * (2 ** attempt)
+                        _LOGGER.debug(
+                            "Retry set_settings on %s (%d/%d) in %.1fs: %s",
+                            self.ip, attempt + 1, MAX_RETRIES, delay, err,
+                        )
+                        await asyncio.sleep(delay)
 
-        _LOGGER.error("Failed to set settings on %s after %d attempts: %s",
-                       self.ip, MAX_RETRIES, last_err)
-        raise ConnectionError(f"Cannot set settings on {self.ip}") from last_err
+            _LOGGER.error("Failed to set settings on %s after %d attempts: %s",
+                           self.ip, MAX_RETRIES, last_err)
+            raise ConnectionError(f"Cannot set settings on {self.ip}") from last_err
 
     async def _set_settings_once(self, settings: dict[int, int]) -> dict[int, int]:
         """Single attempt to set multiple settings. Returns confirmed values."""

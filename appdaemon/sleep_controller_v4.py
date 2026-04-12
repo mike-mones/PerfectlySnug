@@ -85,10 +85,12 @@ AMBIENT_REFERENCE_F = 68.0          # Calibration point — 7-day overnight aver
 AMBIENT_COMP_PER_F = 0.8            # Base: +0.8 setting per °F below reference
 AMBIENT_COLD_THRESHOLD_F = 63.0     # Below this, extra compensation kicks in
 AMBIENT_COLD_EXTRA_PER_F = 0.5      # Additional per °F below threshold
+AMBIENT_HOT_COMP_PER_F = 0.4        # Hot rooms: -0.4 setting per °F above reference
 MAX_SETTING = 0                     # NEVER heat — user runs warm
 
 # Override handling
 OVERRIDE_FREEZE_MIN = 60            # Freeze controller for 1 hour after manual change
+OVERRIDE_FLOOR_DECAY_MIN = 120      # Floor decays after 2 hours — let controller adapt
 MIN_CHANGE_INTERVAL_SEC = 1800      # Don't change L1 more than once per 30 min
 KILL_SWITCH_CHANGES = 3             # 3 manual changes in this window...
 KILL_SWITCH_WINDOW_SEC = 300        # ...within 5 min = manual mode for night
@@ -134,9 +136,11 @@ class SleepControllerV4(hass.Hass):
             "last_setting": None,       # Current L1 value
             "last_change_ts": None,     # When we last changed L1
             "override_floor": None,     # User's last manual value (floor)
+            "override_floor_ts": None,  # When the floor was set
             "override_freeze_until": None,
             "manual_mode": False,       # Kill switch triggered
             "recent_changes": [],       # Timestamps of recent manual changes
+            "override_count": 0,        # Total overrides this night
             "body_below_since": None,   # When body first dropped below BODY_EMPTY_THRESHOLD_F
         }
         self._load_state()
@@ -206,9 +210,26 @@ class SleepControllerV4(hass.Hass):
         room_temp = self._read_float(E_ROOM_TEMP)
         sleep_stage = self._read_str(E_SLEEP_STAGE)
         body_center = self._read_float(E_BODY_CENTER)
+        body_left = self._read_float(E_BODY_LEFT)
+        body_right = self._read_float(E_BODY_RIGHT)
 
-        # Gap 1: Robust occupancy detection
-        if not self._check_occupancy(body_center, now):
+        # Use max of all 3 body sensors for occupancy (handles side-sleeping)
+        body_vals = [v for v in (body_left, body_center, body_right) if v is not None]
+        body_max = max(body_vals) if body_vals else body_center
+        body_avg = sum(body_vals) / len(body_vals) if body_vals else body_center
+
+        # Occupancy detection using max sensor (side sleepers may only warm one sensor)
+        if not self._check_occupancy(body_max, now):
+            # Log empty-bed period to Postgres for telemetry continuity
+            sleep_start = self._state.get("sleep_start")
+            if sleep_start:
+                elapsed_min = (now - datetime.fromisoformat(sleep_start)).total_seconds() / 60
+                self._log_to_postgres(
+                    elapsed_min, room_temp, sleep_stage, body_center,
+                    self._state.get("last_setting", -8),
+                    body_avg=body_avg, body_left=body_left, body_right=body_right,
+                    action="empty_bed",
+                )
             return
 
         sleep_start = self._state.get("sleep_start")
@@ -220,17 +241,19 @@ class SleepControllerV4(hass.Hass):
         # Determine setting from sleep cycle position
         setting, room_temp_comp, data_source = self._compute_setting(elapsed_min, room_temp, sleep_stage)
 
-        # Apply override floor — never go colder than user's last override
+        # Apply override floor — decays after OVERRIDE_FLOOR_DECAY_MIN
         floor = self._state.get("override_floor")
+        floor_ts = self._state.get("override_floor_ts")
+        if floor is not None and floor_ts:
+            floor_age_min = (now - datetime.fromisoformat(floor_ts)).total_seconds() / 60
+            if floor_age_min > OVERRIDE_FLOOR_DECAY_MIN:
+                self.log(f"Override floor {floor:+d} expired after {floor_age_min:.0f}m")
+                self._state["override_floor"] = None
+                self._state["override_floor_ts"] = None
+                floor = None
         if floor is not None and setting < floor:
             self.log(f"Override floor: computed {setting:+d} < floor {floor:+d}, using floor")
             setting = floor
-
-        # Compute body average from all 3 sensors
-        body_left = self._read_float(E_BODY_LEFT)
-        body_right = self._read_float(E_BODY_RIGHT)
-        body_vals = [v for v in (body_left, body_center, body_right) if v is not None]
-        body_avg = sum(body_vals) / len(body_vals) if body_vals else body_center
 
         cycle_num = self._get_cycle_num(elapsed_min)
 
@@ -282,10 +305,15 @@ class SleepControllerV4(hass.Hass):
         if room_temp is not None:
             delta = AMBIENT_REFERENCE_F - room_temp
             if delta > 0:
+                # Cold room: raise setting (less cooling needed from topper)
                 room_temp_comp = delta * AMBIENT_COMP_PER_F
                 if room_temp < AMBIENT_COLD_THRESHOLD_F:
                     room_temp_comp += (AMBIENT_COLD_THRESHOLD_F - room_temp) * AMBIENT_COLD_EXTRA_PER_F
                 room_temp_comp = round(room_temp_comp)
+                setting += room_temp_comp
+            elif delta < 0:
+                # Hot room: lower setting (firmware PID needs help, push target colder)
+                room_temp_comp = round(delta * AMBIENT_HOT_COMP_PER_F)  # negative
                 setting += room_temp_comp
 
         # Hard cap — never heat
@@ -317,8 +345,10 @@ class SleepControllerV4(hass.Hass):
             self._state["sleep_start"] = datetime.now().isoformat()
             self._state["manual_mode"] = False
             self._state["override_floor"] = None
+            self._state["override_floor_ts"] = None
             self._state["override_freeze_until"] = None
             self._state["recent_changes"] = []
+            self._state["override_count"] = 0
             self._state["last_change_ts"] = None
             self._state["body_below_since"] = None
             # Gap 2: Compute cycle 1 with room temp compensation
@@ -338,6 +368,7 @@ class SleepControllerV4(hass.Hass):
             self._state["sleep_start"] = None
             self._state["manual_mode"] = False
             self._state["override_floor"] = None
+            self._state["override_floor_ts"] = None
             self._save_state()
 
     # ── Override Detection ───────────────────────────────────────────
@@ -375,7 +406,9 @@ class SleepControllerV4(hass.Hass):
             now + timedelta(minutes=OVERRIDE_FREEZE_MIN)
         ).isoformat()
         self._state["override_floor"] = new_val
+        self._state["override_floor_ts"] = now.isoformat()
         self._state["last_setting"] = new_val
+        self._state["override_count"] = self._state.get("override_count", 0) + 1
 
         self._log_override(new_val, delta=new_val - old_val)
         self._save_state()
@@ -420,34 +453,44 @@ class SleepControllerV4(hass.Hass):
             return True  # Not long enough yet
 
         # Between EMPTY (72) and OCCUPIED (74) — hysteresis zone, assume occupied
+        # Reset timer so hysteresis doesn't accumulate phantom empty-bed duration
+        self._state["body_below_since"] = None
         return True
 
     def _check_midnight_restart(self):
         """Gap 5: If AppDaemon restarts while sleeping, resume from correct position."""
-        if not self._is_sleeping():
-            return
+        if self._is_sleeping():
+            if self._state.get("sleep_start"):
+                elapsed = (datetime.now() - datetime.fromisoformat(self._state["sleep_start"])).total_seconds() / 60
+                self.log(f"MID-NIGHT RESTART: sleep_mode is ON, "
+                         f"sleep_start from state file, elapsed={elapsed:.0f}m")
+                return
 
-        if self._state.get("sleep_start"):
-            elapsed = (datetime.now() - datetime.fromisoformat(self._state["sleep_start"])).total_seconds() / 60
-            self.log(f"MID-NIGHT RESTART: sleep_mode is ON, "
-                     f"sleep_start from state file, elapsed={elapsed:.0f}m")
-            return
-
-        # No sleep_start in state — try to recover from HA entity last_changed
-        try:
-            last_changed = self.get_state(E_SLEEP_MODE, attribute="last_changed")
-            if last_changed:
-                self._state["sleep_start"] = last_changed
-                elapsed = (datetime.now() - datetime.fromisoformat(last_changed)).total_seconds() / 60
-                self.log(f"MID-NIGHT RESTART: Recovered sleep_start from "
-                         f"last_changed={last_changed}, elapsed={elapsed:.0f}m")
-                self._save_state()
-            else:
-                self.log("MID-NIGHT RESTART: sleep_mode ON but cannot determine start time",
+            # No sleep_start in state — try to recover from HA entity last_changed
+            try:
+                last_changed = self.get_state(E_SLEEP_MODE, attribute="last_changed")
+                if last_changed:
+                    self._state["sleep_start"] = last_changed
+                    elapsed = (datetime.now() - datetime.fromisoformat(last_changed)).total_seconds() / 60
+                    self.log(f"MID-NIGHT RESTART: Recovered sleep_start from "
+                             f"last_changed={last_changed}, elapsed={elapsed:.0f}m")
+                    self._save_state()
+                else:
+                    self.log("MID-NIGHT RESTART: sleep_mode ON but cannot determine start time",
+                             level="WARNING")
+            except Exception as e:
+                self.log(f"MID-NIGHT RESTART: Failed to recover sleep_start: {e}",
                          level="WARNING")
-        except Exception as e:
-            self.log(f"MID-NIGHT RESTART: Failed to recover sleep_start: {e}",
-                     level="WARNING")
+        else:
+            # Sleep mode is OFF — check if we missed an end-of-night while restarting
+            sleep_start = self._state.get("sleep_start")
+            if sleep_start:
+                elapsed_h = (datetime.now() - datetime.fromisoformat(sleep_start)).total_seconds() / 3600
+                if elapsed_h < 14:  # Plausible we missed the off transition
+                    self.log("RECOVERY: sleep_start set but sleep_mode OFF — running missed _end_night()")
+                    self._end_night()
+                self._state["sleep_start"] = None
+                self._save_state()
 
     # ── Helpers ──────────────────────────────────────────────────────
 
@@ -517,7 +560,7 @@ class SleepControllerV4(hass.Hass):
                 datetime.now().isoformat(),
                 (datetime.now() - datetime.fromisoformat(sleep_start)).total_seconds() / 3600,
                 self._state.get("initial_setting", self._state.get("last_setting")),
-                len(self._state.get("recent_changes", [])),
+                self._state.get("override_count", 0),
                 self._state.get("manual_mode", False),
                 "v4",
                 ((deep or 0) + (rem or 0) + (core or 0)) * 60 if deep else None,
@@ -573,7 +616,7 @@ class SleepControllerV4(hass.Hass):
                  setting, effective, baseline, action, notes)
                 VALUES (NOW(), 'left', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
-                sleep_stage or f"cycle_{cycle_num}",
+                sleep_stage if sleep_stage and sleep_stage not in ("unknown", "") else f"cycle_{cycle_num}",
                 elapsed_min,
                 body_right, body_center, body_left,
                 body_avg,
@@ -627,7 +670,8 @@ class SleepControllerV4(hass.Hass):
             self._pg_conn = psycopg2.connect(
                 host=PG_HOST, port=PG_PORT, dbname=PG_DB,
                 user=PG_USER, password=PG_PASS,
-                connect_timeout=5,
+                connect_timeout=3,
+                options="-c statement_timeout=3000",  # 3s max per query
             )
             self._ensure_schema(self._pg_conn)
             return self._pg_conn

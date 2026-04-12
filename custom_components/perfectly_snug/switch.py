@@ -97,11 +97,19 @@ class PerfectlySnugSwitch(
         """Turn on."""
         if not await self.coordinator.async_set_setting(self._zone, self._setting_id, 1):
             raise HomeAssistantError("Could not reach Smart Topper")
+        # Optimistic update
+        if self.coordinator.data and self._zone in self.coordinator.data:
+            self.coordinator.data[self._zone][self._setting_id] = 1
+            self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off."""
         if not await self.coordinator.async_set_setting(self._zone, self._setting_id, 0):
             raise HomeAssistantError("Could not reach Smart Topper")
+        # Optimistic update
+        if self.coordinator.data and self._zone in self.coordinator.data:
+            self.coordinator.data[self._zone][self._setting_id] = 0
+            self.async_write_ha_state()
 
     @callback
     def _handle_coordinator_update(self) -> None:

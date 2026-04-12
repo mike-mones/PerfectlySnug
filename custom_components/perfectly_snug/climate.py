@@ -22,8 +22,11 @@ from .const import (
     DOMAIN,
     MANUFACTURER,
     MODEL,
+    SETTING_BL_OUT,
     SETTING_COOLING_MODE,
+    SETTING_FH_OUT,
     SETTING_HEATER_LIMIT,
+    SETTING_HH_OUT,
     SETTING_L1,
     SETTING_RUNNING,
     SETTING_TEMP_AMBIENT,
@@ -125,7 +128,7 @@ class PerfectlySnugClimate(CoordinatorEntity[PerfectlySnugCoordinator], ClimateE
 
     @property
     def hvac_action(self) -> HVACAction | None:
-        """Return current HVAC action."""
+        """Return current HVAC action based on actual device outputs."""
         if not self._data:
             return None
         running = self._data.get(SETTING_RUNNING)
@@ -134,13 +137,15 @@ class PerfectlySnugClimate(CoordinatorEntity[PerfectlySnugCoordinator], ClimateE
         if not running:
             return HVACAction.OFF
 
-        heater_limit = self._data.get(SETTING_HEATER_LIMIT, 0)
+        # Use actual sensor outputs instead of setpoint
+        hh = self._data.get(SETTING_HH_OUT, 0)
+        fh = self._data.get(SETTING_FH_OUT, 0)
+        bl = self._data.get(SETTING_BL_OUT, 0)
 
-        l1 = self._data.get(SETTING_L1, 10)
-        if l1 < 10:
-            return HVACAction.COOLING
-        if l1 > 10 or heater_limit > 0:
+        if hh > 0 or fh > 0:
             return HVACAction.HEATING
+        if bl > 0:
+            return HVACAction.COOLING
         return HVACAction.IDLE
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
