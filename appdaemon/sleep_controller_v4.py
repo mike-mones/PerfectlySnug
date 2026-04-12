@@ -81,10 +81,12 @@ CYCLE_SETTINGS = {
 }
 CYCLE_DURATION_MIN = 90
 
-# Body temperature feedback — reactive cooling tuning
-# When body sensors read above COMFORT_TARGET, push L1 more negative.
-# This is the key to "responsive cooling tuning" — the firmware PID targets
-# whatever L1 we set, but if body temp is still high, we need a colder target.
+# ── Feature Flags ────────────────────────────────────────────────────
+# New experimental features. Learning defaults OFF until proven.
+ENABLE_BODY_FEEDBACK = True          # Body temp reactive cooling — ON (addresses waking warm)
+ENABLE_LEARNING = False              # Adaptive learning from override history — OFF until stable
+
+# Body temperature feedback — reactive cooling tuning (requires ENABLE_BODY_FEEDBACK)
 BODY_COMFORT_TARGET_F = 82.0         # Ideal body sensor reading during sleep
 BODY_TEMP_COOL_BIAS_PER_F = 0.5     # Push L1 -0.5 per °F above comfort target
 BODY_TEMP_MAX_BIAS = -3              # Don't push more than 3 steps extra
@@ -159,7 +161,7 @@ class SleepControllerV4(hass.Hass):
         }
         self._load_state()
         self._pg_conn = None
-        self._learned = self._load_learned()  # Per-cycle adjustments from history
+        self._learned = self._load_learned() if ENABLE_LEARNING else {}
 
         # Ensure responsive cooling is ON — we work WITH the firmware
         self.call_service("switch/turn_on", entity_id=E_RESPONSIVE_COOLING)
@@ -332,7 +334,7 @@ class SleepControllerV4(hass.Hass):
         # Body temperature feedback — if body is warmer than comfort target,
         # push L1 more negative. This makes the firmware PID work harder.
         body_bias = 0
-        if body_avg is not None and body_avg > BODY_COMFORT_TARGET_F:
+        if ENABLE_BODY_FEEDBACK and body_avg is not None and body_avg > BODY_COMFORT_TARGET_F:
             body_bias = -round((body_avg - BODY_COMFORT_TARGET_F) * BODY_TEMP_COOL_BIAS_PER_F)
             body_bias = max(body_bias, BODY_TEMP_MAX_BIAS)  # cap at -3
             setting += body_bias
@@ -395,8 +397,9 @@ class SleepControllerV4(hass.Hass):
                 entity_id=E_SLEEP_STAGE, value="unknown",
             )
             # Refresh learned adjustments from recent override history
-            self._learned = self._learn_from_history()
-            self._save_learned()
+            if ENABLE_LEARNING:
+                self._learned = self._learn_from_history()
+                self._save_learned()
             self.log(f"  Learned adjustments: {self._learned}")
             # Gap 2: Compute cycle 1 with room temp compensation
             # If pre-cool had the topper at -10, the firmware's responsive cooling
