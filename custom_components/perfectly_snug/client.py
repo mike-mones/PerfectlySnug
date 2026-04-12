@@ -29,11 +29,6 @@ def raw_to_celsius(raw: int) -> float:
     return round((raw - 32768) / 100, 2)
 
 
-def raw_to_fahrenheit(raw: int) -> float:
-    """Convert raw sensor value to Fahrenheit."""
-    return round(raw_to_celsius(raw) * 9 / 5 + 32, 1)
-
-
 class TopperClient:
     """WebSocket client for a single Perfectly Snug topper zone."""
 

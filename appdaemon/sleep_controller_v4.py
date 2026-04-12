@@ -350,6 +350,11 @@ class SleepControllerV4(hass.Hass):
             self._state["override_count"] = 0
             self._state["last_change_ts"] = None
             self._state["body_below_since"] = None
+            # Reset sleep stage to prevent stale prior-night data from affecting cycle 1
+            self.call_service(
+                "input_text/set_value",
+                entity_id=E_SLEEP_STAGE, value="unknown",
+            )
             # Gap 2: Compute cycle 1 with room temp compensation
             # If pre-cool had the topper at -10, the firmware's responsive cooling
             # will handle the transition smoothly — just set our target.
@@ -423,29 +428,29 @@ class SleepControllerV4(hass.Hass):
 
     # ── Occupancy & Restart ─────────────────────────────────────────
 
-    def _check_occupancy(self, body_center, now):
+    def _check_occupancy(self, body_temp, now):
         """Return True if someone is in bed, False if empty.
 
         Logic: sleep_mode is ON (already checked by caller).
-        - body_center > 74°F → occupied (handles the 70→80 ramp during getting in)
-        - body_center < 72°F for 20+ min → empty (bathroom break / woke up)
-        - body_center is None → assume occupied (sensor glitch, don't skip)
+        - body_temp > 74°F → occupied (handles the 70→80 ramp during getting in)
+        - body_temp < 72°F for 20+ min → empty (bathroom break / woke up)
+        - body_temp is None → assume occupied (sensor glitch, don't skip)
         """
-        if body_center is None:
+        if body_temp is None:
             return True
 
-        if body_center >= BODY_OCCUPIED_THRESHOLD_F:
+        if body_temp >= BODY_OCCUPIED_THRESHOLD_F:
             self._state["body_below_since"] = None
             return True
 
-        if body_center < BODY_EMPTY_THRESHOLD_F:
+        if body_temp < BODY_EMPTY_THRESHOLD_F:
             below_since = self._state.get("body_below_since")
             if below_since is None:
                 self._state["body_below_since"] = now.isoformat()
                 return True  # Just dropped — give it time
             elapsed = (now - datetime.fromisoformat(below_since)).total_seconds() / 60
             if elapsed >= BODY_EMPTY_TIMEOUT_MIN:
-                self.log(f"Bed appears empty — body={body_center:.1f}°F for {elapsed:.0f}m")
+                self.log(f"Bed appears empty — body={body_temp:.1f}°F for {elapsed:.0f}m")
                 return False
             return True  # Not long enough yet
 
@@ -467,8 +472,13 @@ class SleepControllerV4(hass.Hass):
             try:
                 last_changed = self.get_state(E_SLEEP_MODE, attribute="last_changed")
                 if last_changed:
-                    self._state["sleep_start"] = last_changed
-                    elapsed = (datetime.now() - datetime.fromisoformat(last_changed)).total_seconds() / 60
+                    # HA returns UTC-aware ISO; convert to naive local for consistency
+                    dt = datetime.fromisoformat(last_changed)
+                    if dt.tzinfo is not None:
+                        dt = dt.astimezone().replace(tzinfo=None)
+                    self._state["sleep_start"] = dt.isoformat()
+                    self._state["sleep_start_epoch"] = dt.timestamp()
+                    elapsed = (datetime.now() - dt).total_seconds() / 60
                     self.log(f"MID-NIGHT RESTART: Recovered sleep_start from "
                              f"last_changed={last_changed}, elapsed={elapsed:.0f}m")
                     self._save_state()
@@ -571,11 +581,11 @@ class SleepControllerV4(hass.Hass):
                 self._state.get("override_count", 0),
                 self._state.get("manual_mode", False),
                 "v4",
-                ((deep or 0) + (rem or 0) + (core or 0)) * 60 if deep else None,
-                (deep or 0) * 60 if deep else None,
-                (rem or 0) * 60 if rem else None,
-                (core or 0) * 60 if core else None,
-                (awake or 0) * 60 if awake else None,
+                ((deep or 0) + (rem or 0) + (core or 0)) * 60 if deep is not None else None,
+                (deep or 0) * 60 if deep is not None else None,
+                (rem or 0) * 60 if rem is not None else None,
+                (core or 0) * 60 if core is not None else None,
+                (awake or 0) * 60 if awake is not None else None,
             ))
             conn.commit()
             self.log("Nightly summary saved to Postgres")
@@ -645,10 +655,7 @@ class SleepControllerV4(hass.Hass):
 
             room_temp = self._read_float(E_ROOM_TEMP)
             body = self._read_float(E_BODY_CENTER)
-            sleep_start = self._state.get("sleep_start")
-            elapsed = 0
-            if sleep_start:
-                elapsed = (datetime.now() - datetime.fromisoformat(sleep_start)).total_seconds() / 60
+            elapsed = self._elapsed_min()
 
             cur.execute("""
                 INSERT INTO controller_readings
