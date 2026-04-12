@@ -14,6 +14,7 @@ from .const import (
     MANUFACTURER,
     MODEL,
     SETTING_FOOT_WARMER,
+    SETTING_HEATER_LIMIT,
     SETTING_L1,
     SETTING_L2,
     SETTING_L3,
@@ -148,7 +149,6 @@ class PerfectlySnugNumber(
         int_val = int(value) + self._offset
         # For foot warmer, also control heater limit
         if self._setting_id == SETTING_FOOT_WARMER:
-            from .const import SETTING_HEATER_LIMIT
             if int_val == 0:
                 _LOGGER.info("Foot warmer off → also setting HEATER_LIMIT=0")
                 if not await self.coordinator.async_set_settings(

@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import struct
-from typing import Any
 
 import websockets
 
@@ -14,7 +13,6 @@ from .const import (
     CTRL_MSG_SETTINGS,
     MSG_GROUP_CTRL,
     POLL_SETTINGS,
-    TEMP_SETTINGS,
     WS_ENDPOINT,
     WS_ORIGIN,
 )
@@ -267,17 +265,3 @@ class TopperClient:
                 pass
 
         return confirmed
-
-    def format_settings(self, raw: dict[int, int]) -> dict[str, Any]:
-        """Format raw settings into a friendly dict."""
-        result: dict[str, Any] = {}
-        for sid, val in raw.items():
-            if sid in TEMP_SETTINGS:
-                result[sid] = {
-                    "raw": val,
-                    "celsius": raw_to_celsius(val),
-                    "fahrenheit": raw_to_fahrenheit(val),
-                }
-            else:
-                result[sid] = val
-        return result
