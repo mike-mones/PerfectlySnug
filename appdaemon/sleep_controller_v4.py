@@ -132,6 +132,12 @@ _container = Path("/config/apps")
 _host = Path("/addon_configs/a0d7b954_appdaemon/apps")
 STATE_DIR = _container if _container.exists() else _host
 STATE_FILE = STATE_DIR / "controller_state_v4.json"
+LEARNED_FILE = STATE_DIR / "learned_adjustments.json"
+
+# Learning parameters
+LEARNING_LOOKBACK_NIGHTS = 14       # Analyze this many recent nights
+LEARNING_MAX_ADJ = 3                # Max learned adjustment per cycle (±3)
+LEARNING_DECAY = 0.7                # Weight: recent overrides count more
 
 
 class SleepControllerV4(hass.Hass):
@@ -153,6 +159,7 @@ class SleepControllerV4(hass.Hass):
         }
         self._load_state()
         self._pg_conn = None
+        self._learned = self._load_learned()  # Per-cycle adjustments from history
 
         # Ensure responsive cooling is ON — we work WITH the firmware
         self.call_service("switch/turn_on", entity_id=E_RESPONSIVE_COOLING)
@@ -171,6 +178,7 @@ class SleepControllerV4(hass.Hass):
 
         self.log("Controller v4 ready — working WITH firmware PID")
         self.log(f"  Cycles: {CYCLE_SETTINGS}")
+        self.log(f"  Learned: {self._learned}")
         self.log(f"  Room temp: {E_ROOM_TEMP}")
         self.log(f"  Max setting: {MAX_SETTING}")
         self.log("=" * 60)
@@ -296,11 +304,11 @@ class SleepControllerV4(hass.Hass):
         )
 
     def _compute_setting(self, elapsed_min, room_temp, sleep_stage, body_avg=None):
-        """Compute L1 setting from cycle position + room temp + body temp feedback.
+        """Compute L1 setting from cycle position + learned adj + body feedback + room comp.
 
         Returns (setting, room_temp_comp, data_source) where:
           room_temp_comp: degrees of room temp compensation applied
-          data_source: 'stage', 'time_cycle', or 'time_cycle+body'
+          data_source: 'stage', 'time_cycle', 'time_cycle+learned', etc.
         """
         room_temp_comp = 0
 
@@ -313,6 +321,12 @@ class SleepControllerV4(hass.Hass):
             cycle_num = self._get_cycle_num(elapsed_min)
             setting = CYCLE_SETTINGS.get(cycle_num, CYCLE_SETTINGS[max(CYCLE_SETTINGS.keys())])
             data_source = "time_cycle"
+
+            # Apply learned per-cycle adjustment from override history
+            learned_adj = self._learned.get(str(cycle_num), 0)
+            if learned_adj != 0:
+                setting += learned_adj
+                data_source += "+learned"
 
         # Body temperature feedback — if body is warmer than comfort target,
         # push L1 more negative. This makes the firmware PID work harder.
@@ -379,6 +393,10 @@ class SleepControllerV4(hass.Hass):
                 "input_text/set_value",
                 entity_id=E_SLEEP_STAGE, value="unknown",
             )
+            # Refresh learned adjustments from recent override history
+            self._learned = self._learn_from_history()
+            self._save_learned()
+            self.log(f"  Learned adjustments: {self._learned}")
             # Gap 2: Compute cycle 1 with room temp compensation
             # If pre-cool had the topper at -10, the firmware's responsive cooling
             # will handle the transition smoothly — just set our target.
@@ -616,6 +634,109 @@ class SleepControllerV4(hass.Hass):
             self.log("Nightly summary saved to Postgres")
         except Exception as e:
             self.log(f"Failed to save nightly summary: {e}", level="WARNING")
+
+    # ── Learning System ─────────────────────────────────────────────
+
+    def _learn_from_history(self):
+        """Compute per-cycle adjustments from recent override history.
+
+        Logic: Each manual override tells us the user wanted a different setting.
+        We look at which cycle the override happened in and compute the average
+        delta (override_value - what_controller_would_have_set) per cycle.
+
+        The adjustments are weighted by recency (LEARNING_DECAY) so recent
+        overrides matter more than old ones.
+        """
+        try:
+            conn = self._get_pg()
+            if not conn:
+                return self._load_learned()
+            cur = conn.cursor()
+
+            # Get overrides from last N nights with their cycle position
+            cur.execute("""
+                SELECT
+                    elapsed_min,
+                    setting as override_setting,
+                    body_center_f,
+                    room_temp_f,
+                    ts::date as night
+                FROM controller_readings
+                WHERE zone = 'left'
+                  AND action = 'override'
+                  AND ts > now() - interval '%s days'
+                ORDER BY ts
+            """ % LEARNING_LOOKBACK_NIGHTS)
+
+            overrides = cur.fetchall()
+            if not overrides:
+                self.log("  Learning: no overrides in history — using defaults")
+                return {}
+
+            # Group overrides by cycle and compute what baseline would have been
+            cycle_deltas = {}  # {cycle_num: [(delta, recency_weight), ...]}
+            nights = set()
+            for elapsed_min, override_val, body_f, room_f, night in overrides:
+                if elapsed_min is None:
+                    continue
+                cycle = self._get_cycle_num(elapsed_min)
+                baseline = CYCLE_SETTINGS.get(cycle, CYCLE_SETTINGS[max(CYCLE_SETTINGS.keys())])
+
+                # What the user wanted vs what the cycle baseline says
+                delta = override_val - baseline
+
+                # Weight by recency: more recent nights count more
+                nights.add(night)
+                cycle_deltas.setdefault(cycle, []).append(delta)
+
+            # Compute weighted average delta per cycle
+            adjustments = {}
+            for cycle, deltas in cycle_deltas.items():
+                if not deltas:
+                    continue
+                # Weight recent overrides more (last override = weight 1.0, older = decayed)
+                weighted_sum = 0
+                weight_total = 0
+                for i, d in enumerate(reversed(deltas)):
+                    w = LEARNING_DECAY ** i
+                    weighted_sum += d * w
+                    weight_total += w
+                avg_delta = weighted_sum / weight_total if weight_total else 0
+                # Round and clamp
+                adj = max(-LEARNING_MAX_ADJ, min(LEARNING_MAX_ADJ, round(avg_delta)))
+                if adj != 0:
+                    adjustments[str(cycle)] = adj
+
+            self.log(f"  Learning: {len(overrides)} overrides across {len(nights)} nights → {adjustments}")
+            return adjustments
+
+        except Exception as e:
+            self.log(f"Learning failed: {e}", level="WARNING")
+            return self._load_learned()
+
+    def _load_learned(self):
+        """Load learned adjustments from file."""
+        try:
+            if LEARNED_FILE.exists():
+                with open(LEARNED_FILE) as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
+
+    def _save_learned(self):
+        """Save learned adjustments to file."""
+        try:
+            fd, tmp = tempfile.mkstemp(dir=str(STATE_DIR), suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(self._learned, f, indent=2)
+                os.replace(tmp, str(LEARNED_FILE))
+            except Exception:
+                os.unlink(tmp)
+                raise
+        except Exception as e:
+            self.log(f"Learned save failed: {e}", level="WARNING")
 
     def _log_to_postgres(self, elapsed_min, room_temp, sleep_stage, body_center, setting,
                         cycle_num=None, room_temp_comp=0, data_source="unknown",
