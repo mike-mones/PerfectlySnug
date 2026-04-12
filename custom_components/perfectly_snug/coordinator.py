@@ -53,7 +53,8 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
 
     async def _async_update_data(self) -> dict[str, dict[int, int]]:
         """Fetch data from both zones."""
-        data: dict[str, dict[int, int]] = {}
+        # Carry forward previous data so partial failures don't cause KeyError
+        data: dict[str, dict[int, int]] = dict(self.data) if self.data else {}
 
         # Read external room temperature sensor if configured
         if self.room_temp_entity:
@@ -62,7 +63,9 @@ class PerfectlySnugCoordinator(DataUpdateCoordinator[dict[str, dict[int, int]]])
                 try:
                     self.room_temp = float(state.state)
                 except (ValueError, TypeError):
-                    pass
+                    self.room_temp = None
+            else:
+                self.room_temp = None
 
         async def fetch_zone(zone: str, client: TopperClient) -> None:
             try:

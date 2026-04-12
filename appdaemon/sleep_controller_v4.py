@@ -324,6 +324,7 @@ class SleepControllerV4(hass.Hass):
 
             # Apply learned per-cycle adjustment from override history
             learned_adj = self._learned.get(str(cycle_num), 0)
+            learned_adj = max(-LEARNING_MAX_ADJ, min(LEARNING_MAX_ADJ, learned_adj))
             if learned_adj != 0:
                 setting += learned_adj
                 data_source += "+learned"
@@ -506,7 +507,13 @@ class SleepControllerV4(hass.Hass):
         """Gap 5: If AppDaemon restarts while sleeping, resume from correct position."""
         if self._is_sleeping():
             if self._state.get("sleep_start"):
-                elapsed = (datetime.now() - datetime.fromisoformat(self._state["sleep_start"])).total_seconds() / 60
+                # Backfill epoch if missing (pre-epoch state files)
+                if not self._state.get("sleep_start_epoch"):
+                    self._state["sleep_start_epoch"] = datetime.fromisoformat(
+                        self._state["sleep_start"]
+                    ).timestamp()
+                    self._save_state()
+                elapsed = self._elapsed_min()
                 self.log(f"MID-NIGHT RESTART: sleep_mode is ON, "
                          f"sleep_start from state file, elapsed={elapsed:.0f}m")
                 return
@@ -653,48 +660,55 @@ class SleepControllerV4(hass.Hass):
                 return self._load_learned()
             cur = conn.cursor()
 
-            # Get overrides from last N nights with their cycle position
+            # Get overrides from last N nights with the effective setting
+            # (what the controller actually set, including body/room adjustments)
             cur.execute("""
                 SELECT
                     elapsed_min,
                     setting as override_setting,
-                    body_center_f,
-                    room_temp_f,
+                    effective as controller_setting,
                     ts::date as night
                 FROM controller_readings
                 WHERE zone = 'left'
                   AND action = 'override'
-                  AND ts > now() - interval '%s days'
+                  AND setting IS NOT NULL
+                  AND ts > now() - %s * interval '1 day'
                 ORDER BY ts
-            """ % LEARNING_LOOKBACK_NIGHTS)
+            """, (LEARNING_LOOKBACK_NIGHTS,))
 
             overrides = cur.fetchall()
+            cur.close()
             if not overrides:
                 self.log("  Learning: no overrides in history — using defaults")
                 return {}
 
-            # Group overrides by cycle and compute what baseline would have been
-            cycle_deltas = {}  # {cycle_num: [(delta, recency_weight), ...]}
-            nights = set()
-            for elapsed_min, override_val, body_f, room_f, night in overrides:
+            # Take only the LAST override per cycle per night
+            # (user may adjust multiple times — final value is what they wanted)
+            last_per_cycle_night = {}  # {(night, cycle): (override_val, controller_val)}
+            for elapsed_min, override_val, ctrl_val, night in overrides:
                 if elapsed_min is None:
                     continue
                 cycle = self._get_cycle_num(elapsed_min)
                 baseline = CYCLE_SETTINGS.get(cycle, CYCLE_SETTINGS[max(CYCLE_SETTINGS.keys())])
+                # Compare override to baseline (not controller's adjusted value)
+                # because learned adj feeds INTO the baseline, avoiding feedback loops
+                last_per_cycle_night[(night, cycle)] = override_val - baseline
 
-                # What the user wanted vs what the cycle baseline says
-                delta = override_val - baseline
+            if not last_per_cycle_night:
+                return {}
 
-                # Weight by recency: more recent nights count more
-                nights.add(night)
+            # Group by cycle
+            cycle_deltas = {}
+            for (night, cycle), delta in sorted(last_per_cycle_night.items()):
                 cycle_deltas.setdefault(cycle, []).append(delta)
 
             # Compute weighted average delta per cycle
             adjustments = {}
+            nights = set(n for n, _ in last_per_cycle_night.keys())
             for cycle, deltas in cycle_deltas.items():
                 if not deltas:
                     continue
-                # Weight recent overrides more (last override = weight 1.0, older = decayed)
+                # Weight recent overrides more (last = weight 1.0, older = decayed)
                 weighted_sum = 0
                 weight_total = 0
                 for i, d in enumerate(reversed(deltas)):
@@ -702,12 +716,11 @@ class SleepControllerV4(hass.Hass):
                     weighted_sum += d * w
                     weight_total += w
                 avg_delta = weighted_sum / weight_total if weight_total else 0
-                # Round and clamp
                 adj = max(-LEARNING_MAX_ADJ, min(LEARNING_MAX_ADJ, round(avg_delta)))
                 if adj != 0:
                     adjustments[str(cycle)] = adj
 
-            self.log(f"  Learning: {len(overrides)} overrides across {len(nights)} nights → {adjustments}")
+            self.log(f"  Learning: {len(last_per_cycle_night)} override events across {len(nights)} nights → {adjustments}")
             return adjustments
 
         except Exception as e:
@@ -719,7 +732,15 @@ class SleepControllerV4(hass.Hass):
         try:
             if LEARNED_FILE.exists():
                 with open(LEARNED_FILE) as f:
-                    return json.load(f)
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    return {}
+                # Clamp values on load in case file was manually edited
+                return {
+                    k: max(-LEARNING_MAX_ADJ, min(LEARNING_MAX_ADJ, int(v)))
+                    for k, v in data.items()
+                    if isinstance(v, (int, float))
+                }
         except Exception:
             pass
         return {}
