@@ -69,16 +69,25 @@ import hassapi as hass
 #   Cycle 5+ (360+ min): minimal cool → approaching wake, body warming up
 
 # Settings per cycle position (-10 to +10 scale, capped at 0)
-# These are the BASELINE before room temp compensation
+# These are the BASELINE before room temp compensation and body temp feedback.
+# Flattened curve — previous settings warmed too aggressively (user woke warm).
 CYCLE_SETTINGS = {
     1: -8,   # First cycle: aggressive cooling for sleep onset
     2: -7,   # Second cycle: still cooling, deep sleep dominant
-    3: -5,   # Third cycle: moderate, REM increasing
-    4: -4,   # Fourth cycle: light cooling, REM dominant
-    5: -3,   # Fifth cycle: approaching morning
-    6: -2,   # Sixth cycle: near wake
+    3: -6,   # Third cycle: moderate, REM increasing
+    4: -5,   # Fourth cycle: still cooling, REM dominant
+    5: -4,   # Fifth cycle: approaching morning
+    6: -3,   # Sixth cycle: near wake
 }
 CYCLE_DURATION_MIN = 90
+
+# Body temperature feedback — reactive cooling tuning
+# When body sensors read above COMFORT_TARGET, push L1 more negative.
+# This is the key to "responsive cooling tuning" — the firmware PID targets
+# whatever L1 we set, but if body temp is still high, we need a colder target.
+BODY_COMFORT_TARGET_F = 82.0         # Ideal body sensor reading during sleep
+BODY_TEMP_COOL_BIAS_PER_F = 0.5     # Push L1 -0.5 per °F above comfort target
+BODY_TEMP_MAX_BIAS = -3              # Don't push more than 3 steps extra
 
 # Room temperature compensation
 AMBIENT_REFERENCE_F = 68.0          # Calibration point — 7-day overnight average is 68.3°F
@@ -237,8 +246,10 @@ class SleepControllerV4(hass.Hass):
 
         elapsed_min = self._elapsed_min()
 
-        # Determine setting from sleep cycle position
-        setting, room_temp_comp, data_source = self._compute_setting(elapsed_min, room_temp, sleep_stage)
+        # Determine setting from sleep cycle position + body temp feedback
+        setting, room_temp_comp, data_source = self._compute_setting(
+            elapsed_min, room_temp, sleep_stage, body_avg=body_avg
+        )
 
         # Apply override floor — decays after OVERRIDE_FLOOR_DECAY_MIN
         floor = self._state.get("override_floor")
@@ -284,12 +295,12 @@ class SleepControllerV4(hass.Hass):
             action=action,
         )
 
-    def _compute_setting(self, elapsed_min, room_temp, sleep_stage):
-        """Compute L1 setting from cycle position + room temp.
+    def _compute_setting(self, elapsed_min, room_temp, sleep_stage, body_avg=None):
+        """Compute L1 setting from cycle position + room temp + body temp feedback.
 
         Returns (setting, room_temp_comp, data_source) where:
           room_temp_comp: degrees of room temp compensation applied
-          data_source: 'stage' or 'time_cycle'
+          data_source: 'stage', 'time_cycle', or 'time_cycle+body'
         """
         room_temp_comp = 0
 
@@ -302,6 +313,16 @@ class SleepControllerV4(hass.Hass):
             cycle_num = self._get_cycle_num(elapsed_min)
             setting = CYCLE_SETTINGS.get(cycle_num, CYCLE_SETTINGS[max(CYCLE_SETTINGS.keys())])
             data_source = "time_cycle"
+
+        # Body temperature feedback — if body is warmer than comfort target,
+        # push L1 more negative. This makes the firmware PID work harder.
+        body_bias = 0
+        if body_avg is not None and body_avg > BODY_COMFORT_TARGET_F:
+            body_bias = -round((body_avg - BODY_COMFORT_TARGET_F) * BODY_TEMP_COOL_BIAS_PER_F)
+            body_bias = max(body_bias, BODY_TEMP_MAX_BIAS)  # cap at -3
+            setting += body_bias
+            if body_bias != 0:
+                data_source += "+body"
 
         # Room temperature compensation — physics, always applied
         if room_temp is not None:
