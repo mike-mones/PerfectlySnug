@@ -590,7 +590,7 @@ class SleepControllerV4(hass.Hass):
         return state
 
     def _end_night(self):
-        """Log nightly summary to Postgres."""
+        """Log nightly summary to Postgres, computing stats from controller_readings."""
         try:
             conn = self._get_pg()
             if not conn:
@@ -601,22 +601,57 @@ class SleepControllerV4(hass.Hass):
             if not sleep_start:
                 return
 
+            night_date = datetime.fromisoformat(sleep_start).date()
+
+            # Compute body/ambient stats from this night's controller_readings
+            cur.execute("""
+                SELECT
+                    round(avg(body_avg_f)::numeric, 1),
+                    round(avg(ambient_f)::numeric, 1),
+                    round(min(ambient_f)::numeric, 1),
+                    round(max(ambient_f)::numeric, 1)
+                FROM controller_readings
+                WHERE zone = 'left'
+                  AND ts >= %s::timestamptz
+                  AND action IN ('set', 'hold')
+                  AND body_avg_f > 74
+            """, (sleep_start,))
+            stats = cur.fetchone()
+            avg_body = float(stats[0]) if stats and stats[0] else None
+            avg_ambient = float(stats[1]) if stats and stats[1] else None
+            min_ambient = float(stats[2]) if stats and stats[2] else None
+            max_ambient = float(stats[3]) if stats and stats[3] else None
+            cur.close()
+
+            # Read current L2/L3 for sleep/wake settings
+            sleep_setting = self._read_float("number.smart_topper_left_side_sleep_temperature")
+            wake_setting = self._read_float("number.smart_topper_left_side_wake_temperature")
+
             # Read Apple Health sleep totals
             deep = self._read_float("input_number.apple_health_sleep_deep_hrs")
             rem = self._read_float("input_number.apple_health_sleep_rem_hrs")
             core = self._read_float("input_number.apple_health_sleep_core_hrs")
             awake = self._read_float("input_number.apple_health_sleep_awake_hrs")
 
+            cur = conn.cursor()
             cur.execute("""
                 INSERT INTO nightly_summary
                 (night_date, bedtime_ts, wake_ts, duration_hours,
-                 bedtime_setting, override_count, manual_mode, controller_ver,
+                 bedtime_setting, sleep_setting, wake_setting,
+                 avg_ambient_f, min_ambient_f, max_ambient_f, avg_body_f,
+                 override_count, manual_mode, controller_ver,
                  total_sleep_min, deep_sleep_min, rem_sleep_min, core_sleep_min, awake_min)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (night_date) DO UPDATE SET
                  wake_ts = EXCLUDED.wake_ts,
                  duration_hours = EXCLUDED.duration_hours,
                  bedtime_setting = EXCLUDED.bedtime_setting,
+                 sleep_setting = EXCLUDED.sleep_setting,
+                 wake_setting = EXCLUDED.wake_setting,
+                 avg_ambient_f = EXCLUDED.avg_ambient_f,
+                 min_ambient_f = EXCLUDED.min_ambient_f,
+                 max_ambient_f = EXCLUDED.max_ambient_f,
+                 avg_body_f = EXCLUDED.avg_body_f,
                  override_count = EXCLUDED.override_count,
                  manual_mode = EXCLUDED.manual_mode,
                  controller_ver = EXCLUDED.controller_ver,
@@ -626,11 +661,14 @@ class SleepControllerV4(hass.Hass):
                  core_sleep_min = EXCLUDED.core_sleep_min,
                  awake_min = EXCLUDED.awake_min
             """, (
-                datetime.fromisoformat(sleep_start).date(),
+                night_date,
                 sleep_start,
                 datetime.now().isoformat(),
                 (datetime.now() - datetime.fromisoformat(sleep_start)).total_seconds() / 3600,
                 self._state.get("initial_setting", self._state.get("last_setting")),
+                int(sleep_setting) if sleep_setting is not None else None,
+                int(wake_setting) if wake_setting is not None else None,
+                avg_ambient, min_ambient, max_ambient, avg_body,
                 self._state.get("override_count", 0),
                 self._state.get("manual_mode", False),
                 "v4",
@@ -641,6 +679,7 @@ class SleepControllerV4(hass.Hass):
                 (awake or 0) * 60 if awake is not None else None,
             ))
             conn.commit()
+            cur.close()
             self.log("Nightly summary saved to Postgres")
         except Exception as e:
             self.log(f"Failed to save nightly summary: {e}", level="WARNING")
@@ -783,7 +822,14 @@ class SleepControllerV4(hass.Hass):
             if cycle_num is None:
                 cycle_num = self._get_cycle_num(elapsed_min)
 
-            # Build notes with Gap 4 metadata
+            # Read actual HA entity value as 'effective' (what's really set on device)
+            effective_raw = self._read_float(E_BEDTIME_TEMP)
+            effective = int(effective_raw) if effective_raw is not None else setting
+
+            # Current learned adjustment for this cycle
+            learned_adj = self._learned.get(str(cycle_num), 0)
+
+            # Build notes
             notes = (
                 f"cycle={cycle_num} src={data_source} "
                 f"room_comp={room_temp_comp:+d}"
@@ -797,16 +843,17 @@ class SleepControllerV4(hass.Hass):
                 INSERT INTO controller_readings
                 (ts, zone, phase, elapsed_min, body_right_f, body_center_f,
                  body_left_f, body_avg_f, ambient_f, room_temp_f,
-                 setting, effective, baseline, action, notes, controller_version)
-                VALUES (NOW(), 'left', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'v4')
+                 setting, effective, baseline, learned_adj, action, notes, controller_version)
+                VALUES (NOW(), 'left', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'v4')
             """, (
                 sleep_stage if sleep_stage and sleep_stage not in ("unknown", "") else f"cycle_{cycle_num}",
                 elapsed_min,
                 body_right, body_center, body_left,
                 body_avg,
                 ambient, room_temp,
-                setting, setting,
+                setting, effective,
                 CYCLE_SETTINGS.get(cycle_num, -5),
+                learned_adj,
                 action,
                 notes,
             ))
