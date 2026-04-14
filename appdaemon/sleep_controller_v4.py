@@ -87,12 +87,15 @@ ENABLE_BODY_FEEDBACK = True          # Body temp reactive cooling — ON (addres
 ENABLE_LEARNING = False              # Adaptive learning from override history — OFF until stable
 
 # Body temperature feedback — reactive cooling tuning (requires ENABLE_BODY_FEEDBACK)
-BODY_COMFORT_TARGET_F = 82.0         # Ideal body sensor reading during sleep
+# User feedback: they still felt warm at max cooling, so keep a low comfort target
+# that biases toward extra cooling in warm rooms instead of easing off overnight.
+BODY_COMFORT_TARGET_F = 82.0         # Lower target keeps extra cooling engaged
 BODY_TEMP_COOL_BIAS_PER_F = 0.5     # Push L1 -0.5 per °F above comfort target
 BODY_TEMP_MAX_BIAS = -3              # Don't push more than 3 steps extra
 
 # Room temperature compensation
-AMBIENT_REFERENCE_F = 68.0          # Calibration point — 7-day overnight average is 68.3°F
+# Keep a low reference so a warm bedroom still drives the controller to max cooling.
+AMBIENT_REFERENCE_F = 68.0          # Intentionally aggressive for a hot sleeper
 AMBIENT_COMP_PER_F = 0.8            # Base: +0.8 setting per °F below reference
 AMBIENT_COLD_THRESHOLD_F = 63.0     # Below this, extra compensation kicks in
 AMBIENT_COLD_EXTRA_PER_F = 0.5      # Additional per °F below threshold
@@ -195,35 +198,13 @@ class SleepControllerV4(hass.Hass):
             return
 
         # Responsive cooling watchdog — ALWAYS runs, even during freeze.
-        # This is safety-critical: firmware stability depends on it.
         rc_state = self.get_state(E_RESPONSIVE_COOLING)
         if rc_state == "off":
             self.log("WARNING: Responsive cooling was OFF — re-enabling", level="WARNING")
             self.call_service("switch/turn_on", entity_id=E_RESPONSIVE_COOLING)
 
-        # Manual mode (kill switch) — hands off for the night
-        if self._state["manual_mode"]:
-            return
-
-        # Override freeze — derived from override_floor_ts (first 60 min = freeze)
-        floor_ts = self._state.get("override_floor_ts")
-        if floor_ts:
-            floor_age_min = (now - datetime.fromisoformat(floor_ts)).total_seconds() / 60
-            if floor_age_min < OVERRIDE_FREEZE_MIN:
-                remaining = OVERRIDE_FREEZE_MIN - floor_age_min
-                self.log(f"Override freeze — {remaining:.0f}m remaining")
-                return
-
-        # Rate limit — don't change more than once per MIN_CHANGE_INTERVAL_SEC
-        last_change = self._state.get("last_change_ts")
-        if last_change:
-            elapsed = (now - datetime.fromisoformat(last_change)).total_seconds()
-            if elapsed < MIN_CHANGE_INTERVAL_SEC:
-                return
-
-        # Compute the right setting
+        # ── Always read sensors (telemetry must never have gaps) ──────
         room_temp = self._read_float(E_ROOM_TEMP)
-        # Plausibility guard — reject sensor glitches outside sane range
         if room_temp is not None and not (40.0 <= room_temp <= 100.0):
             self.log(f"Room temp {room_temp}°F out of range — ignoring", level="WARNING")
             room_temp = None
@@ -232,14 +213,12 @@ class SleepControllerV4(hass.Hass):
         body_left = self._read_float(E_BODY_LEFT)
         body_right = self._read_float(E_BODY_RIGHT)
 
-        # Use max of all 3 body sensors for occupancy (handles side-sleeping)
         body_vals = [v for v in (body_left, body_center, body_right) if v is not None]
         body_max = max(body_vals) if body_vals else body_center
         body_avg = sum(body_vals) / len(body_vals) if body_vals else body_center
 
-        # Occupancy detection using max sensor (side sleepers may only warm one sensor)
+        # Occupancy detection
         if not self._check_occupancy(body_max, now):
-            # Log empty-bed period to Postgres for telemetry continuity
             elapsed_min = self._elapsed_min()
             if elapsed_min > 0:
                 self._log_to_postgres(
@@ -256,7 +235,7 @@ class SleepControllerV4(hass.Hass):
 
         elapsed_min = self._elapsed_min()
 
-        # Determine setting from sleep cycle position + body temp feedback
+        # ── Always compute the ideal setting (for logging even if blocked) ──
         setting, room_temp_comp, data_source = self._compute_setting(
             elapsed_min, room_temp, sleep_stage, body_avg=body_avg
         )
@@ -276,14 +255,34 @@ class SleepControllerV4(hass.Hass):
             setting = floor
 
         cycle_num = self._get_cycle_num(elapsed_min)
-
-        # Apply
         current = self._read_float(E_BEDTIME_TEMP)
         if current is None:
             self.log("Bedtime temp entity unavailable — skipping", level="WARNING")
             return
+
+        # ── Determine if we can change the setting ────────────────────
         changed = int(current) != setting
-        if changed:
+        blocked = False
+        action = "hold"
+
+        if self._state["manual_mode"]:
+            blocked = True
+            action = "manual_hold"
+        elif floor_ts:
+            floor_age = (now - datetime.fromisoformat(floor_ts)).total_seconds() / 60
+            if floor_age < OVERRIDE_FREEZE_MIN:
+                blocked = True
+                action = "freeze_hold"
+        if not blocked:
+            last_change = self._state.get("last_change_ts")
+            if last_change:
+                since_change = (now - datetime.fromisoformat(last_change)).total_seconds()
+                if since_change < MIN_CHANGE_INTERVAL_SEC:
+                    blocked = True
+                    action = "rate_hold"
+
+        # Apply setting change if allowed and needed
+        if changed and not blocked:
             self.log(
                 f"Cycle {cycle_num}, "
                 f"elapsed={elapsed_min:.0f}m, room={room_temp}°F, "
@@ -294,9 +293,9 @@ class SleepControllerV4(hass.Hass):
             self._set_l1(setting)
             self._state["last_change_ts"] = now.isoformat()
             self._save_state()
+            action = "set"
 
-        # Log every iteration to Postgres for telemetry (not just changes)
-        action = "set" if changed else "hold"
+        # ── Always log to Postgres — no telemetry gaps ────────────────
         self._log_to_postgres(
             elapsed_min, room_temp, sleep_stage, body_center, setting,
             cycle_num=cycle_num, room_temp_comp=room_temp_comp,
