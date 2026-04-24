@@ -25,7 +25,7 @@ import requests
 HA_URL = os.environ.get("HA_URL", "http://192.168.0.106:8123")
 HA_TOKEN = os.environ.get("HA_TOKEN", "")
 
-PG_HOST = os.environ.get("PG_HOST", "192.168.0.75")
+PG_HOST = os.environ.get("PG_HOST", "192.168.0.3")
 PG_PORT = int(os.environ.get("PG_PORT", "5432"))
 PG_DB = os.environ.get("PG_DB", "sleepdata")
 PG_USER = os.environ.get("PG_USER", "sleepsync")

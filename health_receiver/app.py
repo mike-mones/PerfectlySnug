@@ -2,7 +2,7 @@
 Health Auto Export → PostgreSQL Receiver
 =========================================
 Accepts webhook POSTs from the iOS "Health Auto Export" app and stores
-all metrics in PostgreSQL on the Pi (192.168.0.210).
+all metrics in PostgreSQL (co-located on the same host).
 
 Endpoints:
   POST /api/health  — receives the full Health Auto Export JSON payload

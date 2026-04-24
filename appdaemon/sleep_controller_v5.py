@@ -1,47 +1,29 @@
 """
-Sleep Controller v4 — Works WITH the firmware, not against it.
-================================================================
+Sleep Controller v5 — Left side RC-off blower-proxy control.
+============================================================
 
 Architecture:
-  The topper's firmware has a PID controller that adjusts blower/heaters
-  to reach a target surface temperature. That PID runs continuously with
-  direct hardware access. WE DO NOT REPLACE IT.
+  This controller disables firmware Responsive Cooling on the LEFT side and
+  uses the empirically measured RC-off L1 ladder as a coarse blower-proxy
+  model. We still only write the L1 entity, but we reason in blower-proxy %
+  space and map back onto the closest allowed L1 step.
 
-  This controller's job is simpler: pick the RIGHT L1 setting based on:
-    1. Sleep phase (cyclical ~90-min cycles, not linear)
-    2. Room temperature (from dehumidifier sensor — real room, not topper's inflated ambient)
-    3. User preferences (warm sleeper, never heat)
+  Important nuance: RC-off does NOT guarantee that the firmware will hold a
+  literal fixed blower output for a given L1 forever. The topper may still
+  modulate its real blower internally, so logged proxy values are guidance,
+  not a promised hardware command.
 
-  We change L1 infrequently (when phase changes or room temp shifts) and
-  let the firmware's PID handle the fine-grained control.
+Measured RC-off ladder:
+  -10→100, -9→87, -8→75, -7→65, -6→50,
+   -5→41,  -4→33, -3→26, -2→20, -1→10, 0→0
 
 Key principles:
-  - Firmware responsive cooling stays ON — it handles second-by-second PID
-  - We set L1 = "what temperature experience does the user want right now?"
-  - Sleep is CYCLICAL: ~90-min cycles of Light→Deep→REM, repeating 4-6x/night
-  - Deep sleep dominates early cycles, REM dominates later ones
-  - Room temp compensation is physics, always applied
-  - User runs warm, NEVER set above 0 (neutral)
-  - User overrides are SACRED — never fight them
-  - Everything logged to Postgres (192.168.0.75)
-
-Firmware behavior (experimentally verified):
-  L1=-8 → targets ~69°F surface (max cooling)
-  L1= 0 → targets ~91°F surface (neutral, topper essentially off)
-  L1=+5 → targets ~96°F surface (heating)
-  The topper blows room-temp air, so in a 60°F room, L1=-5 still chills you.
-
-Sensor reliability (verified with empty bed, topper on/off):
-  Body sensors (TSL/TSC/TSR): RELIABLE. Pad surface thermistors.
-    Empty bed = room temp + 1-3°F. Occupied = 80-89°F. Always updating.
-  Ambient (TA): UNRELIABLE. Inside the base unit, not exposed to room air.
-    Reads high when blower off (electronics heat), varies with blower state.
-    Use dehumidifier sensor (sensor.superior_6000s_temperature) for real room temp.
-  Setpoint (TempSP): Firmware's PID target in absolute °F.
-    Useful to see what firmware is trying to do. Tracks body sensor when off.
-  Blower %: FREEZES at last value when topper turns off. Only valid when running.
-  Heater raw (IHH/IHF): NOT temperatures. Unknown encoding. Ignore.
-  PID (Ctrl Out/P/I): Firmware's PI controller. Positive = cooling. Slow updates (~30s).
+  - Left side Responsive Cooling stays OFF
+  - Right side remains passive-only telemetry
+  - Use the bedroom Aqara thermometer by default for room temp
+  - Preserve aggressive cooling for a hot sleeper
+  - Manual overrides are sacred: freeze for 1 hour, then keep an all-night floor
+  - Learn from override residuals in blower space, not firmware setpoint space
 """
 
 import json
@@ -68,43 +50,52 @@ import hassapi as hass
 #   Cycle 3-4 (180-360 min): light cool → REM increases, overcooling wakes
 #   Cycle 5+ (360+ min): minimal cool → approaching wake, body warming up
 
-# Settings per cycle position (-10 to +10 scale, capped at 0)
-# These are the BASELINE before room temp compensation and body temp feedback.
-# Flattened curve — previous settings warmed too aggressively (user woke warm).
+# Settings per cycle position (-10 to +10 scale, capped at 0).
+# Under RC-off these act as fixed blower-proxy baselines, so stay colder than v4.
 CYCLE_SETTINGS = {
-    1: -8,   # First cycle: aggressive cooling for sleep onset
-    2: -7,   # Second cycle: still cooling, deep sleep dominant
-    3: -6,   # Third cycle: moderate, REM increasing
-    4: -5,   # Fourth cycle: still cooling, REM dominant
-    5: -4,   # Fifth cycle: approaching morning
-    6: -3,   # Sixth cycle: near wake
+    1: -10,  # Start cold and only ease off gradually
+    2: -9,
+    3: -8,
+    4: -7,
+    5: -6,
+    6: -5,
 }
 CYCLE_DURATION_MIN = 90
 
-# ── Feature Flags ────────────────────────────────────────────────────
-# New experimental features. Learning defaults OFF until proven.
-ENABLE_BODY_FEEDBACK = True          # Body temp reactive cooling — ON (addresses waking warm)
-ENABLE_LEARNING = False              # Adaptive learning from override history — OFF until stable
+# ── Control Model ────────────────────────────────────────────────────
+CONTROLLER_VERSION = "v5_rc_off"
+ENABLE_LEARNING = True
+MAX_SETTING = 0
 
-# Body temperature feedback — reactive cooling tuning (requires ENABLE_BODY_FEEDBACK)
-# User feedback: they still felt warm at max cooling, so keep a low comfort target
-# that biases toward extra cooling in warm rooms instead of easing off overnight.
-BODY_COMFORT_TARGET_F = 82.0         # Lower target keeps extra cooling engaged
-BODY_TEMP_COOL_BIAS_PER_F = 0.5     # Push L1 -0.5 per °F above comfort target
-BODY_TEMP_MAX_BIAS = -3              # Don't push more than 3 steps extra
+L1_TO_BLOWER_PCT = {
+    -10: 100,
+    -9: 87,
+    -8: 75,
+    -7: 65,
+    -6: 50,
+    -5: 41,
+    -4: 33,
+    -3: 26,
+    -2: 20,
+    -1: 10,
+    0: 0,
+}
 
-# Room temperature compensation
-# Keep a low reference so a warm bedroom still drives the controller to max cooling.
-AMBIENT_REFERENCE_F = 68.0          # Intentionally aggressive for a hot sleeper
-AMBIENT_COMP_PER_F = 0.8            # Base: +0.8 setting per °F below reference
-AMBIENT_COLD_THRESHOLD_F = 63.0     # Below this, extra compensation kicks in
-AMBIENT_COLD_EXTRA_PER_F = 0.5      # Additional per °F below threshold
-AMBIENT_HOT_COMP_PER_F = 0.4        # Hot rooms: -0.4 setting per °F above reference
-MAX_SETTING = 0                     # NEVER heat — user runs warm
+# Room compensation happens in blower space now.
+ROOM_BLOWER_REFERENCE_F = 68.0
+ROOM_BLOWER_COLD_COMP_PER_F = 4.0
+ROOM_BLOWER_COLD_THRESHOLD_F = 63.0
+ROOM_BLOWER_COLD_EXTRA_PER_F = 3.0
+ROOM_BLOWER_HOT_COMP_PER_F = 4.0
+
+# Body handling stays conservative: only act on clear hot extremes.
+BODY_HOT_THRESHOLD_F = 85.0
+BODY_HOT_STREAK_COUNT = 2
+BODY_TEMP_MIN_F = 55.0
+BODY_TEMP_MAX_F = 110.0
 
 # Override handling
 OVERRIDE_FREEZE_MIN = 60            # Freeze controller for 1 hour after manual change
-OVERRIDE_FLOOR_DECAY_MIN = 120      # Floor decays after 2 hours — let controller adapt
 MIN_CHANGE_INTERVAL_SEC = 1800      # Don't change L1 more than once per 30 min
 KILL_SWITCH_CHANGES = 3             # 3 manual changes in this window...
 KILL_SWITCH_WINDOW_SEC = 300        # ...within 5 min = manual mode for night
@@ -123,9 +114,9 @@ E_PROFILE_3LEVEL = "switch.smart_topper_left_side_3_level_mode"
 E_BODY_CENTER = "sensor.smart_topper_left_side_body_sensor_center"
 E_BODY_LEFT = "sensor.smart_topper_left_side_body_sensor_left"
 E_BODY_RIGHT = "sensor.smart_topper_left_side_body_sensor_right"
-E_ROOM_TEMP = "sensor.superior_6000s_temperature"
 E_SLEEP_STAGE = "input_text.apple_health_sleep_stage"
 E_SLEEP_MODE = "input_boolean.sleep_mode"
+DEFAULT_ROOM_TEMP_ENTITY = "sensor.bedroom_temperature_sensor_temperature"
 
 ZONE_ENTITY_IDS = {
     "left": {
@@ -135,6 +126,7 @@ ZONE_ENTITY_IDS = {
         "body_right": E_BODY_RIGHT,
         "ambient": "sensor.smart_topper_left_side_ambient_temperature",
         "setpoint": "sensor.smart_topper_left_side_temperature_setpoint",
+        "blower_pct": "sensor.smart_topper_left_side_blower_output",
     },
     "right": {
         "bedtime": "number.smart_topper_right_side_bedtime_temperature",
@@ -143,6 +135,7 @@ ZONE_ENTITY_IDS = {
         "body_right": "sensor.smart_topper_right_side_body_sensor_right",
         "ambient": "sensor.smart_topper_right_side_ambient_temperature",
         "setpoint": "sensor.smart_topper_right_side_temperature_setpoint",
+        "blower_pct": "sensor.smart_topper_right_side_blower_output",
     },
 }
 
@@ -153,46 +146,70 @@ PG_DB = "sleepdata"
 PG_USER = "sleepsync"
 PG_PASS = "sleepsync_local"
 
+BED_PRESENCE_ENTITIES = {
+    "left_pressure": "sensor.bed_presence_2bcab8_left_pressure",
+    "right_pressure": "sensor.bed_presence_2bcab8_right_pressure",
+    "left_unoccupied_pressure": "number.bed_presence_2bcab8_left_unoccupied_pressure",
+    "right_unoccupied_pressure": "number.bed_presence_2bcab8_right_unoccupied_pressure",
+    "left_occupied_pressure": "number.bed_presence_2bcab8_left_occupied_pressure",
+    "right_occupied_pressure": "number.bed_presence_2bcab8_right_occupied_pressure",
+    "left_trigger_pressure": "number.bed_presence_2bcab8_left_trigger_pressure",
+    "right_trigger_pressure": "number.bed_presence_2bcab8_right_trigger_pressure",
+    "occupied_left": "binary_sensor.bed_presence_2bcab8_bed_occupied_left",
+    "occupied_right": "binary_sensor.bed_presence_2bcab8_bed_occupied_right",
+    "occupied_either": "binary_sensor.bed_presence_2bcab8_bed_occupied_either",
+    "occupied_both": "binary_sensor.bed_presence_2bcab8_bed_occupied_both",
+}
+
 # State file (backup — primary state is in-memory)
 _container = Path("/config/apps")
 _host = Path("/addon_configs/a0d7b954_appdaemon/apps")
 STATE_DIR = _container if _container.exists() else _host
-STATE_FILE = STATE_DIR / "controller_state_v4.json"
-LEARNED_FILE = STATE_DIR / "learned_adjustments.json"
+STATE_FILE = STATE_DIR / "controller_state_v5_rc_off.json"
+LEARNED_FILE = STATE_DIR / "learned_blower_adjustments_v5.json"
 
 # Learning parameters
 LEARNING_LOOKBACK_NIGHTS = 14       # Analyze this many recent nights
-LEARNING_MAX_ADJ = 3                # Max learned adjustment per cycle (±3)
+LEARNING_MAX_BLOWER_ADJ = 30        # Max learned blower adjustment per cycle (±30%)
 LEARNING_DECAY = 0.7                # Weight: recent overrides count more
 
 
-class SleepControllerV4(hass.Hass):
+class SleepControllerV5(hass.Hass):
 
     def initialize(self):
         self.log("=" * 60)
-        self.log("Sleep Controller v4 initializing")
+        self.log("Sleep Controller v5 initializing")
+        self._room_temp_entity = getattr(self, "args", {}).get(
+            "room_temp_entity",
+            DEFAULT_ROOM_TEMP_ENTITY,
+        )
         self._pg_host = getattr(self, "args", {}).get(
             "postgres_host", PG_HOST_DEFAULT,
         )
 
         self._state = {
             "sleep_start": None,        # When sleep began (ISO string)
+            "sleep_start_epoch": None,  # Epoch form for DST-safe elapsed tracking
             "last_setting": None,       # Current L1 value
             "last_change_ts": None,     # When we last changed L1
             "last_restart_ts": None,    # Last time we auto-restarted the topper
+            "last_target_blower_pct": None,
+            "override_freeze_until": None,
             "override_floor": None,     # User's last manual value (floor)
-            "override_floor_ts": None,  # When the floor was set
+            "override_floor_blower_pct": None,
             "manual_mode": False,       # Kill switch triggered
             "recent_changes": [],       # Timestamps of recent manual changes
             "override_count": 0,        # Total overrides this night
             "body_below_since": None,   # When body first dropped below BODY_EMPTY_THRESHOLD_F
+            "hot_streak": 0,
+            "current_cycle_num": None,
         }
         self._load_state()
         self._pg_conn = None
-        self._learned = self._load_learned() if ENABLE_LEARNING else {}
+        self._learned = self._load_learned()
 
-        # Ensure responsive cooling is ON — we work WITH the firmware
-        self.call_service("switch/turn_on", entity_id=E_RESPONSIVE_COOLING)
+        # Force left-side responsive cooling OFF — v5 owns the outer proxy model.
+        self.call_service("switch/turn_off", entity_id=E_RESPONSIVE_COOLING)
 
         # Run control loop every 5 minutes
         self.run_every(self._control_loop, "now", 300)
@@ -210,10 +227,10 @@ class SleepControllerV4(hass.Hass):
         # Gap 5: If sleep_mode is already ON (mid-night restart), resume
         self._check_midnight_restart()
 
-        self.log("Controller v4 ready — working WITH firmware PID")
+        self.log("Controller v5 ready — left side in RC-off blower-proxy mode")
         self.log(f"  Cycles: {CYCLE_SETTINGS}")
         self.log(f"  Learned: {self._learned}")
-        self.log(f"  Room temp: {E_ROOM_TEMP}")
+        self.log(f"  Room temp: {self._get_room_temp_entity()}")
         self.log(f"  Max setting: {MAX_SETTING}")
         self.log("=" * 60)
 
@@ -226,22 +243,22 @@ class SleepControllerV4(hass.Hass):
         if not self._is_sleeping():
             return
 
-        # Responsive cooling watchdog — ALWAYS runs, even during freeze.
-        rc_state = self.get_state(E_RESPONSIVE_COOLING)
-        if rc_state == "off":
-            self.log("WARNING: Responsive cooling was OFF — re-enabling", level="WARNING")
-            self.call_service("switch/turn_on", entity_id=E_RESPONSIVE_COOLING)
+        # Responsive cooling watchdog — keep the left side in RC-off mode.
+        self._ensure_responsive_cooling_off()
 
         # ── Always read sensors (telemetry must never have gaps) ──────
-        room_temp = self._read_float(E_ROOM_TEMP)
+        room_temp = self._read_temperature(self._get_room_temp_entity())
         if room_temp is not None and not (40.0 <= room_temp <= 100.0):
             self.log(f"Room temp {room_temp}°F out of range — ignoring", level="WARNING")
             room_temp = None
         sleep_stage = self._read_str(E_SLEEP_STAGE)
         left_snapshot = self._read_zone_snapshot("left")
+        bed_presence = self._read_bed_presence_snapshot()
         body_center = left_snapshot["body_center"]
         body_left = left_snapshot["body_left"]
         body_right = left_snapshot["body_right"]
+        current = left_snapshot["setting"]
+        actual_blower_pct = left_snapshot["blower_pct"]
         setpoint = left_snapshot["setpoint"]
         ambient = left_snapshot["ambient"]
 
@@ -255,12 +272,14 @@ class SleepControllerV4(hass.Hass):
             if elapsed_min > 0:
                 self._log_to_postgres(
                     elapsed_min, room_temp, sleep_stage, body_center,
-                    self._state.get("last_setting", -8),
+                    self._state.get("last_setting", -10),
                     body_avg=body_avg, body_left=body_left, body_right=body_right,
                     action="empty_bed", ambient=ambient, setpoint=setpoint,
+                    blower_pct=actual_blower_pct, responsive_cooling_on=False,
+                    bed_presence=bed_presence,
                 )
                 self._log_passive_zone_snapshot(
-                    "right", elapsed_min, room_temp, sleep_stage
+                    "right", elapsed_min, room_temp, sleep_stage, bed_presence=bed_presence
                 )
             return
 
@@ -273,31 +292,33 @@ class SleepControllerV4(hass.Hass):
             return
 
         elapsed_min = self._elapsed_min()
-
-        # ── Always compute the ideal setting (for logging even if blocked) ──
-        setting, room_temp_comp, data_source = self._compute_setting(
-            elapsed_min, room_temp, sleep_stage, body_avg=body_avg
-        )
-
-        # Apply override floor — decays after OVERRIDE_FLOOR_DECAY_MIN
-        floor = self._state.get("override_floor")
-        floor_ts = self._state.get("override_floor_ts")
-        if floor is not None and floor_ts:
-            floor_age_min = (now - datetime.fromisoformat(floor_ts)).total_seconds() / 60
-            if floor_age_min > OVERRIDE_FLOOR_DECAY_MIN:
-                self.log(f"Override floor {floor:+d} expired after {floor_age_min:.0f}m")
-                self._state["override_floor"] = None
-                self._state["override_floor_ts"] = None
-                floor = None
-        if floor is not None and setting < floor:
-            self.log(f"Override floor: computed {setting:+d} < floor {floor:+d}, using floor")
-            setting = floor
-
-        cycle_num = self._get_cycle_num(elapsed_min)
-        current = self._read_float(E_BEDTIME_TEMP)
         if current is None:
             self.log("Bedtime temp entity unavailable — skipping", level="WARNING")
             return
+
+        # ── Always compute the ideal setting (for logging even if blocked) ──
+        plan = self._compute_setting(
+            elapsed_min,
+            room_temp,
+            sleep_stage,
+            body_avg=body_avg,
+            current_setting=current,
+        )
+        setting = plan["setting"]
+        target_blower_pct = plan["target_blower_pct"]
+        base_setting = plan["base_setting"]
+        base_blower_pct = plan["base_blower_pct"]
+        cycle_num = plan["cycle_num"]
+        room_temp_comp = plan["room_temp_comp"]
+        learned_adj_pct = plan["learned_adj_pct"]
+        data_source = plan["data_source"]
+
+        # Apply override floor for the rest of the night.
+        floor = self._state.get("override_floor")
+        if floor is not None and setting < floor:
+            self.log(f"Override floor: computed {setting:+d} < floor {floor:+d}, using floor")
+            setting = floor
+            target_blower_pct = self._l1_to_blower_pct(setting)
 
         # ── Determine if we can change the setting ────────────────────
         changed = int(current) != setting
@@ -307,11 +328,16 @@ class SleepControllerV4(hass.Hass):
         if self._state["manual_mode"]:
             blocked = True
             action = "manual_hold"
-        elif floor_ts:
-            floor_age = (now - datetime.fromisoformat(floor_ts)).total_seconds() / 60
-            if floor_age < OVERRIDE_FREEZE_MIN:
-                blocked = True
-                action = "freeze_hold"
+        else:
+            freeze_until = self._state.get("override_freeze_until")
+            if freeze_until:
+                freeze_dt = datetime.fromisoformat(freeze_until)
+                if now < freeze_dt:
+                    blocked = True
+                    action = "freeze_hold"
+                else:
+                    self._state["override_freeze_until"] = None
+                    self._save_state()
         if not blocked:
             last_change = self._state.get("last_change_ts")
             if last_change:
@@ -320,19 +346,24 @@ class SleepControllerV4(hass.Hass):
                     blocked = True
                     action = "rate_hold"
 
+        logged_blower_pct = actual_blower_pct
+
         # Apply setting change if allowed and needed
         if changed and not blocked:
             self.log(
                 f"Cycle {cycle_num}, "
                 f"elapsed={elapsed_min:.0f}m, room={room_temp}°F, "
                 f"stage={sleep_stage}, src={data_source}, "
-                f"room_comp={room_temp_comp:+d}: "
-                f"{int(current):+d} → {setting:+d}"
+                f"proxy={int(current):+d}/{self._l1_to_blower_pct(int(current))}% → "
+                f"{setting:+d}/{target_blower_pct}%"
             )
             self._set_l1(setting)
+            # Prefer a fresh HA read on set rows; the pre-change sample can be stale.
+            logged_blower_pct = None
             self._state["last_change_ts"] = now.isoformat()
+            self._state["last_target_blower_pct"] = target_blower_pct
             self._save_state()
-            action = "set"
+            action = "hot_safety" if plan["hot_safety"] else "set"
 
         # ── Always log to Postgres — no telemetry gaps ────────────────
         self._log_to_postgres(
@@ -341,76 +372,87 @@ class SleepControllerV4(hass.Hass):
             data_source=data_source, override_floor=floor,
             body_avg=body_avg, body_left=body_left, body_right=body_right,
             action=action, ambient=ambient, setpoint=setpoint,
+            effective=setting if changed and not blocked else int(current),
+            baseline=base_setting, learned_adj=learned_adj_pct,
+            blower_pct=logged_blower_pct, target_blower_pct=target_blower_pct,
+            base_blower_pct=base_blower_pct, responsive_cooling_on=False,
+            bed_presence=bed_presence,
         )
-        self._log_passive_zone_snapshot("right", elapsed_min, room_temp, sleep_stage)
+        self._log_passive_zone_snapshot(
+            "right", elapsed_min, room_temp, sleep_stage, bed_presence=bed_presence
+        )
 
-    def _compute_setting(self, elapsed_min, room_temp, sleep_stage, body_avg=None):
-        """Compute L1 setting from cycle position + learned adj + body feedback + room comp.
+    def _compute_setting(self, elapsed_min, room_temp, sleep_stage, body_avg=None, current_setting=None):
+        """Compute target L1 from cycle/stage, room compensation, and learned blower residuals."""
+        cycle_num = self._get_cycle_num(elapsed_min)
+        self._state["current_cycle_num"] = cycle_num
 
-        Returns (setting, room_temp_comp, data_source) where:
-          room_temp_comp: degrees of room temp compensation applied
-          data_source: 'stage', 'time_cycle', 'time_cycle+learned', etc.
-        """
-        room_temp_comp = 0
-
-        # If we have real sleep stage data, use it directly
+        data_source = "time_cycle"
+        base_setting = CYCLE_SETTINGS.get(cycle_num, CYCLE_SETTINGS[max(CYCLE_SETTINGS.keys())])
         if sleep_stage and sleep_stage not in ("unknown", ""):
-            setting = self._setting_for_stage(sleep_stage)
-            data_source = "stage"
-        else:
-            # Fall back to time-based cycle estimation
-            cycle_num = self._get_cycle_num(elapsed_min)
-            setting = CYCLE_SETTINGS.get(cycle_num, CYCLE_SETTINGS[max(CYCLE_SETTINGS.keys())])
-            data_source = "time_cycle"
+            staged_setting = self._setting_for_stage(sleep_stage)
+            if staged_setting is not None:
+                base_setting = staged_setting
+                data_source = "stage"
 
-            # Apply learned per-cycle adjustment from override history
-            learned_adj = self._learned.get(str(cycle_num), 0)
-            learned_adj = max(-LEARNING_MAX_ADJ, min(LEARNING_MAX_ADJ, learned_adj))
-            if learned_adj != 0:
-                setting += learned_adj
+        base_blower_pct = self._l1_to_blower_pct(base_setting)
+        target_blower_pct = base_blower_pct
+
+        learned_adj_pct = 0
+        if ENABLE_LEARNING:
+            learned_adj_pct = int(self._learned.get(str(cycle_num), 0))
+            learned_adj_pct = max(
+                -LEARNING_MAX_BLOWER_ADJ,
+                min(LEARNING_MAX_BLOWER_ADJ, learned_adj_pct),
+            )
+            if learned_adj_pct:
+                target_blower_pct += learned_adj_pct
                 data_source += "+learned"
 
-        # Body temperature feedback — if body is warmer than comfort target,
-        # push L1 more negative. This makes the firmware PID work harder.
-        body_bias = 0
-        if ENABLE_BODY_FEEDBACK and body_avg is not None and body_avg > BODY_COMFORT_TARGET_F:
-            body_bias = -round((body_avg - BODY_COMFORT_TARGET_F) * BODY_TEMP_COOL_BIAS_PER_F)
-            body_bias = max(body_bias, BODY_TEMP_MAX_BIAS)  # cap at -3
-            setting += body_bias
-            if body_bias != 0:
-                data_source += "+body"
+        room_temp_comp = self._room_temp_to_blower_comp(room_temp)
+        if room_temp_comp:
+            target_blower_pct += room_temp_comp
+            data_source += "+room"
 
-        # Room temperature compensation — physics, always applied
-        if room_temp is not None:
-            delta = AMBIENT_REFERENCE_F - room_temp
-            if delta > 0:
-                # Cold room: raise setting (less cooling needed from topper)
-                room_temp_comp = delta * AMBIENT_COMP_PER_F
-                if room_temp < AMBIENT_COLD_THRESHOLD_F:
-                    room_temp_comp += (AMBIENT_COLD_THRESHOLD_F - room_temp) * AMBIENT_COLD_EXTRA_PER_F
-                room_temp_comp = round(room_temp_comp)
-                setting += room_temp_comp
-            elif delta < 0:
-                # Hot room: lower setting (firmware PID needs help, push target colder)
-                room_temp_comp = round(delta * AMBIENT_HOT_COMP_PER_F)  # negative
-                setting += room_temp_comp
+        hot_safety = False
+        if body_avg is not None and body_avg > BODY_HOT_THRESHOLD_F:
+            self._state["hot_streak"] = self._state.get("hot_streak", 0) + 1
+            if self._state["hot_streak"] >= BODY_HOT_STREAK_COUNT:
+                safety_from = current_setting if current_setting is not None else base_setting
+                safety_blower_pct = self._l1_to_blower_pct(self._next_colder_setting(safety_from))
+                if safety_blower_pct > target_blower_pct:
+                    target_blower_pct = safety_blower_pct
+                    hot_safety = True
+                    data_source += "+hot"
+        else:
+            self._state["hot_streak"] = 0
 
-        # Hard cap — never heat
-        setting = min(MAX_SETTING, setting)
-        setting = max(-10, setting)
+        target_blower_pct = max(0, min(100, round(target_blower_pct)))
+        setting = self._blower_pct_to_l1(target_blower_pct)
+        snapped_blower_pct = self._l1_to_blower_pct(setting)
 
-        return setting, room_temp_comp, data_source
+        return {
+            "setting": setting,
+            "target_blower_pct": snapped_blower_pct,
+            "base_setting": base_setting,
+            "base_blower_pct": base_blower_pct,
+            "cycle_num": cycle_num,
+            "room_temp_comp": room_temp_comp,
+            "learned_adj_pct": learned_adj_pct,
+            "data_source": data_source,
+            "hot_safety": hot_safety,
+        }
 
     def _setting_for_stage(self, stage):
-        """Map Apple Health sleep stage to ideal setting."""
+        """Map Apple Health sleep stage to an RC-off baseline setting."""
         stage = stage.lower().strip()
         return {
-            "deep":  -8,   # Deep sleep: thermoregulation active, cooling helps
-            "core":  -6,   # Light/core sleep: moderate cooling
-            "rem":   -4,   # REM: thermoregulation impaired, ease off cooling
-            "awake": -3,   # Awake in bed: minimal cooling
-            "inbed": -5,   # In bed but not asleep yet
-        }.get(stage, -5)   # Default: moderate
+            "deep": -10,
+            "core": -8,
+            "rem": -6,
+            "awake": -5,
+            "inbed": -9,
+        }.get(stage)
 
     def _get_cycle_num(self, elapsed_min):
         """Get cycle number (1-based) from elapsed minutes."""
@@ -421,35 +463,50 @@ class SleepControllerV4(hass.Hass):
     def _on_sleep_mode(self, entity, attribute, old, new, kwargs):
         if new == "on" and old != "on":
             self.log("Sleep mode ON — starting night")
-            self._state["sleep_start"] = datetime.now().isoformat()
-            self._state["sleep_start_epoch"] = datetime.now().timestamp()
+            now = datetime.now()
+            self._state["sleep_start"] = now.isoformat()
+            self._state["sleep_start_epoch"] = now.timestamp()
             self._state["manual_mode"] = False
+            self._state["override_freeze_until"] = None
             self._state["override_floor"] = None
-            self._state["override_floor_ts"] = None
+            self._state["override_floor_blower_pct"] = None
             self._state["recent_changes"] = []
             self._state["override_count"] = 0
             self._state["last_change_ts"] = None
             self._state["last_restart_ts"] = None
             self._state["body_below_since"] = None
-            # Reset sleep stage to prevent stale prior-night data from affecting cycle 1
+            self._state["hot_streak"] = 0
+            self._ensure_responsive_cooling_off()
             self.call_service(
                 "input_text/set_value",
                 entity_id=E_SLEEP_STAGE, value="unknown",
             )
-            # Refresh learned adjustments from recent override history
-            if ENABLE_LEARNING:
-                self._learned = self._learn_from_history()
-                self._save_learned()
+            self._learned = self._learn_from_history()
+            self._save_learned()
             self.log(f"  Learned adjustments: {self._learned}")
-            # Gap 2: Compute cycle 1 with room temp compensation
-            # If pre-cool had the topper at -10, the firmware's responsive cooling
-            # will handle the transition smoothly — just set our target.
-            room_temp = self._read_float(E_ROOM_TEMP)
-            initial_setting, comp, _ = self._compute_setting(0, room_temp, None)
-            self.log(f"  Initial L1={initial_setting:+d} (room={room_temp}°F, comp={comp:+d})")
+
+            room_temp = self._read_temperature(self._get_room_temp_entity())
+            initial_snapshot = self._read_zone_snapshot("left")
+            plan = self._compute_setting(
+                0,
+                room_temp,
+                None,
+                body_avg=initial_snapshot["body_avg"],
+                current_setting=initial_snapshot["setting"],
+            )
+            initial_setting = plan["setting"]
+            current_setting = initial_snapshot["setting"]
+            if current_setting is not None and current_setting < initial_setting:
+                initial_setting = int(current_setting)
+                plan["target_blower_pct"] = self._l1_to_blower_pct(initial_setting)
+            self.log(
+                f"  Initial L1={initial_setting:+d} "
+                f"(room={room_temp}°F, proxy={plan['target_blower_pct']}%)"
+            )
             self._set_l1(initial_setting)
             self._state["last_setting"] = initial_setting
-            self._state["initial_setting"] = initial_setting  # For nightly summary
+            self._state["last_target_blower_pct"] = plan["target_blower_pct"]
+            self._state["initial_setting"] = initial_setting
             self._save_state()
 
         elif new == "off" and old == "on":
@@ -458,9 +515,11 @@ class SleepControllerV4(hass.Hass):
             self._state["sleep_start"] = None
             self._state["sleep_start_epoch"] = None
             self._state["manual_mode"] = False
+            self._state["override_freeze_until"] = None
             self._state["override_floor"] = None
-            self._state["override_floor_ts"] = None
+            self._state["override_floor_blower_pct"] = None
             self._state["last_restart_ts"] = None
+            self._state["hot_streak"] = 0
             self._save_state()
 
     # ── Override Detection ───────────────────────────────────────────
@@ -476,20 +535,17 @@ class SleepControllerV4(hass.Hass):
         except (ValueError, TypeError):
             return
 
-        # Was this change made by US?
         expected = self._state.get("last_setting")
         if expected is not None and new_val == expected:
-            return  # We made this change, ignore
+            return
 
-        # This is a manual override
         now = datetime.now()
         self.log(f"MANUAL OVERRIDE: {old_val:+d} → {new_val:+d}")
         controller_value = expected if expected is not None else old_val
         snapshot = self._read_zone_snapshot("left")
         sleep_stage = self._read_str(E_SLEEP_STAGE)
-        room_temp = self._read_float(E_ROOM_TEMP)
+        room_temp = self._read_temperature(self._get_room_temp_entity())
 
-        # Record for kill switch detection (cap list to prevent unbounded growth)
         cutoff = now.timestamp() - KILL_SWITCH_WINDOW_SEC
         self._state["recent_changes"] = [
             t for t in self._state["recent_changes"] if t > cutoff
@@ -497,11 +553,14 @@ class SleepControllerV4(hass.Hass):
         self._state["recent_changes"].append(now.timestamp())
         self._check_kill_switch()
 
-        # Set floor (freeze is derived from floor_ts — first 60 min)
-        # Clamp floor to MAX_SETTING — user runs warm, floor must never allow heating
-        self._state["override_floor"] = min(new_val, MAX_SETTING)
-        self._state["override_floor_ts"] = now.isoformat()
+        floor = min(new_val, MAX_SETTING)
+        self._state["override_freeze_until"] = (
+            now + timedelta(minutes=OVERRIDE_FREEZE_MIN)
+        ).isoformat()
+        self._state["override_floor"] = floor
+        self._state["override_floor_blower_pct"] = self._l1_to_blower_pct(floor)
         self._state["last_setting"] = new_val
+        self._state["last_target_blower_pct"] = self._l1_to_blower_pct(new_val)
         self._state["override_count"] = self._state.get("override_count", 0) + 1
 
         self._log_override(
@@ -535,7 +594,7 @@ class SleepControllerV4(hass.Hass):
             new_val,
             controller_value=old_val,
             delta=new_val - old_val,
-            room_temp=self._read_float(E_ROOM_TEMP),
+            room_temp=self._read_temperature(self._get_room_temp_entity()),
             sleep_stage=self._read_str(E_SLEEP_STAGE),
             snapshot=self._read_zone_snapshot("right"),
         )
@@ -651,10 +710,49 @@ class SleepControllerV4(hass.Hass):
         """Assign a timestamp to its sleep night (before 6 PM counts as prior night)."""
         return dt.date() if dt.hour >= 18 else (dt - timedelta(days=1)).date()
 
+    def _get_room_temp_entity(self):
+        return getattr(self, "_room_temp_entity", DEFAULT_ROOM_TEMP_ENTITY)
+
     def _set_l1(self, value):
         value = max(-10, min(MAX_SETTING, int(value)))
         self.call_service("number/set_value", entity_id=E_BEDTIME_TEMP, value=value)
         self._state["last_setting"] = value
+
+    def _l1_to_blower_pct(self, value):
+        value = max(-10, min(MAX_SETTING, int(value)))
+        return L1_TO_BLOWER_PCT[value]
+
+    def _blower_pct_to_l1(self, blower_pct):
+        blower_pct = max(0, min(100, int(round(blower_pct))))
+        return min(
+            L1_TO_BLOWER_PCT,
+            key=lambda l1: (abs(L1_TO_BLOWER_PCT[l1] - blower_pct), l1),
+        )
+
+    def _next_colder_setting(self, value):
+        return max(-10, min(MAX_SETTING, int(value) - 1))
+
+    def _room_temp_to_blower_comp(self, room_temp):
+        if room_temp is None:
+            return 0
+        if room_temp > ROOM_BLOWER_REFERENCE_F:
+            return round((room_temp - ROOM_BLOWER_REFERENCE_F) * ROOM_BLOWER_HOT_COMP_PER_F)
+        if room_temp < ROOM_BLOWER_REFERENCE_F:
+            comp = (ROOM_BLOWER_REFERENCE_F - room_temp) * ROOM_BLOWER_COLD_COMP_PER_F
+            if room_temp < ROOM_BLOWER_COLD_THRESHOLD_F:
+                comp += (
+                    ROOM_BLOWER_COLD_THRESHOLD_F - room_temp
+                ) * ROOM_BLOWER_COLD_EXTRA_PER_F
+            return -round(comp)
+        return 0
+
+    def _ensure_responsive_cooling_off(self):
+        rc_state = self.get_state(E_RESPONSIVE_COOLING)
+        if rc_state == "on":
+            self.log("WARNING: Responsive cooling was ON — turning it back OFF", level="WARNING")
+            self.call_service("switch/turn_off", entity_id=E_RESPONSIVE_COOLING)
+            return True
+        return False
 
     def _ensure_topper_running(self, now):
         """Re-enable the topper if sleep_mode is on and firmware turned it off."""
@@ -695,36 +793,135 @@ class SleepControllerV4(hass.Hass):
         except (ValueError, TypeError):
             return None
 
+    def _read_temperature(self, entity_id):
+        value = self._read_float(entity_id)
+        if value is None:
+            return None
+        unit = self.get_state(entity_id, attribute="unit_of_measurement")
+        if isinstance(unit, str) and unit.strip().lower() in {"°c", "c", "celsius"}:
+            return round((value * 9 / 5) + 32, 2)
+        return value
+
     def _read_str(self, entity_id):
         state = self.get_state(entity_id)
         if state in (None, "unavailable"):
             return None
         return state
 
+    def _read_bool(self, entity_id):
+        state = self.get_state(entity_id)
+        if state in (None, "unknown", "unavailable", ""):
+            return None
+        if state == "on":
+            return True
+        if state == "off":
+            return False
+        return None
+
+    def _read_body_temp(self, entity_id):
+        value = self._read_temperature(entity_id)
+        if value is None:
+            return None
+        if not (BODY_TEMP_MIN_F <= value <= BODY_TEMP_MAX_F):
+            self.log(f"{entity_id}={value:.1f}°F outside sane range — ignoring", level="WARNING")
+            return None
+        return value
+
+    def _fused_body_avg(self, zone, snapshot):
+        if zone == "left":
+            inner_key, outer_key, adj_zone = "body_right", "body_left", "right"
+        else:
+            inner_key, outer_key, adj_zone = "body_left", "body_right", "left"
+
+        inner_val = snapshot.get(inner_key)
+        outer_val = snapshot.get(outer_key)
+        adj_vals = [
+            self._read_body_temp(ZONE_ENTITY_IDS[adj_zone][key])
+            for key in ("body_left", "body_center", "body_right")
+        ]
+        adj_vals = [v for v in adj_vals if v is not None]
+        adj_avg = sum(adj_vals) / len(adj_vals) if adj_vals else None
+
+        use_keys = ["body_center", outer_key]
+        if not (
+            inner_val is not None
+            and outer_val is not None
+            and adj_avg is not None
+            and adj_avg > inner_val
+            and inner_val - outer_val > 5.0
+        ):
+            use_keys.append(inner_key)
+
+        body_vals = [snapshot[key] for key in use_keys if snapshot.get(key) is not None]
+        if not body_vals:
+            return snapshot.get("body_center")
+        body_vals = sorted(body_vals)
+        mid = len(body_vals) // 2
+        if len(body_vals) % 2:
+            return body_vals[mid]
+        return (body_vals[mid - 1] + body_vals[mid]) / 2
+
+    def _derive_calibrated_pressure(self, raw, unoccupied, occupied):
+        if raw is None or unoccupied is None or occupied is None:
+            return None
+        if occupied <= unoccupied:
+            return None
+        value = ((raw - unoccupied) * 100.0) / (occupied - unoccupied)
+        return round(max(0.0, min(100.0, value)), 2)
+
+    def _read_bed_presence_snapshot(self):
+        left_pressure = self._read_float(BED_PRESENCE_ENTITIES["left_pressure"])
+        right_pressure = self._read_float(BED_PRESENCE_ENTITIES["right_pressure"])
+        left_unoccupied = self._read_float(BED_PRESENCE_ENTITIES["left_unoccupied_pressure"])
+        right_unoccupied = self._read_float(BED_PRESENCE_ENTITIES["right_unoccupied_pressure"])
+        left_occupied = self._read_float(BED_PRESENCE_ENTITIES["left_occupied_pressure"])
+        right_occupied = self._read_float(BED_PRESENCE_ENTITIES["right_occupied_pressure"])
+        return {
+            "left_pressure": left_pressure,
+            "right_pressure": right_pressure,
+            "left_calibrated_pressure": self._derive_calibrated_pressure(
+                left_pressure, left_unoccupied, left_occupied
+            ),
+            "right_calibrated_pressure": self._derive_calibrated_pressure(
+                right_pressure, right_unoccupied, right_occupied
+            ),
+            "left_unoccupied_pressure": left_unoccupied,
+            "right_unoccupied_pressure": right_unoccupied,
+            "left_occupied_pressure": left_occupied,
+            "right_occupied_pressure": right_occupied,
+            "left_trigger_pressure": self._read_float(BED_PRESENCE_ENTITIES["left_trigger_pressure"]),
+            "right_trigger_pressure": self._read_float(BED_PRESENCE_ENTITIES["right_trigger_pressure"]),
+            "occupied_left": self._read_bool(BED_PRESENCE_ENTITIES["occupied_left"]),
+            "occupied_right": self._read_bool(BED_PRESENCE_ENTITIES["occupied_right"]),
+            "occupied_either": self._read_bool(BED_PRESENCE_ENTITIES["occupied_either"]),
+            "occupied_both": self._read_bool(BED_PRESENCE_ENTITIES["occupied_both"]),
+        }
+
     def _read_zone_snapshot(self, zone):
         """Read the current HA sensor snapshot for a topper zone."""
         entities = ZONE_ENTITY_IDS[zone]
-        body_center = self._read_float(entities["body_center"])
-        body_left = self._read_float(entities["body_left"])
-        body_right = self._read_float(entities["body_right"])
-        body_vals = [v for v in (body_left, body_center, body_right) if v is not None]
+        body_center = self._read_body_temp(entities["body_center"])
+        body_left = self._read_body_temp(entities["body_left"])
+        body_right = self._read_body_temp(entities["body_right"])
         setting = self._read_float(entities["bedtime"])
-        return {
+        snapshot = {
             "body_center": body_center,
             "body_left": body_left,
             "body_right": body_right,
-            "body_avg": sum(body_vals) / len(body_vals) if body_vals else body_center,
-            "ambient": self._read_float(entities["ambient"]),
-            "setpoint": self._read_float(entities["setpoint"]),
+            "ambient": self._read_temperature(entities["ambient"]),
+            "setpoint": self._read_temperature(entities["setpoint"]),
+            "blower_pct": self._read_float(entities["blower_pct"]),
             "setting": int(setting) if setting is not None else None,
         }
+        snapshot["body_avg"] = self._fused_body_avg(zone, snapshot)
+        return snapshot
 
-    def _log_passive_zone_snapshot(self, zone, elapsed_min, room_temp, sleep_stage):
+    def _log_passive_zone_snapshot(self, zone, elapsed_min, room_temp, sleep_stage, bed_presence=None):
         """Persist a passive 5-minute telemetry snapshot for a non-controlled zone."""
         snapshot = self._read_zone_snapshot(zone)
         has_signal = any(
             snapshot[key] is not None
-            for key in ("setting", "body_center", "body_left", "body_right", "ambient", "setpoint")
+            for key in ("setting", "body_center", "body_left", "body_right", "ambient", "setpoint", "blower_pct")
         )
         if not has_signal:
             return
@@ -748,6 +945,8 @@ class SleepControllerV4(hass.Hass):
             effective=snapshot["setting"],
             baseline=None,
             learned_adj=None,
+            blower_pct=snapshot["blower_pct"],
+            bed_presence=bed_presence,
         )
 
     def _end_night(self):
@@ -847,7 +1046,7 @@ class SleepControllerV4(hass.Hass):
                 avg_room, min_room, max_room, avg_body,
                 self._state.get("override_count", 0),
                 self._state.get("manual_mode", False),
-                "v4",
+                CONTROLLER_VERSION,
                 ((deep or 0) + (rem or 0) + (core or 0)) * 60 if deep is not None else None,
                 (deep or 0) * 60 if deep is not None else None,
                 (rem or 0) * 60 if rem is not None else None,
@@ -863,23 +1062,13 @@ class SleepControllerV4(hass.Hass):
     # ── Learning System ─────────────────────────────────────────────
 
     def _learn_from_history(self):
-        """Compute per-cycle adjustments from recent override history.
-
-        Logic: Each manual override tells us the user wanted a different setting.
-        We look at which cycle the override happened in and compute the average
-        delta (override_value - what_controller_would_have_set) per cycle.
-
-        The adjustments are weighted by recency (LEARNING_DECAY) so recent
-        overrides matter more than old ones.
-        """
+        """Compute per-cycle blower residuals from recent override history."""
         try:
             conn = self._get_pg()
             if not conn:
                 return self._load_learned()
             cur = conn.cursor()
 
-            # Get overrides from last N nights with the controller output preserved
-            # in `effective`. Ignore legacy rows where override and effective match.
             cur.execute("""
                 SELECT
                     elapsed_min,
@@ -896,9 +1085,10 @@ class SleepControllerV4(hass.Hass):
                   AND setting IS NOT NULL
                   AND effective IS NOT NULL
                   AND setting IS DISTINCT FROM effective
+                  AND controller_version = %s
                   AND ts > now() - %s * interval '1 day'
                 ORDER BY ts
-            """, (LEARNING_LOOKBACK_NIGHTS,))
+            """, (CONTROLLER_VERSION, LEARNING_LOOKBACK_NIGHTS))
 
             overrides = cur.fetchall()
             cur.close()
@@ -906,32 +1096,26 @@ class SleepControllerV4(hass.Hass):
                 self.log("  Learning: no overrides in history — using defaults")
                 return {}
 
-            # Take only the LAST override per cycle per night
-            # (user may adjust multiple times — final value is what they wanted)
-            last_per_cycle_night = {}  # {(night, cycle): (override_val, controller_val)}
+            last_per_cycle_night = {}
             for elapsed_min, override_val, ctrl_val, night in overrides:
                 if elapsed_min is None or ctrl_val is None:
                     continue
                 cycle = self._get_cycle_num(elapsed_min)
-                # Learn the user's residual vs what the controller was actually doing,
-                # not vs a static cycle baseline. That removes room/body confounders.
-                last_per_cycle_night[(night, cycle)] = override_val - ctrl_val
+                delta = self._l1_to_blower_pct(override_val) - self._l1_to_blower_pct(ctrl_val)
+                last_per_cycle_night[(night, cycle)] = delta
 
             if not last_per_cycle_night:
                 return {}
 
-            # Group by cycle
             cycle_deltas = {}
             for (night, cycle), delta in sorted(last_per_cycle_night.items()):
                 cycle_deltas.setdefault(cycle, []).append(delta)
 
-            # Compute weighted average delta per cycle
             adjustments = {}
             nights = set(n for n, _ in last_per_cycle_night.keys())
             for cycle, deltas in cycle_deltas.items():
                 if not deltas:
                     continue
-                # Weight recent overrides more (last = weight 1.0, older = decayed)
                 weighted_sum = 0
                 weight_total = 0
                 for i, d in enumerate(reversed(deltas)):
@@ -939,7 +1123,7 @@ class SleepControllerV4(hass.Hass):
                     weighted_sum += d * w
                     weight_total += w
                 avg_delta = weighted_sum / weight_total if weight_total else 0
-                adj = max(-LEARNING_MAX_ADJ, min(LEARNING_MAX_ADJ, round(avg_delta)))
+                adj = max(-LEARNING_MAX_BLOWER_ADJ, min(LEARNING_MAX_BLOWER_ADJ, round(avg_delta)))
                 if adj != 0:
                     adjustments[str(cycle)] = adj
 
@@ -960,7 +1144,7 @@ class SleepControllerV4(hass.Hass):
                     return {}
                 # Clamp values on load in case file was manually edited
                 return {
-                    k: max(-LEARNING_MAX_ADJ, min(LEARNING_MAX_ADJ, int(v)))
+                    k: max(-LEARNING_MAX_BLOWER_ADJ, min(LEARNING_MAX_BLOWER_ADJ, int(v)))
                     for k, v in data.items()
                     if isinstance(v, (int, float))
                 }
@@ -987,68 +1171,106 @@ class SleepControllerV4(hass.Hass):
                         override_floor=None, body_avg=None, body_left=None,
                         body_right=None, action="set", ambient=None,
                         setpoint=None, effective=None, baseline=None,
-                        learned_adj=None):
+                        learned_adj=None, blower_pct=None,
+                        target_blower_pct=None, base_blower_pct=None,
+                        responsive_cooling_on=None, bed_presence=None):
         """Log a controller reading to Postgres."""
         try:
             conn = self._get_pg()
             if not conn:
                 return
             cur = conn.cursor()
+            try:
+                if ambient is None:
+                    ambient = self._read_temperature(ZONE_ENTITY_IDS[zone]["ambient"])
+                if setpoint is None:
+                    setpoint = self._read_temperature(ZONE_ENTITY_IDS[zone]["setpoint"])
 
-            if ambient is None:
-                ambient = self._read_float(ZONE_ENTITY_IDS[zone]["ambient"])
-            if setpoint is None:
-                setpoint = self._read_float(ZONE_ENTITY_IDS[zone]["setpoint"])
+                # Compute real body average if not provided
+                if body_avg is None:
+                    body_vals = [v for v in (body_left, body_center, body_right) if v is not None]
+                    body_avg = sum(body_vals) / len(body_vals) if body_vals else body_center
 
-            # Compute real body average if not provided
-            if body_avg is None:
-                body_vals = [v for v in (body_left, body_center, body_right) if v is not None]
-                body_avg = sum(body_vals) / len(body_vals) if body_vals else body_center
+                if cycle_num is None:
+                    cycle_num = self._get_cycle_num(elapsed_min)
 
-            if cycle_num is None:
-                cycle_num = self._get_cycle_num(elapsed_min)
+                # Read actual HA entity value as 'effective' (what's really set on device)
+                if effective is None:
+                    effective_raw = self._read_float(ZONE_ENTITY_IDS[zone]["bedtime"])
+                    effective = int(effective_raw) if effective_raw is not None else setting
 
-            # Read actual HA entity value as 'effective' (what's really set on device)
-            if effective is None:
-                effective_raw = self._read_float(ZONE_ENTITY_IDS[zone]["bedtime"])
-                effective = int(effective_raw) if effective_raw is not None else setting
+                if learned_adj is None:
+                    learned_adj = self._learned.get(str(cycle_num), 0) if zone == "left" else None
+                if baseline is None and zone == "left":
+                    baseline = CYCLE_SETTINGS.get(cycle_num, -5)
+                if blower_pct is None:
+                    blower_pct = self._read_float(ZONE_ENTITY_IDS[zone]["blower_pct"])
 
-            # Current learned adjustment for this cycle
-            if learned_adj is None:
-                learned_adj = self._learned.get(str(cycle_num), 0) if zone == "left" else None
-            if baseline is None and zone == "left":
-                baseline = CYCLE_SETTINGS.get(cycle_num, -5)
+                notes = (
+                    f"cycle={cycle_num} src={data_source} "
+                    f"room_comp={room_temp_comp:+d}"
+                )
+                if override_floor is not None:
+                    notes += f" floor={override_floor:+d}"
+                if sleep_stage:
+                    notes += f" stage={sleep_stage}"
+                if base_blower_pct is not None:
+                    notes += f" base_proxy_blower={base_blower_pct}"
+                if target_blower_pct is not None:
+                    notes += f" proxy_blower={target_blower_pct}"
+                if blower_pct is not None:
+                    notes += f" actual_blower={round(blower_pct)}"
+                if responsive_cooling_on is not None:
+                    notes += f" rc={'on' if responsive_cooling_on else 'off'}"
+                if bed_presence is None:
+                    bed_presence = self._read_bed_presence_snapshot()
 
-            # Build notes
-            notes = (
-                f"cycle={cycle_num} src={data_source} "
-                f"room_comp={room_temp_comp:+d}"
-            )
-            if override_floor is not None:
-                notes += f" floor={override_floor:+d}"
-            if sleep_stage:
-                notes += f" stage={sleep_stage}"
-
-            cur.execute("""
-                INSERT INTO controller_readings
-                (ts, zone, phase, elapsed_min, body_right_f, body_center_f,
-                 body_left_f, body_avg_f, ambient_f, room_temp_f, setpoint_f,
-                 setting, effective, baseline, learned_adj, action, notes, controller_version)
-                VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'v4')
-            """, (
-                zone,
-                sleep_stage if sleep_stage and sleep_stage not in ("unknown", "") else f"cycle_{cycle_num}",
-                elapsed_min,
-                body_right, body_center, body_left,
-                body_avg,
-                ambient, room_temp, setpoint,
-                setting, effective,
-                baseline,
-                learned_adj,
-                action,
-                notes,
-            ))
-            conn.commit()
+                cur.execute("""
+                    INSERT INTO controller_readings
+                    (ts, zone, phase, elapsed_min, body_right_f, body_center_f,
+                     body_left_f, body_avg_f, ambient_f, room_temp_f, setpoint_f,
+                     setting, effective, baseline, learned_adj, action, notes, controller_version,
+                     bed_left_pressure_pct, bed_right_pressure_pct,
+                     bed_left_calibrated_pressure_pct, bed_right_calibrated_pressure_pct,
+                     bed_left_unoccupied_pressure_pct, bed_right_unoccupied_pressure_pct,
+                     bed_left_occupied_pressure_pct, bed_right_occupied_pressure_pct,
+                     bed_left_trigger_pressure_pct, bed_right_trigger_pressure_pct,
+                     bed_occupied_left, bed_occupied_right, bed_occupied_either, bed_occupied_both)
+                    VALUES (
+                        NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                """, (
+                    zone,
+                    sleep_stage if sleep_stage and sleep_stage not in ("unknown", "") else f"cycle_{cycle_num}",
+                    elapsed_min,
+                    body_right, body_center, body_left,
+                    body_avg,
+                    ambient, room_temp, setpoint,
+                    setting, effective,
+                    baseline,
+                    learned_adj,
+                    action,
+                    notes,
+                    CONTROLLER_VERSION,
+                    bed_presence.get("left_pressure"),
+                    bed_presence.get("right_pressure"),
+                    bed_presence.get("left_calibrated_pressure"),
+                    bed_presence.get("right_calibrated_pressure"),
+                    bed_presence.get("left_unoccupied_pressure"),
+                    bed_presence.get("right_unoccupied_pressure"),
+                    bed_presence.get("left_occupied_pressure"),
+                    bed_presence.get("right_occupied_pressure"),
+                    bed_presence.get("left_trigger_pressure"),
+                    bed_presence.get("right_trigger_pressure"),
+                    bed_presence.get("occupied_left"),
+                    bed_presence.get("occupied_right"),
+                    bed_presence.get("occupied_either"),
+                    bed_presence.get("occupied_both"),
+                ))
+                conn.commit()
+            finally:
+                cur.close()
         except Exception as e:
             self.log(f"Postgres log failed: {e}", level="WARNING")
             try:
@@ -1065,48 +1287,83 @@ class SleepControllerV4(hass.Hass):
             if not conn:
                 return
             cur = conn.cursor()
+            try:
+                if room_temp is None:
+                    room_temp = self._read_temperature(self._get_room_temp_entity())
+                if snapshot is None:
+                    snapshot = self._read_zone_snapshot(zone)
+                bed_presence = self._read_bed_presence_snapshot()
+                elapsed = self._elapsed_min()
+                cycle_num = self._get_cycle_num(elapsed)
+                phase = sleep_stage if sleep_stage and sleep_stage not in ("unknown", "") else f"cycle_{cycle_num}"
+                baseline = CYCLE_SETTINGS.get(cycle_num, -5) if zone == "left" else None
+                learned_adj = self._learned.get(str(cycle_num), 0) if zone == "left" else None
+                notes = f"cycle={cycle_num} src=manual zone={zone}"
+                if sleep_stage:
+                    notes += f" stage={sleep_stage}"
+                if controller_value is not None:
+                    notes += f" controller={controller_value:+d}"
+                    notes += (
+                        f" controller_proxy_blower={self._l1_to_blower_pct(controller_value)}"
+                    )
+                notes += f" override_proxy_blower={self._l1_to_blower_pct(value)}"
+                if snapshot.get("blower_pct") is not None:
+                    notes += f" actual_blower={round(snapshot['blower_pct'])}"
+                if zone == "left":
+                    notes += " rc=off"
 
-            if room_temp is None:
-                room_temp = self._read_float(E_ROOM_TEMP)
-            if snapshot is None:
-                snapshot = self._read_zone_snapshot(zone)
-            elapsed = self._elapsed_min()
-            cycle_num = self._get_cycle_num(elapsed)
-            phase = sleep_stage if sleep_stage and sleep_stage not in ("unknown", "") else f"cycle_{cycle_num}"
-            baseline = CYCLE_SETTINGS.get(cycle_num, -5) if zone == "left" else None
-            learned_adj = self._learned.get(str(cycle_num), 0) if zone == "left" else None
-            notes = f"cycle={cycle_num} src=manual zone={zone}"
-            if sleep_stage:
-                notes += f" stage={sleep_stage}"
-            if controller_value is not None:
-                notes += f" controller={controller_value:+d}"
-
-            cur.execute("""
-                INSERT INTO controller_readings
-                (ts, zone, phase, elapsed_min, body_right_f, body_center_f,
-                 body_left_f, body_avg_f, ambient_f, room_temp_f, setpoint_f,
-                 setting, effective, baseline, learned_adj, action,
-                 override_delta, notes, controller_version)
-                VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'override', %s, %s, 'v4')
-            """, (
-                zone,
-                phase,
-                elapsed,
-                snapshot["body_right"],
-                snapshot["body_center"],
-                snapshot["body_left"],
-                snapshot["body_avg"],
-                snapshot["ambient"],
-                room_temp,
-                snapshot["setpoint"],
-                value,
-                controller_value if controller_value is not None else snapshot["setting"],
-                baseline,
-                learned_adj,
-                delta,
-                notes,
-            ))
-            conn.commit()
+                cur.execute("""
+                    INSERT INTO controller_readings
+                    (ts, zone, phase, elapsed_min, body_right_f, body_center_f,
+                     body_left_f, body_avg_f, ambient_f, room_temp_f, setpoint_f,
+                     setting, effective, baseline, learned_adj, action,
+                     override_delta, notes, controller_version,
+                     bed_left_pressure_pct, bed_right_pressure_pct,
+                     bed_left_calibrated_pressure_pct, bed_right_calibrated_pressure_pct,
+                     bed_left_unoccupied_pressure_pct, bed_right_unoccupied_pressure_pct,
+                     bed_left_occupied_pressure_pct, bed_right_occupied_pressure_pct,
+                     bed_left_trigger_pressure_pct, bed_right_trigger_pressure_pct,
+                     bed_occupied_left, bed_occupied_right, bed_occupied_either, bed_occupied_both)
+                    VALUES (
+                        NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'override', %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                """, (
+                    zone,
+                    phase,
+                    elapsed,
+                    snapshot["body_right"],
+                    snapshot["body_center"],
+                    snapshot["body_left"],
+                    snapshot["body_avg"],
+                    snapshot["ambient"],
+                    room_temp,
+                    snapshot["setpoint"],
+                    value,
+                    controller_value if controller_value is not None else snapshot["setting"],
+                    baseline,
+                    learned_adj,
+                    delta,
+                    notes,
+                    CONTROLLER_VERSION,
+                    bed_presence.get("left_pressure"),
+                    bed_presence.get("right_pressure"),
+                    bed_presence.get("left_calibrated_pressure"),
+                    bed_presence.get("right_calibrated_pressure"),
+                    bed_presence.get("left_unoccupied_pressure"),
+                    bed_presence.get("right_unoccupied_pressure"),
+                    bed_presence.get("left_occupied_pressure"),
+                    bed_presence.get("right_occupied_pressure"),
+                    bed_presence.get("left_trigger_pressure"),
+                    bed_presence.get("right_trigger_pressure"),
+                    bed_presence.get("occupied_left"),
+                    bed_presence.get("occupied_right"),
+                    bed_presence.get("occupied_either"),
+                    bed_presence.get("occupied_both"),
+                ))
+                conn.commit()
+            finally:
+                cur.close()
         except Exception as e:
             self.log(f"Override log failed: {e}", level="WARNING")
             try:
@@ -1168,7 +1425,7 @@ class SleepControllerV4(hass.Hass):
             self.log(f"State load failed: {e}", level="WARNING")
 
     def terminate(self):
-        self.log("Controller v4 shutting down — saving state")
+        self.log("Controller v5 shutting down — saving state")
         self._save_state()
         if self._pg_conn:
             try:

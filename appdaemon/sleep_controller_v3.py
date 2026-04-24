@@ -108,8 +108,8 @@ ROOM_TEMP_ENTITY_DEFAULT = "sensor.superior_6000s_temperature"
 # Notification entity
 NOTIFY_SERVICE = "notify/mobile_app_mike_mones_iphone_14"
 
-# PostgreSQL logging (Pi at 192.168.0.75)
-POSTGRES_HOST_DEFAULT = "192.168.0.75"
+# PostgreSQL logging (Mac Mini at 192.168.0.3)
+POSTGRES_HOST_DEFAULT = "192.168.0.3"
 POSTGRES_PORT = 5432
 POSTGRES_DB = "sleepdata"
 POSTGRES_USER = "sleepsync"

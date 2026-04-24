@@ -13,6 +13,7 @@ Usage:
 import argparse
 import os
 import sys
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -20,7 +21,7 @@ import psycopg2
 import psycopg2.extras
 
 # ── DB connection ────────────────────────────────────────────
-PG_HOST = os.environ.get("PG_HOST", "192.168.0.75")
+PG_HOST = os.environ.get("PG_HOST", "192.168.0.3")
 PG_PORT = int(os.environ.get("PG_PORT", "5432"))
 PG_DB = os.environ.get("PG_DB", "sleepdata")
 PG_USER = os.environ.get("PG_USER", "sleepsync")
@@ -69,10 +70,10 @@ def fetch_timeline(conn, night: date, zone: str) -> list:
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("""
             SELECT * FROM v_setting_timeline
-            WHERE ts::date BETWEEN %s AND %s + 1
+            WHERE night_date = %s
               AND zone = %s
             ORDER BY ts
-        """, (night, night, zone))
+        """, (night, zone))
         return cur.fetchall()
 
 
@@ -99,14 +100,26 @@ def fetch_room_vs_setting(conn, night: date, zone: str) -> list:
 def fetch_raw_readings(conn, night: date, zone: str) -> list:
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("""
+            WITH tagged AS (
+                SELECT
+                    CASE
+                        WHEN EXTRACT(HOUR FROM ts AT TIME ZONE 'America/New_York') >= 18
+                        THEN (ts AT TIME ZONE 'America/New_York')::date
+                        ELSE (ts AT TIME ZONE 'America/New_York')::date - 1
+                    END AS night_date,
+                    ts, zone, phase, action, setting, effective, body_avg_f,
+                    room_temp_f, ambient_f, setpoint_f, override_delta,
+                    baseline, learned_adj, notes, controller_version
+                FROM controller_readings
+            )
             SELECT ts, phase, action, setting, effective, body_avg_f, room_temp_f,
-                   ambient_f, override_delta, baseline, learned_adj
-            FROM controller_readings
+                   ambient_f, setpoint_f, override_delta, baseline, learned_adj, notes,
+                   controller_version
+            FROM tagged
             WHERE zone = %s
-              AND ts >= %s::date::timestamptz
-              AND ts < (%s::date + 1)::timestamptz
+              AND night_date = %s
             ORDER BY ts
-        """, (zone, night, night))
+        """, (zone, night))
         return cur.fetchall()
 
 
@@ -127,6 +140,309 @@ def fetch_nightly_summary(conn, night: date) -> Optional[dict]:
             SELECT * FROM nightly_summary WHERE night_date = %s
         """, (night,))
         return cur.fetchone()
+
+
+def fetch_learning_overrides(
+    conn,
+    controller_version: str = "v5_rc_off",
+    lookback_nights: int = 14,
+) -> list:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("""
+            SELECT
+                elapsed_min,
+                setting AS override_setting,
+                effective AS controller_setting,
+                CASE
+                    WHEN EXTRACT(HOUR FROM ts AT TIME ZONE 'America/New_York') >= 18
+                    THEN (ts AT TIME ZONE 'America/New_York')::date
+                    ELSE (ts AT TIME ZONE 'America/New_York')::date - 1
+                END AS night_date
+            FROM controller_readings
+            WHERE zone = 'left'
+              AND action = 'override'
+              AND setting IS NOT NULL
+              AND effective IS NOT NULL
+              AND setting IS DISTINCT FROM effective
+              AND controller_version = %s
+              AND ts > now() - %s * interval '1 day'
+            ORDER BY ts
+        """, (controller_version, lookback_nights))
+        return cur.fetchall()
+
+
+# ── Deep Dive Helpers ────────────────────────────────────────
+
+L1_TO_BLOWER_PCT = {
+    -10: 100,
+    -9: 87,
+    -8: 75,
+    -7: 65,
+    -6: 50,
+    -5: 41,
+    -4: 33,
+    -3: 26,
+    -2: 20,
+    -1: 10,
+    0: 0,
+}
+LEARNING_MAX_BLOWER_ADJ = 30
+LEARNING_DECAY = 0.7
+CYCLE_DURATION_MIN = 90
+
+
+def parse_notes(notes: Optional[str]) -> dict:
+    parsed = {}
+    if not notes:
+        return parsed
+    for token in notes.split():
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        if key in {
+            "cycle",
+            "room_comp",
+            "base_blower",
+            "base_proxy_blower",
+            "target_blower",
+            "proxy_blower",
+            "blower",
+            "actual_blower",
+            "controller",
+            "controller_blower",
+            "controller_proxy_blower",
+            "override_blower",
+            "override_proxy_blower",
+            "floor",
+        }:
+            try:
+                parsed[key] = int(value)
+                continue
+            except ValueError:
+                pass
+        parsed[key] = value
+    return parsed
+
+
+def cycle_num_for_elapsed(elapsed_min: Optional[float]) -> Optional[int]:
+    if elapsed_min is None:
+        return None
+    return min(max(1, int(float(elapsed_min) / CYCLE_DURATION_MIN) + 1), 6)
+
+
+def compute_learning_adjustments(override_rows: list) -> dict:
+    last_per_cycle_night = {}
+    for row in override_rows:
+        elapsed_min = row.get("elapsed_min")
+        override_val = row.get("override_setting")
+        ctrl_val = row.get("controller_setting")
+        night_date = row.get("night_date")
+        if elapsed_min is None or override_val is None or ctrl_val is None or night_date is None:
+            continue
+        cycle = cycle_num_for_elapsed(elapsed_min)
+        delta = (
+            L1_TO_BLOWER_PCT[int(override_val)] -
+            L1_TO_BLOWER_PCT[int(ctrl_val)]
+        )
+        last_per_cycle_night[(night_date, cycle)] = delta
+
+    cycle_deltas = defaultdict(list)
+    for (_, cycle), delta in sorted(last_per_cycle_night.items()):
+        cycle_deltas[cycle].append(delta)
+
+    adjustments = {}
+    for cycle, deltas in cycle_deltas.items():
+        weighted_sum = 0
+        weight_total = 0
+        for i, delta in enumerate(reversed(deltas)):
+            weight = LEARNING_DECAY ** i
+            weighted_sum += delta * weight
+            weight_total += weight
+        avg_delta = weighted_sum / weight_total if weight_total else 0
+        adj = max(
+            -LEARNING_MAX_BLOWER_ADJ,
+            min(LEARNING_MAX_BLOWER_ADJ, round(avg_delta)),
+        )
+        if adj != 0:
+            adjustments[str(cycle)] = adj
+    return adjustments
+
+
+def find_blower_divergence_segments(readings: list, threshold: int = 15, min_rows: int = 2) -> list:
+    segments = []
+    current = []
+
+    def flush():
+        nonlocal current
+        if len(current) < min_rows:
+            current = []
+            return
+        diffs = [r["_blower_diff"] for r in current]
+        segments.append({
+            "start": current[0]["ts"],
+            "end": current[-1]["ts"],
+            "minutes": (current[-1]["ts"] - current[0]["ts"]).total_seconds() / 60,
+            "rows": len(current),
+            "setting": current[0].get("setting"),
+            "proxy_blower": current[0]["_proxy_blower"],
+            "actual_blower_min": min(r["_blower_actual"] for r in current),
+            "actual_blower_max": max(r["_blower_actual"] for r in current),
+            "avg_diff": sum(diffs) / len(diffs),
+            "max_abs_diff": max(abs(d) for d in diffs),
+            "actions": Counter(r.get("action") for r in current),
+        })
+        current = []
+
+    for row in readings:
+        parsed = parse_notes(row.get("notes"))
+        proxy = parsed.get("proxy_blower", parsed.get("target_blower"))
+        actual = parsed.get("actual_blower", parsed.get("blower"))
+        if proxy is None or actual is None:
+            flush()
+            continue
+        enriched = dict(row)
+        enriched["_proxy_blower"] = proxy
+        enriched["_blower_actual"] = actual
+        enriched["_blower_diff"] = actual - proxy
+        if abs(enriched["_blower_diff"]) >= threshold:
+            current.append(enriched)
+        else:
+            flush()
+    flush()
+    return segments
+
+
+def format_adjustments(adjustments: dict) -> str:
+    if not adjustments:
+        return "{}"
+    items = ", ".join(f"cycle {cycle}: {adj:+d}%" for cycle, adj in sorted(adjustments.items()))
+    return "{ " + items + " }"
+
+
+def summarize_deep_dive(conn, night: date, zone: str) -> None:
+    if zone != "left":
+        print("\n  Deep dive is currently optimized for the left-side v5 controller.")
+        return
+
+    left = fetch_raw_readings(conn, night, "left")
+    right = fetch_raw_readings(conn, night, "right")
+    if not left:
+        print("\n  No left-side raw readings found for deep dive.")
+        return
+
+    left_actions = Counter(r.get("action") for r in left)
+    right_actions = Counter(r.get("action") for r in right)
+    versions = Counter(r.get("controller_version") for r in left if r.get("controller_version"))
+    parsed_left = [parse_notes(r.get("notes")) for r in left]
+
+    room_comps = [p["room_comp"] for p in parsed_left if isinstance(p.get("room_comp"), int)]
+    override_rows = [r for r in left if r.get("action") == "override"]
+    blower_divergence = find_blower_divergence_segments(left)
+
+    learning_rows = fetch_learning_overrides(conn)
+    learned_before = compute_learning_adjustments(
+        [r for r in learning_rows if r.get("night_date") and r["night_date"] < night]
+    )
+    learned_after = compute_learning_adjustments(
+        [r for r in learning_rows if r.get("night_date") and r["night_date"] <= night]
+    )
+
+    header("🧠 Deep Dive — v5 Controller Behavior")
+    print(f"  Left rows:     {len(left)} ({dict(left_actions)})")
+    if right:
+        print(f"  Right rows:    {len(right)} ({dict(right_actions)})")
+    print(f"  Versions:      {dict(versions)}")
+    if room_comps:
+        print(
+            f"  Room comp:     avg {sum(room_comps) / len(room_comps):.1f}% "
+            f"(range {min(room_comps):+d} to {max(room_comps):+d})"
+        )
+    print(f"  Overrides:     {len(override_rows)} left-side override(s)")
+
+    if override_rows:
+        header("🎛️  Override Signals")
+        for row in override_rows:
+            parsed = parse_notes(row.get("notes"))
+            ctrl = parsed.get("controller")
+            ctrl_proxy = parsed.get("controller_proxy_blower", parsed.get("controller_blower"))
+            override_proxy = parsed.get("override_proxy_blower", parsed.get("override_blower"))
+            actual_blower = parsed.get("actual_blower", parsed.get("blower"))
+            ts_str = row["ts"].strftime("%H:%M")
+            delta = None
+            if ctrl_proxy is not None and override_proxy is not None:
+                delta = override_proxy - ctrl_proxy
+            delta_str = f"{delta:+d}%" if delta is not None else "—"
+            ctrl_str = f"{ctrl:+d}/{ctrl_proxy}%" if ctrl is not None and ctrl_proxy is not None else "—"
+            override_str = f"{row['setting']:+d}/{override_proxy}%" if override_proxy is not None else "—"
+            actual_str = f"{actual_blower}%" if actual_blower is not None else "—"
+            print(
+                f"  {ts_str}: controller proxy {ctrl_str} -> "
+                f"user {override_str}  "
+                f"(actual blower {actual_str}, body {row['body_avg_f']:.1f}°F, "
+                f"room {row['room_temp_f']:.1f}°F, proxy delta {delta_str})"
+            )
+
+    header("🤖 Learning Impact")
+    print(f"  Learned before this night: {format_adjustments(learned_before)}")
+    print(f"  Learned after this night:  {format_adjustments(learned_after)}")
+    if learned_before == learned_after:
+        print("  Update effect:            no change from this night's override data")
+    else:
+        changed = []
+        all_cycles = sorted(set(learned_before) | set(learned_after), key=int)
+        for cycle in all_cycles:
+            before = learned_before.get(cycle, 0)
+            after = learned_after.get(cycle, 0)
+            if before != after:
+                changed.append(f"cycle {cycle}: {before:+d}% -> {after:+d}%")
+        print(f"  Update effect:            {', '.join(changed)}")
+        print("  Note: v5 reloads learned adjustments at sleep start, so the new value applies on the next night.")
+
+    header("🌀 Blower Proxy vs Actual")
+    if blower_divergence:
+        print("  Significant proxy-vs-actual blower divergence segments:")
+        for seg in blower_divergence[:6]:
+            actions = ", ".join(f"{k}:{v}" for k, v in seg["actions"].items())
+            print(
+                f"  {seg['start'].strftime('%H:%M')}–{seg['end'].strftime('%H:%M')} "
+                f"({seg['minutes']:.0f}m, {seg['rows']} rows): "
+                f"setting {seg['setting']:+d}, proxy {seg['proxy_blower']}%, "
+                f"actual {seg['actual_blower_min']}-{seg['actual_blower_max']}%, "
+                f"avg diff {seg['avg_diff']:+.1f}% [{actions}]"
+            )
+    else:
+        print("  ✅ No long blower proxy divergence segments detected.")
+
+    header("🛠️  Tuning Guidance")
+    suggestions = []
+    if override_rows:
+        first_override = override_rows[-1]
+        parsed = parse_notes(first_override.get("notes"))
+        ctrl_proxy = parsed.get("controller_proxy_blower", parsed.get("controller_blower"))
+        override_proxy = parsed.get("override_proxy_blower", parsed.get("override_blower"))
+        if ctrl_proxy is not None and override_proxy is not None:
+            delta = override_proxy - ctrl_proxy
+            if delta <= -20:
+                suggestions.append(
+                    "Late-night cooling was likely too aggressive; let the latest learned adjustment take effect before changing the whole curve."
+                )
+    if room_comps and (sum(room_comps) / len(room_comps)) >= 10:
+        suggestions.append(
+            "Room compensation was strongly positive all night, so the Aqara room sensor is pushing the controller colder than the base cycle plan."
+        )
+    if blower_divergence:
+        suggestions.append(
+            "Treat the RC-off blower proxy as a coarse control model, not a literal expected fan command; the actual overnight blower telemetry diverged for long stretches."
+        )
+    if right_actions.get("override"):
+        suggestions.append(
+            "Right-side passive logs captured a manual change too, which is useful context when comparing comfort across both sides."
+        )
+    if not suggestions:
+        suggestions.append("No immediate tuning change stands out from this night alone.")
+
+    for idx, suggestion in enumerate(suggestions, start=1):
+        print(f"  {idx}. {suggestion}")
 
 
 # ── Problem Detection ────────────────────────────────────────
@@ -212,7 +528,7 @@ def header(text: str):
     print(f"{'─' * W}")
 
 
-def print_single_night(conn, night: date, zone: str):
+def print_single_night(conn, night: date, zone: str, deep_dive: bool = False):
     summary = fetch_summary(conn, night, zone)
     if not summary:
         print(f"\n  No data found for {night}")
@@ -313,6 +629,9 @@ def print_single_night(conn, night: date, zone: str):
     else:
         print("  ✅ No problems detected")
 
+    if deep_dive:
+        summarize_deep_dive(conn, night, zone)
+
     print(f"\n{'═' * W}\n")
 
 
@@ -376,6 +695,7 @@ Examples:
   %(prog)s --date 2026-04-07  # specific night
   %(prog)s --compare 7        # compare last 7 nights
   %(prog)s --zone right       # right side of bed
+  %(prog)s --date 2026-04-15 --deep-dive
 """,
     )
     parser.add_argument("--date", "-d", type=str, default=None,
@@ -384,6 +704,8 @@ Examples:
                         help="Compare last N nights")
     parser.add_argument("--zone", "-z", type=str, default=DEFAULT_ZONE,
                         help="Bed zone (left/right). Default: left")
+    parser.add_argument("--deep-dive", action="store_true",
+                        help="Add v5-specific tuning, blower, and learning analysis")
     args = parser.parse_args()
 
     zone = args.zone
@@ -399,7 +721,7 @@ Examples:
             print_comparison(conn, args.compare, zone)
         else:
             night = date.fromisoformat(args.date) if args.date else last_night_date()
-            print_single_night(conn, night, zone)
+            print_single_night(conn, night, zone, deep_dive=args.deep_dive)
     finally:
         conn.close()
 
