@@ -23,7 +23,7 @@ Key principles:
   - Room temp compensation is physics, always applied
   - User runs warm, NEVER set above 0 (neutral)
   - User overrides are SACRED — never fight them
-  - Everything logged to Postgres (192.168.0.75)
+  - Everything logged to Postgres (192.168.0.3)
 
 Firmware behavior (experimentally verified):
   L1=-8 → targets ~69°F surface (max cooling)
