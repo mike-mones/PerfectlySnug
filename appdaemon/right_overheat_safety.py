@@ -54,9 +54,9 @@ import hassapi as hass
 
 # ── Constants ────────────────────────────────────────────────────────────
 
-OVERHEAT_HARD_F = 90.0       # body ≥ this for STREAK polls → engage
+OVERHEAT_HARD_F = 88.0       # body ≥ this for STREAK polls → engage
 OVERHEAT_HARD_STREAK = 2     # 2 consecutive polls (~2 min)
-OVERHEAT_RELEASE_F = 86.0    # release engagement when body drops below
+OVERHEAT_RELEASE_F = 84.0    # release engagement when body drops below
 RAIL_FORCE_SETTING = -10     # value forced on bedtime_temperature
 POLL_INTERVAL_SEC = 60
 

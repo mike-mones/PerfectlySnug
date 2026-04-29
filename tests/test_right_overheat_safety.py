@@ -5,9 +5,9 @@ function below MUST stay in lockstep with right_overheat_safety._tick_inner.
 """
 from __future__ import annotations
 
-OVERHEAT_HARD_F = 90.0
+OVERHEAT_HARD_F = 88.0
 OVERHEAT_HARD_STREAK = 2
-OVERHEAT_RELEASE_F = 86.0
+OVERHEAT_RELEASE_F = 84.0
 
 
 def _step(state, *, body, occupied=True, rail_enabled=True):
@@ -57,46 +57,46 @@ def _step(state, *, body, occupied=True, rail_enabled=True):
 
 def test_does_not_engage_below_threshold():
     s = {}
-    for t in [80, 82, 85, 88, 89.9]:
+    for t in [80, 82, 85, 86, 87.9]:
         assert _step(s, body=t) is None
     assert not s.get("engaged")
 
 
 def test_engages_after_two_consecutive_overheats():
     s = {}
-    assert _step(s, body=90.5) is None  # streak=1
-    assert _step(s, body=91.0) == ("force",)
+    assert _step(s, body=88.5) is None  # streak=1
+    assert _step(s, body=89.0) == ("force",)
     assert s["engaged"]
 
 
 def test_single_spike_does_not_engage():
     s = {}
-    _step(s, body=92.0)        # streak=1
-    _step(s, body=85.0)        # cleared
-    assert _step(s, body=91.0) is None  # back to streak=1, not engaged
+    _step(s, body=90.0)        # streak=1
+    _step(s, body=83.0)        # cleared
+    assert _step(s, body=89.0) is None  # back to streak=1, not engaged
     assert not s.get("engaged")
 
 
-def test_hysteresis_holds_engagement_at_88():
+def test_hysteresis_holds_engagement_at_86():
     s = {}
-    _step(s, body=91.0); _step(s, body=91.0)  # engage
+    _step(s, body=89.0); _step(s, body=89.0)  # engage
     assert s["engaged"]
-    assert _step(s, body=88.0) is None  # 86 ≤ 88 < 90 → stays engaged
+    assert _step(s, body=86.0) is None  # 84 ≤ 86 < 88 → stays engaged
     assert s["engaged"]
 
 
-def test_releases_below_86():
+def test_releases_below_84():
     s = {"snapshot_setting": -4}
-    _step(s, body=91.0); _step(s, body=91.0)  # engage (streak path)
+    _step(s, body=89.0); _step(s, body=89.0)  # engage (streak path)
     s["snapshot_setting"] = -4               # would be set inside _engage
-    a = _step(s, body=85.5)
+    a = _step(s, body=83.5)
     assert a == ("restore", -4)
     assert not s["engaged"]
 
 
 def test_disabled_rail_releases_immediately():
     s = {}
-    _step(s, body=91.0); _step(s, body=91.0)
+    _step(s, body=89.0); _step(s, body=89.0)
     s["snapshot_setting"] = -2
     a = _step(s, body=99.0, rail_enabled=False)
     assert a == ("restore", -2)
@@ -105,7 +105,7 @@ def test_disabled_rail_releases_immediately():
 
 def test_unoccupied_releases_immediately():
     s = {}
-    _step(s, body=91.0); _step(s, body=91.0)
+    _step(s, body=89.0); _step(s, body=89.0)
     s["snapshot_setting"] = -3
     a = _step(s, body=99.0, occupied=False)
     assert a == ("restore", -3)
@@ -120,15 +120,15 @@ def test_missing_body_does_not_change_state():
 def test_prolonged_overheat_stays_engaged_for_full_stretch():
     """Replays the wife's 80-min overheat on 2026-04-24."""
     s = {}
-    body_temps = [89, 90, 91, 92, 93, 94, 96, 98, 96, 94, 92, 90, 88, 87, 86, 85]
+    body_temps = [87, 88, 89, 90, 91, 92, 94, 96, 94, 92, 90, 88, 86, 85, 84, 83]
     actions = [_step(s, body=t) for t in body_temps]
-    # Engages on second 90 (index 2).
+    # Engages on second 88 (index 2).
     assert actions[0] is None and actions[1] is None
     assert actions[2] == ("force",)
-    # Stays engaged through all subsequent 86+ readings (no further forces).
+    # Stays engaged through all subsequent 84+ readings (no further forces).
     for a in actions[3:-1]:
         assert a is None, f"unexpected mid-stretch action: {a}"
-    # Final reading 85 < release threshold → restore.
+    # Final reading 83 < release threshold → restore.
     assert actions[-1][0] == "restore"
 
 

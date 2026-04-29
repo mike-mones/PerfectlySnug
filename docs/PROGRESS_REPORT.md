@@ -146,7 +146,7 @@ Any future training pipeline must either:
 | Component | State | Notes |
 |---|---|---|
 | `sleep_controller_v5.py` (`v5_rc_off`) | ✅ Running on HA | Left-zone comfort controller |
-| `right_overheat_safety.py` (`RightOverheatSafety`) | ✅ Deployed 2026-04-29 | Standalone safety-only rail for the right zone — engages -10 setting after 2 consecutive readings ≥90°F, releases <86°F, snapshots and restores prior setpoint, releases on bed-empty or rail-disabled. No comfort logic, no learning, no per-cycle baselines. |
+| `right_overheat_safety.py` (`RightOverheatSafety`) | ✅ Deployed 2026-04-29 | Standalone safety-only rail for the right zone — engages -10 setting after 2 consecutive readings ≥88°F, releases <84°F, snapshots and restores prior setpoint, releases on bed-empty or rail-disabled. No comfort logic, no learning, no per-cycle baselines. Threshold tuned from right-zone p90 (87.9°F). |
 | Right-zone comfort control | ❌ Not present | Only the safety rail above; otherwise wife controls the bed manually |
 | Hard overheat rail on left v5 (body ≥90°F → -10) | ✅ Deployed 2026-04-29 | Gated by `input_boolean.snug_overheat_rail_enabled`; **default off** (left has no demonstrated overheat events) |
 | Shadow logger writing `/config/snug_shadow.jsonl` | ✅ Deployed 2026-04-29 | Lazy-imports `ml.policy`; wrapped in broad try/except so it cannot break the live loop |
