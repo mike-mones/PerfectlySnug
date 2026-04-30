@@ -5,13 +5,13 @@
 > document is the running log of what's actually been built, what's deployed,
 > what's been tried and rejected, and what the data actually says today.
 
-**Last updated:** 2026-04-29 (23 days into v5_rc_off operation, 8 weeks of HA recorder data)
+**Last updated:** 2026-04-30 (v5.1 baselines shipped at 14:04 ET)
 
 ---
 
 ## 1. Where we are in one sentence
 
-v5 (heuristic) is running on the **left zone only**, has known accuracy issues but no live safety regressions, and we have not been able to demonstrate that any version of the proposed v6 ML policy improves comfort outcomes on the available data — so nothing new has been deployed. The single largest gap is that **the wife's right zone has no automated controller at all**, which is also where the only sustained overheat events have been recorded.
+v5.1 (heuristic, refit) is running on the **left zone only** as of 2026-04-30; the v5→v5.1 update adjusted the per-cycle baselines from `[-10,-9,-8,-7,-6,-5]` to `[-10,-8,-7,-5,-5,-6]` (motivated by user feedback the morning of 2026-04-30 — see "v5.1 update" subsection below). v5.1 still has known structural limitations (override-bias trap, no proxy comfort signal, c4/c5 thin samples), and we have not been able to demonstrate that any version of the proposed v6 ML policy improves comfort outcomes on the available data — so v6 is not deployed. The single largest gap is that **the wife's right zone has no automated controller at all**, which is also where the only sustained overheat events have been recorded.
 
 ---
 
@@ -51,8 +51,25 @@ v5 (heuristic) is running on the **left zone only**, has known accuracy issues b
 | iOS Health Receiver (FastAPI :8080) | Apple Watch → PG `health_metrics`, `sleep_segments` | Mac Mini |
 | `tools/backfill_ha_recorder.py` | Pulls HA SQLite stats → PG `ha_stats` (idempotent) | Run from laptop or Mac cron |
 
-### v5's algorithm (in one paragraph)
-Cycle baselines (hand-picked: cycle 1=-10, 2=-9, 3=-8, 4=-7, 5=-6, 6=-5) plus room-temperature compensation (cool-comp below 68°F, hot-comp above) plus a learned per-cycle blower-percentage adjustment (clipped to ±15%) plus two safety rails (`hot_safety` steps one colder when body > 85°F sustained; nothing on the cold side). The "learning" updates the blower adjustment from the most recent override delta, which causes oscillation.
+### v5.1 update — 2026-04-30 (live)
+
+`CYCLE_SETTINGS` shipped from `[-10,-9,-8,-7,-6,-5]` to **`[-10,-8,-7,-5,-5,-6]`**
+after a refit on 49 overrides / 30 nights, motivated by user report
+("woke up cold mid-night, slightly warm in the morning"). Both events
+were logged as overrides at 04:27 ET (cycle 5, asked +3 warmer) and 06:56 ET
+(cycle 6, asked −2 cooler). Methodology: shrinkage prior_n=5 posterior for
+c2..c5, with c5 capped one step cooler than the data fit (smooths the
+c5→c6 transition) and c6 manually dipped one step cooler than v5
+(addresses the pre-wake overheat that wouldn't otherwise show in the
+override corpus). In-sample MAE dropped 6.3% (2.939 → 2.755) and signed
+under-warming bias dropped 26% (−1.92 → −1.41). See
+`_archive/v5_1_baseline_fit_2026-04-30.md` for full analysis. The pipeline
+that ran the sweep is `tools/v5_1_baseline_sweep.py` against
+`controller_readings`; rerun after every ~5 new overrides.
+
+### v5's heuristic algorithm (in one paragraph)
+Cycle baselines (was hand-picked `[-10,-9,-8,-7,-6,-5]`; now refit
+`[-10,-8,-7,-5,-5,-6]` per the v5.1 update above) plus room-temperature compensation (cool-comp below 68°F, hot-comp above) plus a learned per-cycle blower-percentage adjustment (clipped to ±15%) plus two safety rails (`hot_safety` steps one colder when body > 85°F sustained; nothing on the cold side). The "learning" updates the blower adjustment from the most recent override delta, which causes oscillation.
 
 ---
 

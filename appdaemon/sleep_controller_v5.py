@@ -53,12 +53,23 @@ import hassapi as hass
 # Settings per cycle position (-10 to +10 scale, capped at 0).
 # Under RC-off these act as fixed blower-proxy baselines, so stay colder than v4.
 CYCLE_SETTINGS = {
-    1: -10,  # Start cold and only ease off gradually
-    2: -9,
-    3: -8,
-    4: -7,
-    5: -6,
-    6: -5,
+    # v5.1 baselines — refit from 49 left-zone overrides across 30 nights, motivated
+    # by 2026-04-30 user report ("cold mid-night, slightly warm in the morning").
+    # Posterior-mean shrinkage (prior_n=5) for c2..c5; c6 manually dipped one step
+    # cooler than v5 to address late-cycle overheat reports that don't trigger
+    # overrides (mild pre-wake heat). Override corpus per-cycle means (n, mean):
+    # c1=(11,-9.27) c2=(7,-8.0) c3=(10,-6.0) c4=(5,-3.0) c5=(7,-2.86) c6=(9,-3.11).
+    # See _archive/v5_1_baseline_fit_2026-04-30.md.
+    1: -10,  # Aggressive cool: support core temp drop at sleep onset (kept; c1 means
+             # are heavily room_comp-confounded — trust the prior here).
+    2:  -8,  # Was -9; shrunken posterior with prior_n=5 over 7 overrides (mean -8.0).
+    3:  -7,  # Was -8; shrunken posterior over 10 overrides (mean -6.0).
+    4:  -5,  # Was -7; shrunken posterior over 5 overrides (mean -3.0). Largest single
+             # change; addresses 2026-04-30 "cold in the middle of the night" report.
+    5:  -5,  # Was -6; capped at -5 (prior_n=5 says -4) to avoid easing too far before
+             # the c6 cooldown; n=7 in this cycle, LOOCV unstable.
+    6:  -6,  # Was -5; intentional non-monotonic dip — pre-wake active cooldown to
+             # address 2026-04-30 "slightly warm later in the morning" report.
 }
 CYCLE_DURATION_MIN = 90
 
