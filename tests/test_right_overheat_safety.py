@@ -5,9 +5,9 @@ function below MUST stay in lockstep with right_overheat_safety._tick_inner.
 """
 from __future__ import annotations
 
-OVERHEAT_HARD_F = 88.0
+OVERHEAT_HARD_F = 86.0
 OVERHEAT_HARD_STREAK = 2
-OVERHEAT_RELEASE_F = 84.0
+OVERHEAT_RELEASE_F = 82.0
 BEDJET_SUPPRESS_MIN = 30.0
 
 
@@ -78,7 +78,7 @@ def _step(state, *, body, occupied=True, rail_enabled=True,
 
 def test_does_not_engage_below_threshold():
     s = {}
-    for t in [80, 82, 85, 86, 87.9]:
+    for t in [78, 80, 82, 84, 85.9]:
         assert _step(s, body=t, minutes_since_onset=60) is None
     assert not s.get("engaged")
 
@@ -107,12 +107,12 @@ def test_hysteresis_holds_engagement_at_86():
     assert s["engaged"]
 
 
-def test_releases_below_84():
+def test_releases_below_82():
     s = {"snapshot_setting": -4}
     _step(s, body=89.0, minutes_since_onset=60)
     _step(s, body=89.0, minutes_since_onset=61)
     s["snapshot_setting"] = -4
-    a = _step(s, body=83.5, minutes_since_onset=62)
+    a = _step(s, body=81.5, minutes_since_onset=62)
     assert a == ("restore", -4)
     assert not s["engaged"]
 
@@ -143,9 +143,11 @@ def test_missing_body_does_not_change_state():
 
 
 def test_prolonged_overheat_stays_engaged_for_full_stretch():
-    """Replays the wife's 80-min overheat on 2026-04-24, AFTER BedJet window."""
+    """Replays the wife's 80-min overheat on 2026-04-24, AFTER BedJet window.
+    With the post-2026-04-30 86°F engage / 82°F release thresholds.
+    """
     s = {"last_occupied": True}
-    body_temps = [87, 88, 89, 90, 91, 92, 94, 96, 94, 92, 90, 88, 86, 85, 84, 83]
+    body_temps = [85, 86, 87, 88, 89, 90, 92, 94, 92, 90, 88, 86, 84, 83, 82, 81]
     actions = [_step(s, body=t, minutes_since_onset=45 + i)
                for i, t in enumerate(body_temps)]
     assert actions[0] is None and actions[1] is None

@@ -70,11 +70,17 @@ import hassapi as hass
 
 # ── Constants ────────────────────────────────────────────────────────────
 
-OVERHEAT_HARD_F = 88.0       # body_left_f ≥ this for STREAK polls → engage.
-                             # 88°F is her p99 on the skin-side sensor — i.e.
-                             # natural overheat threshold, ~2σ above her p50.
+OVERHEAT_HARD_F = 86.0       # body_left_f ≥ this for STREAK polls → engage.
+                             # Per-zone calibration anchored to user-stated
+                             # discomfort threshold: user runs hot at ~84°F on
+                             # body_left (his p90-p95). Her body_left is +2°F
+                             # warmer at every percentile (p95 user=84.7,
+                             # her=86.5) so 86°F is her physiological
+                             # equivalent of his 84°F "too hot". Was 88°F.
 OVERHEAT_HARD_STREAK = 2     # 2 consecutive polls (~2 min)
-OVERHEAT_RELEASE_F = 84.0    # release engagement when body drops below
+OVERHEAT_RELEASE_F = 82.0    # release engagement when body drops below
+                             # (was 84°F; lowered 2°F to maintain hysteresis
+                             # symmetry with the new engage threshold).
 RAIL_FORCE_SETTING = -10     # value forced on bedtime_temperature
 POLL_INTERVAL_SEC = 60
 
