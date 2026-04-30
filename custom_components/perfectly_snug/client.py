@@ -13,6 +13,11 @@ from .const import (
     CTRL_MSG_SETTINGS,
     MSG_GROUP_CTRL,
     POLL_SETTINGS,
+    SETTING_L1,
+    SETTING_RUNNING,
+    SETTING_TEMP_SENSOR_CENTER,
+    SETTING_TEMP_SENSOR_LEFT,
+    SETTING_TEMP_SENSOR_RIGHT,
     WS_ENDPOINT,
     WS_ORIGIN,
 )
@@ -22,6 +27,15 @@ _LOGGER = logging.getLogger(__name__)
 # Retry configuration
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.0  # seconds, doubles each attempt
+MAX_TOLERATED_MISSING_SETTINGS = 5
+MAX_MISSING_SETTINGS_RATIO = 0.2
+CRITICAL_SETTINGS = {
+    SETTING_L1,
+    SETTING_RUNNING,
+    SETTING_TEMP_SENSOR_LEFT,
+    SETTING_TEMP_SENSOR_CENTER,
+    SETTING_TEMP_SENSOR_RIGHT,
+}
 
 
 def raw_to_celsius(raw: int) -> float:
@@ -86,6 +100,18 @@ class TopperClient:
                     val = (payload[i + 2] << 8) | payload[i + 3]
                     readings[sid] = val
         return readings
+
+    @staticmethod
+    def _missing_settings_are_fatal(setting_ids: list[int], missing: list[int]) -> bool:
+        """Return True when a partial response should be treated as a failure."""
+        if not missing:
+            return False
+        critical_missing = any(sid in CRITICAL_SETTINGS for sid in missing)
+        too_many_missing = len(missing) > max(
+            MAX_TOLERATED_MISSING_SETTINGS,
+            int(len(setting_ids) * MAX_MISSING_SETTINGS_RATIO),
+        )
+        return critical_missing or too_many_missing
 
     async def async_test_connection(self) -> bool:
         """Test if we can connect to the topper."""
@@ -154,6 +180,21 @@ class TopperClient:
                         break
                 except asyncio.TimeoutError:
                     break
+
+        missing = [sid for sid in setting_ids if sid not in readings]
+        if missing:
+            sample = ", ".join(str(sid) for sid in missing[:6])
+            suffix = "..." if len(missing) > 6 else ""
+            if self._missing_settings_are_fatal(setting_ids, missing):
+                raise ConnectionError(
+                    f"Incomplete response from {self.ip}; missing settings: {sample}{suffix}"
+                )
+            _LOGGER.debug(
+                "Partial response from %s; tolerating missing non-critical settings: %s%s",
+                self.ip,
+                sample,
+                suffix,
+            )
 
         return readings
 
