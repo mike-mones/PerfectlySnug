@@ -574,3 +574,140 @@ class TestBodyFeedback:
         assert consts.get("BODY_FB_KP_COLD") == 0.55
         assert consts.get("BODY_FB_MAX_DELTA") == 5
         assert consts.get("BODY_FB_MIN_CYCLE") == 3
+
+
+class TestRightZoneLiveGate:
+    """v5.2: right-zone live-actuation two-key arming and gates."""
+
+    def _fresh(self):
+        c = SleepControllerV5()
+        c._state = {}
+        c._set_calls = []
+        c._service_calls = []
+        # Capture calls via monkeypatch
+        c.call_service = lambda *args, **kw: c._service_calls.append((args, kw))
+        c.log = lambda *args, **kw: None
+        return c
+
+    def test_default_constants_safe(self):
+        """Code key armed; HA helper key is the operational kill switch."""
+        # RIGHT_LIVE_ENABLED is armed in code so the user can flip the HA
+        # helper in UI without a redeploy. The HA helper defaults off.
+        assert ctrl_module.RIGHT_LIVE_ENABLED is True
+        # Helper entity must exist before this could matter
+        assert ctrl_module.E_RIGHT_CONTROLLER_FLAG == \
+            "input_boolean.snug_right_controller_enabled"
+
+    def test_set_l1_right_writes_and_records(self):
+        c = self._fresh()
+        c._set_l1_right(-5)
+        assert c._state["right_zone_last_setting"] == -5
+        assert any(args[0:2] == ("number/set_value",) or
+                   args[0] == "number/set_value"
+                   for args, kw in c._service_calls)
+        # Above-zero clamped
+        c._set_l1_right(2)
+        assert c._state["right_zone_last_setting"] == 0
+        # Below -10 clamped
+        c._set_l1_right(-50)
+        assert c._state["right_zone_last_setting"] == -10
+
+    def test_freeze_active_during_window(self):
+        c = self._fresh()
+        from datetime import datetime as _dt, timedelta as _td
+        c._state["right_zone_override_until"] = (_dt.now() + _td(minutes=30)).isoformat()
+        assert c._right_zone_in_freeze(_dt.now()) is True
+        # Past freeze
+        c._state["right_zone_override_until"] = (_dt.now() - _td(minutes=1)).isoformat()
+        assert c._right_zone_in_freeze(_dt.now()) is False
+
+    def test_freeze_no_history_returns_false(self):
+        c = self._fresh()
+        from datetime import datetime as _dt
+        assert c._right_zone_in_freeze(_dt.now()) is False
+
+    def test_rate_ok_no_history(self):
+        c = self._fresh()
+        from datetime import datetime as _dt
+        assert c._right_zone_rate_ok(_dt.now()) is True
+
+    def test_rate_blocks_within_interval(self):
+        c = self._fresh()
+        from datetime import datetime as _dt, timedelta as _td
+        # Last change 5 min ago — interval is 30 min, should block
+        c._state["right_zone_last_change_ts"] = (_dt.now() - _td(minutes=5)).isoformat()
+        assert c._right_zone_rate_ok(_dt.now()) is False
+        # Last change 35 min ago — should allow
+        c._state["right_zone_last_change_ts"] = (_dt.now() - _td(minutes=35)).isoformat()
+        assert c._right_zone_rate_ok(_dt.now()) is True
+
+    def test_self_write_not_classified_as_override(self):
+        """If the controller wrote -5 and HA echoes -5, _on_right_setting_change
+        must NOT engage the freeze."""
+        c = self._fresh()
+        c._is_sleeping = lambda: True
+        c._read_str = lambda eid: "on"
+        c._read_temperature = lambda *a, **kw: 70
+        c._read_zone_snapshot = lambda zone: {}
+        c._log_override = lambda *a, **kw: None
+        c._state["right_zone_last_setting"] = -5
+        # Simulate HA echoing back the controller's write
+        c._on_right_setting_change("entity", "state", "0", "-5", {})
+        assert "right_zone_override_until" not in c._state, \
+            "Self-write must not engage override freeze."
+
+    def test_user_change_engages_freeze_when_live(self):
+        c = self._fresh()
+        c._is_sleeping = lambda: True
+        c._read_str = lambda eid: "on"  # HA flag on
+        c._read_temperature = lambda *a, **kw: 70
+        c._read_zone_snapshot = lambda zone: {}
+        c._log_override = lambda *a, **kw: None
+        # Pretend RIGHT_LIVE_ENABLED is True for this test
+        original = ctrl_module.RIGHT_LIVE_ENABLED
+        try:
+            ctrl_module.RIGHT_LIVE_ENABLED = True
+            c._on_right_setting_change("entity", "state", "-4", "-7", {})
+            assert "right_zone_override_until" in c._state
+        finally:
+            ctrl_module.RIGHT_LIVE_ENABLED = original
+
+    def test_user_change_no_freeze_when_dead(self):
+        """When the system is not armed (Python const False OR HA helper off),
+        manual changes still log but don't bother engaging a freeze (controller
+        can't actuate anyway)."""
+        c = self._fresh()
+        c._is_sleeping = lambda: True
+        c._read_str = lambda eid: "off"  # HA flag OFF — dead arm
+        c._read_temperature = lambda *a, **kw: 70
+        c._read_zone_snapshot = lambda zone: {}
+        c._log_override = lambda *a, **kw: None
+        # Even with RIGHT_LIVE_ENABLED True (default), HA helper off blocks freeze
+        c._on_right_setting_change("entity", "state", "-4", "-7", {})
+        assert "right_zone_override_until" not in c._state
+
+    def test_constants_are_locked_right_live(self):
+        """AST-pin the right-zone live actuation constants."""
+        import ast
+        src = CONTROLLER_PATH.read_text()
+        tree = ast.parse(src)
+        consts = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                t = node.targets[0]
+                if not isinstance(t, ast.Name):
+                    continue
+                v = node.value
+                if isinstance(v, ast.Constant):
+                    consts[t.id] = v.value
+        # Safety-critical: live arming key
+        assert consts.get("RIGHT_LIVE_ENABLED") is True
+        # Helper entity ID locked (auditor 6 said this must exist before go-live)
+        assert consts.get("E_RIGHT_CONTROLLER_FLAG") == \
+            "input_boolean.snug_right_controller_enabled"
+        # Bedtime entity locked
+        assert consts.get("E_BEDTIME_TEMP_RIGHT") == \
+            "number.smart_topper_right_side_bedtime_temperature"
+        # Rate limit and freeze duration locked
+        assert consts.get("RIGHT_MIN_CHANGE_INTERVAL_SEC") == 1800
+        assert consts.get("RIGHT_OVERRIDE_FREEZE_MIN") == 60

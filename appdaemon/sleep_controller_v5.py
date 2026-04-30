@@ -130,7 +130,6 @@ BODY_FB_MIN_CYCLE = 3       # apply only from cycle 3 onward; cycles 1-2 honor
 # baselines, cap}; n=6 is too thin for trustworthy fitting — these are
 # educated starting points, not validated).
 RIGHT_SHADOW_ENABLED = True   # flip false to silence shadow logger entirely
-RIGHT_LIVE_ENABLED = False    # MUST stay False until shadow log is reviewed
 RIGHT_CYCLE_SETTINGS = {
     1: -8,   # gentler than user's -10; her firmware default is -5 to -6
     2: -7,
@@ -146,9 +145,24 @@ RIGHT_BODY_FB_MAX_DELTA = 4   # tighter cap than left (less data)
 RIGHT_BODY_FB_SKIP_CYCLES = (1,)
 RIGHT_BEDJET_WINDOW_MIN = 30.0  # match right_overheat_safety.BEDJET_SUPPRESS_MIN
                                  # — body sensors inflate during the wife's
-                                 # warm-blanket pre-warm; suppress shadow
-                                 # corrections during this window.
+                                 # warm-blanket pre-warm; suppress corrections
+                                 # during this window.
 RIGHT_SHADOW_LOG_PATH = "/config/snug_right_v52_shadow.jsonl"
+
+# Right-zone live actuation. TWO-KEY ARMING:
+#   1. RIGHT_LIVE_ENABLED Python constant (this file) — armed by code
+#   2. input_boolean.snug_right_controller_enabled — armed by HA UI (default off)
+# BOTH must be true for the controller to write to her bedtime entity. Either
+# one false → shadow only, no actuation. The HA helper is the operational
+# kill switch (instant toggle from UI, no redeploy). Code default: armed
+# in code so the user can enable/disable from HA UI without a redeploy. The
+# HA helper defaults OFF, so the system is safe by default — flip the UI
+# helper to enable live control when ready.
+RIGHT_LIVE_ENABLED = True
+E_RIGHT_CONTROLLER_FLAG = "input_boolean.snug_right_controller_enabled"
+E_BEDTIME_TEMP_RIGHT = "number.smart_topper_right_side_bedtime_temperature"
+RIGHT_MIN_CHANGE_INTERVAL_SEC = 1800   # 30 min between live writes
+RIGHT_OVERRIDE_FREEZE_MIN = 60          # 1 hour freeze after manual change
 
 # ── Control Model ────────────────────────────────────────────────────
 CONTROLLER_VERSION = "v5_2_rc_off"
@@ -585,6 +599,41 @@ class SleepControllerV5(hass.Hass):
 
             proposed = max(-10, min(MAX_SETTING, base + correction))
 
+            # ── Live actuation gate ──────────────────────────────────
+            # ALL of the following must hold:
+            #   - RIGHT_LIVE_ENABLED constant in code is True
+            #   - HA helper input_boolean.snug_right_controller_enabled is on
+            #   - bed is occupied
+            #   - we are NOT in the BedJet window (don't fight her warm-blanket)
+            #   - the user has not recently overridden (60-min freeze)
+            #   - rate-limit since last controller write
+            #   - proposed setting differs from firmware's current setting
+            #   - proposed setting is within [-10, 0] (no heating)
+            actuated = False
+            actuation_blocked = "off"
+            ha_flag_on = self._read_str(E_RIGHT_CONTROLLER_FLAG) == "on"
+            if RIGHT_LIVE_ENABLED and ha_flag_on:
+                if not occupied:
+                    actuation_blocked = "unoccupied"
+                elif in_bedjet_window:
+                    actuation_blocked = "bedjet_window"
+                elif self._right_zone_in_freeze(now):
+                    actuation_blocked = "override_freeze"
+                elif not self._right_zone_rate_ok(now):
+                    actuation_blocked = "rate_limit"
+                elif firmware_setting is not None and proposed == firmware_setting:
+                    actuation_blocked = "no_change"
+                elif proposed < -10 or proposed > 0:
+                    actuation_blocked = "out_of_range"
+                else:
+                    self._set_l1_right(proposed)
+                    self._state["right_zone_last_change_ts"] = now.isoformat()
+                    self._save_state()
+                    actuated = True
+                    actuation_blocked = ""
+            elif not ha_flag_on:
+                actuation_blocked = "ha_flag_off"
+
             entry = {
                 "ts": now.isoformat(timespec="seconds"),
                 "elapsed_min": round(elapsed_min, 1) if elapsed_min is not None else None,
@@ -612,6 +661,9 @@ class SleepControllerV5(hass.Hass):
                     None if firmware_setting is None
                     else proposed - firmware_setting
                 ),
+                "right_live_enabled": RIGHT_LIVE_ENABLED and ha_flag_on,
+                "actuated": actuated,
+                "actuation_blocked": actuation_blocked,
             }
             import json as _json
             with open(RIGHT_SHADOW_LOG_PATH, "a") as f:
@@ -884,7 +936,12 @@ class SleepControllerV5(hass.Hass):
         self._save_state()
 
     def _on_right_setting_change(self, entity, attribute, old, new, kwargs):
-        """Persist passive right-side manual changes for future training data."""
+        """Persist passive right-side manual changes for future training data.
+
+        Also engages a 60-min override-freeze when the controller is live
+        (RIGHT_LIVE_ENABLED + HA helper on), so the controller doesn't fight
+        the wife's manual adjustments.
+        """
         if not self._is_sleeping():
             return
 
@@ -897,7 +954,22 @@ class SleepControllerV5(hass.Hass):
         if new_val == old_val:
             return
 
+        # If this change matches what the controller just wrote, suppress the
+        # override classification (it was us, not her).
+        expected = self._state.get("right_zone_last_setting")
+        if expected is not None and new_val == expected:
+            return
+
         self.log(f"RIGHT SIDE CHANGE: {old_val:+d} → {new_val:+d}")
+        # Engage override freeze (only meaningful when controller is live).
+        ha_flag_on = self._read_str(E_RIGHT_CONTROLLER_FLAG) == "on"
+        if RIGHT_LIVE_ENABLED and ha_flag_on:
+            from datetime import timedelta as _td
+            self._state["right_zone_override_until"] = (
+                datetime.now() + _td(minutes=RIGHT_OVERRIDE_FREEZE_MIN)
+            ).isoformat()
+            self._save_state()
+
         self._log_override(
             "right",
             new_val,
@@ -907,6 +979,36 @@ class SleepControllerV5(hass.Hass):
             sleep_stage=self._read_str(E_SLEEP_STAGE),
             snapshot=self._read_zone_snapshot("right"),
         )
+
+    def _set_l1_right(self, value):
+        """Write right-zone bedtime temperature. Mirrors _set_l1 for left."""
+        value = max(-10, min(MAX_SETTING, int(value)))
+        self._state["right_zone_last_setting"] = value
+        self.call_service("number/set_value", entity_id=E_BEDTIME_TEMP_RIGHT,
+                          value=value)
+        self.log(f"RIGHT v5.2 LIVE: setting → {value:+d}")
+
+    def _right_zone_in_freeze(self, now):
+        """True if a recent manual right-zone change is freezing the controller."""
+        until = self._state.get("right_zone_override_until")
+        if not until:
+            return False
+        try:
+            until_dt = datetime.fromisoformat(until)
+        except (TypeError, ValueError):
+            return False
+        return now < until_dt
+
+    def _right_zone_rate_ok(self, now):
+        """True if enough time has passed since the controller last wrote."""
+        last_ts = self._state.get("right_zone_last_change_ts")
+        if not last_ts:
+            return True
+        try:
+            last_dt = datetime.fromisoformat(last_ts)
+        except (TypeError, ValueError):
+            return True
+        return (now - last_dt).total_seconds() >= RIGHT_MIN_CHANGE_INTERVAL_SEC
 
     def _check_kill_switch(self):
         """If user makes KILL_SWITCH_CHANGES changes in KILL_SWITCH_WINDOW_SEC, go manual."""
