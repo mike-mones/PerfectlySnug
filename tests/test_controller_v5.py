@@ -494,34 +494,38 @@ class TestBodyFeedback:
         c = self._fresh_controller()
         # cycle 1 (elapsed_min < 90)
         plan = c._compute_setting(elapsed_min=10, room_temp=68.0, sleep_stage=None,
-                                  body_avg=72.0)
+                                  body_avg=72.0, body_left=68.0)
         assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[1]
         # cycle 2 (90 <= elapsed_min < 180)
         plan = c._compute_setting(elapsed_min=120, room_temp=68.0, sleep_stage=None,
-                                  body_avg=72.0)
+                                  body_avg=72.0, body_left=68.0)
         assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[2]
 
     def test_no_correction_when_body_at_or_above_target(self):
         c = self._fresh_controller()
-        for body in (86.0, 88.0, 90.0):
+        # body_left at/above 80°F target (was 86°F on body_avg)
+        for body in (80.0, 82.0, 86.0):
             plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
-                                      sleep_stage=None, body_avg=body)
+                                      sleep_stage=None,
+                                      body_avg=body + 3, body_left=body)
             assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[3], \
-                f"body={body} should not trigger correction"
+                f"body_left={body} should not trigger correction"
 
     def test_correction_when_body_below_target(self):
-        """body 6°F below target → +3.3 → +3 settings warmer."""
+        """body_left 2°F below target → 1.25*2 = 2.5 → +2 (banker's rounding)."""
         c = self._fresh_controller()
         plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
-                                  sleep_stage=None, body_avg=80.0)
-        # cycle 3 baseline -7 + 3 = -4
-        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[3] + 3
+                                  sleep_stage=None,
+                                  body_avg=81.0, body_left=78.0)
+        # cycle 3 baseline -7 + 2 = -5 (round(1.25*2)=round(2.5)=2 banker's)
+        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[3] + 2
 
     def test_correction_capped(self):
-        """body 12°F below target → +6.6 → cap at +5."""
+        """body_left 8°F below target → 1.25*8=10 → cap at +5."""
         c = self._fresh_controller()
         plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
-                                  sleep_stage=None, body_avg=74.0)
+                                  sleep_stage=None,
+                                  body_avg=75.0, body_left=72.0)
         cap = ctrl_module.BODY_FB_MAX_DELTA
         expected = max(-10, ctrl_module.CYCLE_SETTINGS[3] + cap)
         assert plan["base_setting"] == expected
@@ -529,18 +533,19 @@ class TestBodyFeedback:
     def test_no_correction_when_body_missing(self):
         c = self._fresh_controller()
         plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
-                                  sleep_stage=None, body_avg=None)
+                                  sleep_stage=None,
+                                  body_avg=None, body_left=None)
         assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[3]
 
     def test_correction_does_not_exceed_zero(self):
         """If correction would push setting above 0 (heating), clamp at 0."""
         c = self._fresh_controller()
-        # Synthetic cycle baseline -1, body very low → +5 cap → -1+5=+4 → clamp 0
         original = dict(ctrl_module.CYCLE_SETTINGS)
         try:
             ctrl_module.CYCLE_SETTINGS[3] = -1
             plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
-                                      sleep_stage=None, body_avg=72.0)
+                                      sleep_stage=None,
+                                      body_avg=75.0, body_left=72.0)
             assert plan["base_setting"] == 0  # MAX_SETTING
         finally:
             ctrl_module.CYCLE_SETTINGS.clear()
@@ -549,8 +554,19 @@ class TestBodyFeedback:
     def test_data_source_logs_correction(self):
         c = self._fresh_controller()
         plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
-                                  sleep_stage=None, body_avg=80.0)
+                                  sleep_stage=None,
+                                  body_avg=81.0, body_left=78.0)
         assert "body_fb" in plan["data_source"]
+
+    def test_input_is_body_left_when_configured(self):
+        """When BODY_FB_INPUT='body_left', body_avg deviation alone shouldn't fire."""
+        c = self._fresh_controller()
+        # body_left ABOVE target → no correction even if body_avg is well below
+        plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
+                                  sleep_stage=None,
+                                  body_avg=70.0,   # would trigger if input=body_avg
+                                  body_left=82.0)  # above target → no fire
+        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[3]
 
     def test_constants_are_locked(self):
         """v5.2 constants pinned by parse-time AST so a refactor can't drift."""
@@ -570,8 +586,9 @@ class TestBodyFeedback:
                     consts[t.id] = -v.operand.value
         assert consts.get("CONTROLLER_VERSION") == "v5_2_rc_off"
         assert consts.get("BODY_FB_ENABLED") is True
-        assert consts.get("BODY_FB_TARGET_F") == 86.0
-        assert consts.get("BODY_FB_KP_COLD") == 0.55
+        assert consts.get("BODY_FB_INPUT") == "body_left"
+        assert consts.get("BODY_FB_TARGET_F") == 80.0
+        assert consts.get("BODY_FB_KP_COLD") == 1.25
         assert consts.get("BODY_FB_MAX_DELTA") == 5
         assert consts.get("BODY_FB_MIN_CYCLE") == 3
 

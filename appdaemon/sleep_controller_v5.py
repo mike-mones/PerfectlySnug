@@ -107,11 +107,23 @@ CYCLE_DURATION_MIN = 90
 #   v5.2: MAE=1.732 hit=61.0% bias=+0.32 (refit + body feedback)
 #   LOOCV: v5.2=1.633 vs v5.1=3.116 (-48% on held-out)
 BODY_FB_ENABLED = True
-BODY_FB_TARGET_F = 86.0     # below this body_avg_f, we ease off cooling
-BODY_FB_KP_COLD = 0.55      # settings per °F below target
-BODY_FB_MAX_DELTA = 5       # cap upward correction (warmer-shift) from baseline
-BODY_FB_MIN_CYCLE = 3       # apply only from cycle 3 onward; cycles 1-2 honor
-                            # bedtime aggressive cooling regardless of body temp
+BODY_FB_INPUT = "body_left"   # which sensor feeds the closed loop; body_left
+                              # is the skin-contact channel and matches the
+                              # right-zone controller's input. Was body_avg
+                              # which mixed in warm-sheet body_center.
+BODY_FB_TARGET_F = 80.0       # below this body_left_f, ease off cooling.
+                              # Matches right-zone target. Both sleepers'
+                              # body_left p50 ≈ 79.5°F (user 79.3, wife 79.7),
+                              # so 80°F is the natural cross-zone reference.
+BODY_FB_KP_COLD = 1.25        # settings warmer per °F below target. Larger
+                              # than the body_avg-fit value (0.55) because
+                              # body_left runs ~3°F cooler than body_avg, so
+                              # the deltas are smaller — Kp scales accordingly.
+                              # Refit MAE 1.81, LOOCV 1.51 (was v5.2 body_avg
+                              # MAE 1.73, LOOCV 1.63).
+BODY_FB_MAX_DELTA = 5         # cap upward correction (warmer-shift) from baseline
+BODY_FB_MIN_CYCLE = 3         # apply only from cycle 3 onward; cycles 1-2 honor
+                              # bedtime aggressive cooling regardless of body temp
 
 # ── Right-zone v5.2 shadow controller (her side, log-only) ───────────
 # The wife's right zone runs in firmware Responsive Cooling mode (RC modulates
@@ -423,6 +435,7 @@ class SleepControllerV5(hass.Hass):
             room_temp,
             sleep_stage,
             body_avg=body_avg,
+            body_left=body_left,
             current_setting=current,
         )
         setting = plan["setting"]
@@ -702,7 +715,8 @@ class SleepControllerV5(hass.Hass):
             self.log(f"shadow log skipped ({exc.__class__.__name__}): {exc}",
                      level="WARNING")
 
-    def _compute_setting(self, elapsed_min, room_temp, sleep_stage, body_avg=None, current_setting=None):
+    def _compute_setting(self, elapsed_min, room_temp, sleep_stage,
+                          body_avg=None, body_left=None, current_setting=None):
         """Compute target L1 from cycle/stage, body feedback, room compensation, and learned blower residuals."""
         cycle_num = self._get_cycle_num(elapsed_min)
         self._state["current_cycle_num"] = cycle_num
@@ -716,13 +730,15 @@ class SleepControllerV5(hass.Hass):
                 data_source = "stage"
 
         # ── v5.2 body-temperature feedback ───────────────────────────
-        # Closed-loop correction on the cycle baseline. See module-level
+        # Closed-loop correction on the cycle baseline. Reads BODY_FB_INPUT
+        # (defaults to body_left, the skin-contact channel) — see module-level
         # BODY_FB_* constants for the rationale and fit numbers.
         body_fb_correction = 0
+        body_fb_input = body_left if BODY_FB_INPUT == "body_left" else body_avg
         if (BODY_FB_ENABLED
                 and cycle_num >= BODY_FB_MIN_CYCLE
-                and body_avg is not None):
-            body_delta = body_avg - BODY_FB_TARGET_F
+                and body_fb_input is not None):
+            body_delta = body_fb_input - BODY_FB_TARGET_F
             if body_delta < 0:
                 # Body cooler than target → ease off (warmer correction)
                 raw = -BODY_FB_KP_COLD * body_delta  # positive
@@ -853,6 +869,7 @@ class SleepControllerV5(hass.Hass):
                 room_temp,
                 None,
                 body_avg=initial_snapshot["body_avg"],
+                body_left=initial_snapshot["body_left"],
                 current_setting=initial_snapshot["setting"],
             )
             initial_setting = plan["setting"]
