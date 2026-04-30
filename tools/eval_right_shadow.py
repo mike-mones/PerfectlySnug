@@ -71,7 +71,7 @@ def main() -> int:
         return 0
 
     print("\n=== body sensor distribution during shadow operation ===")
-    print(df[["body_left", "body_center", "body_right", "body_avg"]].describe()
+    print(df[["body_left", "body_center", "body_right", "body_avg", "body_skin"]].describe()
           .round(2).to_string())
 
     print("\n=== shadow proposed setting vs firmware actual ===")
@@ -86,6 +86,16 @@ def main() -> int:
     print("\n=== correction reasons ===")
     if "right_v52_reason" in df.columns:
         print(df["right_v52_reason"].value_counts().to_string())
+
+    print("\n=== BedJet-window vs post-window distribution ===")
+    if "in_bedjet_window" in df.columns:
+        in_window = df["in_bedjet_window"].fillna(False)
+        print(f"  in BedJet window: {in_window.sum()} ticks")
+        print(f"  post-window:      {(~in_window).sum()} ticks")
+        if in_window.any():
+            corr_in = df.loc[in_window, "right_v52_correction"]
+            print(f"  in-window corrections: should all be 0 → "
+                  f"{(corr_in == 0).all()} (counter-examples: {(corr_in != 0).sum()})")
 
     print("\n=== per cycle: shadow proposed setting (mean), firmware setting (mean) ===")
     if "cycle" in df.columns:

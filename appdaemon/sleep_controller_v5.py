@@ -27,6 +27,7 @@ Key principles:
 """
 
 import json
+import math
 import os
 import sys
 import tempfile
@@ -143,6 +144,10 @@ RIGHT_BODY_FB_KP_HOT  = 0.5   # body warm → cooler (her dominant complaint)
 RIGHT_BODY_FB_KP_COLD = 0.3   # body cool → slightly warmer
 RIGHT_BODY_FB_MAX_DELTA = 4   # tighter cap than left (less data)
 RIGHT_BODY_FB_SKIP_CYCLES = (1,)
+RIGHT_BEDJET_WINDOW_MIN = 30.0  # match right_overheat_safety.BEDJET_SUPPRESS_MIN
+                                 # — body sensors inflate during the wife's
+                                 # warm-blanket pre-warm; suppress shadow
+                                 # corrections during this window.
 RIGHT_SHADOW_LOG_PATH = "/config/snug_right_v52_shadow.jsonl"
 
 # ── Control Model ────────────────────────────────────────────────────
@@ -513,26 +518,65 @@ class SleepControllerV5(hass.Hass):
             )
 
     def _right_v52_shadow_tick(self, *, elapsed_min, room_temp, sleep_stage, right_snap):
-        """Compute and log the right-zone v5.2 decision; do not act."""
+        """Compute and log the right-zone v5.2 decision; do not act.
+
+        Sensor input: body_left_f (skin-contact for the right zone — same as
+        right_overheat_safety uses). body_avg includes warm-sheet body_center
+        and would push the shadow controller toward false-cool corrections.
+
+        BedJet gate: during the first BEDJET_SUPPRESS_MIN minutes after
+        right-bed onset, BedJet airflow inflates body sensors. Force the
+        correction to 0 in that window so the shadow log isn't full of
+        garbage cooling proposals during legitimate warm-blanket use.
+        """
         try:
             cycle_num = self._get_cycle_num(elapsed_min)
             base = RIGHT_CYCLE_SETTINGS.get(
                 cycle_num,
                 RIGHT_CYCLE_SETTINGS[max(RIGHT_CYCLE_SETTINGS.keys())],
             )
-            body_avg = right_snap.get("body_avg")
+            # Skin-contact channel, NOT body_avg (which mixes warm-sheet center).
+            body_skin = right_snap.get("body_left")
+            body_avg = right_snap.get("body_avg")  # logged for diagnostics
             firmware_setting = right_snap.get("setting")
             firmware_blower = right_snap.get("blower_pct")
             occupied = self._read_str(BED_PRESENCE_ENTITIES["occupied_right"]) == "on"
 
+            # Track right-bed onset for BedJet gate (independent of the
+            # right_overheat_safety app's state — keep them decoupled).
+            now = datetime.now()
+            if occupied:
+                if not self._state.get("right_zone_last_occupied"):
+                    self._state["right_zone_occupied_since"] = now.isoformat()
+                    self._state["right_zone_last_occupied"] = True
+            else:
+                self._state["right_zone_last_occupied"] = False
+                self._state["right_zone_occupied_since"] = None
+
+            # Compute minutes-since-onset, if in a session
+            mins_since_onset = None
+            occ_since = self._state.get("right_zone_occupied_since")
+            if occ_since:
+                try:
+                    occ_dt = datetime.fromisoformat(occ_since)
+                    mins_since_onset = (now - occ_dt).total_seconds() / 60.0
+                except (TypeError, ValueError):
+                    mins_since_onset = None
+            in_bedjet_window = (
+                mins_since_onset is not None
+                and 0 <= mins_since_onset <= RIGHT_BEDJET_WINDOW_MIN
+            )
+
             correction = 0
             corr_reason = "none"
-            if (cycle_num not in RIGHT_BODY_FB_SKIP_CYCLES
-                    and body_avg is not None):
-                delta = body_avg - RIGHT_BODY_FB_TARGET_F
+            if in_bedjet_window:
+                corr_reason = f"bedjet_window_{mins_since_onset:.0f}min"
+            elif (cycle_num not in RIGHT_BODY_FB_SKIP_CYCLES
+                  and body_skin is not None):
+                delta = body_skin - RIGHT_BODY_FB_TARGET_F
                 if delta > 0:
-                    raw = -RIGHT_BODY_FB_KP_HOT * delta
-                    correction = -int(round(min(-raw, RIGHT_BODY_FB_MAX_DELTA)))
+                    raw = RIGHT_BODY_FB_KP_HOT * delta
+                    correction = -int(round(min(raw, RIGHT_BODY_FB_MAX_DELTA)))
                     corr_reason = f"hot_{delta:+.1f}"
                 elif delta < 0:
                     raw = -RIGHT_BODY_FB_KP_COLD * delta
@@ -542,12 +586,17 @@ class SleepControllerV5(hass.Hass):
             proposed = max(-10, min(MAX_SETTING, base + correction))
 
             entry = {
-                "ts": datetime.now().isoformat(timespec="seconds"),
+                "ts": now.isoformat(timespec="seconds"),
                 "elapsed_min": round(elapsed_min, 1) if elapsed_min is not None else None,
                 "cycle": cycle_num,
                 "stage": sleep_stage,
                 "occupied": occupied,
-                "body_avg": body_avg,
+                "mins_since_onset": (
+                    round(mins_since_onset, 1) if mins_since_onset is not None else None
+                ),
+                "in_bedjet_window": in_bedjet_window,
+                "body_skin": body_skin,           # body_left — primary input
+                "body_avg": body_avg,             # diagnostic only
                 "body_left": right_snap.get("body_left"),
                 "body_center": right_snap.get("body_center"),
                 "body_right": right_snap.get("body_right"),
@@ -1049,9 +1098,15 @@ class SleepControllerV5(hass.Hass):
         if state in (None, "unknown", "unavailable", ""):
             return None
         try:
-            return float(state)
+            value = float(state)
         except (ValueError, TypeError):
             return None
+        # NaN guard: HA can publish "nan" or sensors can briefly report it on
+        # device boot. float() succeeds, but downstream int() / comparisons
+        # would crash or silently mis-evaluate. Treat NaN as missing.
+        if math.isnan(value):
+            return None
+        return value
 
     def _read_temperature(self, entity_id):
         value = self._read_float(entity_id)

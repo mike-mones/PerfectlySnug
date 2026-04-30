@@ -3,3 +3,7 @@ sleep_controller:
   class: SleepControllerV5
   room_temp_entity: sensor.bedroom_temperature_sensor_temperature
   postgres_host: 192.168.0.3
+
+right_overheat_safety:
+  module: right_overheat_safety
+  class: RightOverheatSafety
