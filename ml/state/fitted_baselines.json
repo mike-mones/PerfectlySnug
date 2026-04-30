@@ -1,0 +1,104 @@
+{
+  "prior_n": 1.0,
+  "min_overrides_per_band": 3,
+  "min_band_delta_for_slope": 0.75,
+  "cycle_baselines_v5": {
+    "1": -10,
+    "2": -9,
+    "3": -8,
+    "4": -7,
+    "5": -6,
+    "6": -5
+  },
+  "cycle_baselines_fitted": {
+    "1": -10,
+    "2": -8,
+    "3": -6,
+    "4": -4,
+    "5": -3,
+    "6": -4
+  },
+  "cycle_diagnostics": {
+    "1": {
+      "prior_mu": -10.0,
+      "n_overrides": 6,
+      "sample_mean": -9.666666666666666,
+      "posterior_raw": -9.714,
+      "fitted": -10
+    },
+    "2": {
+      "prior_mu": -9.0,
+      "n_overrides": 7,
+      "sample_mean": -8.0,
+      "posterior_raw": -8.125,
+      "fitted": -8
+    },
+    "3": {
+      "prior_mu": -8.0,
+      "n_overrides": 10,
+      "sample_mean": -6.0,
+      "posterior_raw": -6.182,
+      "fitted": -6
+    },
+    "4": {
+      "prior_mu": -7.0,
+      "n_overrides": 5,
+      "sample_mean": -3.0,
+      "posterior_raw": -3.667,
+      "fitted": -4
+    },
+    "5": {
+      "prior_mu": -6.0,
+      "n_overrides": 5,
+      "sample_mean": -2.0,
+      "posterior_raw": -2.667,
+      "fitted": -3
+    },
+    "6": {
+      "prior_mu": -5.0,
+      "n_overrides": 6,
+      "sample_mean": -3.6666666666666665,
+      "posterior_raw": -3.857,
+      "fitted": -4
+    }
+  },
+  "room_comp_band_adjustments": {
+    "cold": 0,
+    "cool": 2,
+    "neutral": 0,
+    "warm": 0,
+    "heat_on": -1
+  },
+  "room_comp_diagnostics": {
+    "cold": {
+      "n": 1,
+      "mean_residual": 1.0,
+      "adjustment": 0,
+      "reason": "n<3"
+    },
+    "cool": {
+      "n": 10,
+      "mean_residual": 1.9,
+      "adjustment": 2,
+      "reason": "fitted from data"
+    },
+    "neutral": {
+      "n": 13,
+      "mean_residual": 0.54,
+      "adjustment": 0,
+      "reason": "residual within noise"
+    },
+    "warm": {
+      "n": 11,
+      "mean_residual": -0.73,
+      "adjustment": 0,
+      "reason": "residual within noise"
+    },
+    "heat_on": {
+      "n": 4,
+      "mean_residual": -1.25,
+      "adjustment": -1,
+      "reason": "fitted from data"
+    }
+  }
+}
