@@ -112,6 +112,39 @@ BODY_FB_MAX_DELTA = 5       # cap upward correction (warmer-shift) from baseline
 BODY_FB_MIN_CYCLE = 3       # apply only from cycle 3 onward; cycles 1-2 honor
                             # bedtime aggressive cooling regardless of body temp
 
+# ── Right-zone v5.2 shadow controller (her side, log-only) ───────────
+# The wife's right zone runs in firmware Responsive Cooling mode (RC modulates
+# blower toward a setpoint determined by `setting`). Her n=6 overrides skew
+# COOLER-please (4 of 6) at body 76-86°F, and the rich notes column shows
+# firmware blower=0% in 3 of 4 cooler-please events: RC was static while she
+# was warm. That's the gap a body-feedback controller could close.
+#
+# This block computes what a right-zone v5.2 WOULD set at each tick and writes
+# it to /config/snug_right_v52_shadow.jsonl alongside the firmware actual.
+# NO HA service calls, NO actuation. Pure observability — once 1-2 nights of
+# shadow data show the decisions are sensible, we flip a flag to enable real
+# control.
+#
+# Parameters fit by sweep on her 6 overrides (best of {target, Kp_hot, Kp_cold,
+# baselines, cap}; n=6 is too thin for trustworthy fitting — these are
+# educated starting points, not validated).
+RIGHT_SHADOW_ENABLED = True   # flip false to silence shadow logger entirely
+RIGHT_LIVE_ENABLED = False    # MUST stay False until shadow log is reviewed
+RIGHT_CYCLE_SETTINGS = {
+    1: -8,   # gentler than user's -10; her firmware default is -5 to -6
+    2: -7,
+    3: -6,
+    4: -5,
+    5: -5,
+    6: -5,
+}
+RIGHT_BODY_FB_TARGET_F = 80.0
+RIGHT_BODY_FB_KP_HOT  = 0.5   # body warm → cooler (her dominant complaint)
+RIGHT_BODY_FB_KP_COLD = 0.3   # body cool → slightly warmer
+RIGHT_BODY_FB_MAX_DELTA = 4   # tighter cap than left (less data)
+RIGHT_BODY_FB_SKIP_CYCLES = (1,)
+RIGHT_SHADOW_LOG_PATH = "/config/snug_right_v52_shadow.jsonl"
+
 # ── Control Model ────────────────────────────────────────────────────
 CONTROLLER_VERSION = "v5_2_rc_off"
 ENABLE_LEARNING = True
@@ -292,6 +325,11 @@ class SleepControllerV5(hass.Hass):
         self.log(f"  Body feedback: enabled={BODY_FB_ENABLED}, "
                  f"target={BODY_FB_TARGET_F}°F, Kp_cold={BODY_FB_KP_COLD}, "
                  f"max_delta={BODY_FB_MAX_DELTA}, min_cycle={BODY_FB_MIN_CYCLE}")
+        self.log(f"  Right-zone shadow: enabled={RIGHT_SHADOW_ENABLED}, "
+                 f"live={RIGHT_LIVE_ENABLED}, "
+                 f"baselines={list(RIGHT_CYCLE_SETTINGS.values())}, "
+                 f"target={RIGHT_BODY_FB_TARGET_F}°F, "
+                 f"Kp_hot={RIGHT_BODY_FB_KP_HOT}, Kp_cold={RIGHT_BODY_FB_KP_COLD}")
         self.log(f"  Cycles: {CYCLE_SETTINGS}")
         self.log(f"  Learned: {self._learned}")
         self.log(f"  Room temp: {self._get_room_temp_entity()}")
@@ -462,6 +500,76 @@ class SleepControllerV5(hass.Hass):
                 body_f=right_snap.get("body_left"),
                 v5_setting=right_snap.get("setting"),
             )
+
+        # ── Right-zone v5.2 shadow: log decision alongside firmware actual ──
+        # See RIGHT_* constants for params and rationale. Pure logging; no
+        # actuation until RIGHT_LIVE_ENABLED is set True (and even then, gated
+        # on input_boolean.snug_right_controller_enabled which doesn't exist
+        # yet — adding the entity is the explicit go-live step).
+        if RIGHT_SHADOW_ENABLED:
+            self._right_v52_shadow_tick(
+                elapsed_min=elapsed_min, room_temp=room_temp,
+                sleep_stage=sleep_stage, right_snap=right_snap,
+            )
+
+    def _right_v52_shadow_tick(self, *, elapsed_min, room_temp, sleep_stage, right_snap):
+        """Compute and log the right-zone v5.2 decision; do not act."""
+        try:
+            cycle_num = self._get_cycle_num(elapsed_min)
+            base = RIGHT_CYCLE_SETTINGS.get(
+                cycle_num,
+                RIGHT_CYCLE_SETTINGS[max(RIGHT_CYCLE_SETTINGS.keys())],
+            )
+            body_avg = right_snap.get("body_avg")
+            firmware_setting = right_snap.get("setting")
+            firmware_blower = right_snap.get("blower_pct")
+            occupied = self._read_str(BED_PRESENCE_ENTITIES["occupied_right"]) == "on"
+
+            correction = 0
+            corr_reason = "none"
+            if (cycle_num not in RIGHT_BODY_FB_SKIP_CYCLES
+                    and body_avg is not None):
+                delta = body_avg - RIGHT_BODY_FB_TARGET_F
+                if delta > 0:
+                    raw = -RIGHT_BODY_FB_KP_HOT * delta
+                    correction = -int(round(min(-raw, RIGHT_BODY_FB_MAX_DELTA)))
+                    corr_reason = f"hot_{delta:+.1f}"
+                elif delta < 0:
+                    raw = -RIGHT_BODY_FB_KP_COLD * delta
+                    correction = int(round(min(raw, RIGHT_BODY_FB_MAX_DELTA)))
+                    corr_reason = f"cold_{delta:+.1f}"
+
+            proposed = max(-10, min(MAX_SETTING, base + correction))
+
+            entry = {
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "elapsed_min": round(elapsed_min, 1) if elapsed_min is not None else None,
+                "cycle": cycle_num,
+                "stage": sleep_stage,
+                "occupied": occupied,
+                "body_avg": body_avg,
+                "body_left": right_snap.get("body_left"),
+                "body_center": right_snap.get("body_center"),
+                "body_right": right_snap.get("body_right"),
+                "ambient": right_snap.get("ambient"),
+                "room_temp_f": room_temp,
+                "firmware_setting": firmware_setting,
+                "firmware_blower": firmware_blower,
+                "right_v52_base": base,
+                "right_v52_correction": correction,
+                "right_v52_proposed": proposed,
+                "right_v52_reason": corr_reason,
+                "right_v52_diff_vs_firmware": (
+                    None if firmware_setting is None
+                    else proposed - firmware_setting
+                ),
+            }
+            import json as _json
+            with open(RIGHT_SHADOW_LOG_PATH, "a") as f:
+                f.write(_json.dumps(entry) + "\n")
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"right_v52_shadow skipped ({exc.__class__.__name__}): {exc}",
+                     level="WARNING")
 
     def _shadow_log_decision(self, *, zone, elapsed_min, room_temp_f, body_f, v5_setting):
         """Append one shadow-policy evaluation to /config/snug_shadow.jsonl.
