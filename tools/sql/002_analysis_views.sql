@@ -21,7 +21,10 @@ night_stats AS (
     SELECT
         night_date,
         zone,
-        controller_version,
+        STRING_AGG(
+            DISTINCT COALESCE(controller_version, 'unknown'),
+            ',' ORDER BY COALESCE(controller_version, 'unknown')
+        ) AS controller_version,
         MIN(ts) AS first_reading,
         MAX(ts) AS last_reading,
         EXTRACT(EPOCH FROM MAX(ts) - MIN(ts)) / 3600.0 AS duration_hours,
@@ -46,7 +49,7 @@ night_stats AS (
         ARRAY_AGG(DISTINCT phase ORDER BY phase) AS phases_seen,
         ARRAY_AGG(DISTINCT action ORDER BY action) AS actions_seen
     FROM night_bounds
-    GROUP BY night_date, zone, controller_version
+    GROUP BY night_date, zone
 )
 SELECT
     ns.*,
@@ -66,8 +69,13 @@ ORDER BY ns.night_date DESC, ns.zone;
 CREATE OR REPLACE VIEW v_setting_timeline AS
 WITH reading_with_prev AS (
     SELECT
+        CASE
+            WHEN EXTRACT(HOUR FROM ts AT TIME ZONE 'America/New_York') >= 18
+            THEN (ts AT TIME ZONE 'America/New_York')::date
+            ELSE (ts AT TIME ZONE 'America/New_York')::date - 1
+        END AS night_date,
         ts, zone, phase, action, setting, effective, baseline,
-        learned_adj, override_delta, body_avg_f, room_temp_f,
+        learned_adj, override_delta, body_avg_f, room_temp_f, setpoint_f,
         controller_version,
         LAG(setting) OVER (PARTITION BY zone ORDER BY ts) AS prev_setting,
         LAG(effective) OVER (PARTITION BY zone ORDER BY ts) AS prev_effective,
@@ -75,17 +83,17 @@ WITH reading_with_prev AS (
     FROM controller_readings
 )
 SELECT
-    ts, zone, phase, action, setting, effective, prev_setting,
+    night_date, ts, zone, phase, action, setting, effective, prev_setting,
     setting - COALESCE(prev_setting, setting) AS setting_delta,
     CASE
         WHEN action = 'override' THEN 'user_override'
-        WHEN action = 'preference' THEN 'user_preference'
-        WHEN action IN ('cooldown', 'hold', 'hot_safety') THEN 'controller_auto'
-        WHEN action = 'deadband' THEN 'deadband_hold'
+        WHEN action = 'passive' THEN 'passive_snapshot'
+        WHEN action IN ('set', 'hold', 'rate_hold', 'freeze_hold', 'manual_hold') THEN 'controller_auto'
+        WHEN action = 'empty_bed' THEN 'empty_bed'
         ELSE COALESCE(action, 'unknown')
     END AS change_source,
     baseline, learned_adj, override_delta,
-    body_avg_f, room_temp_f, controller_version
+    body_avg_f, room_temp_f, setpoint_f, controller_version
 FROM reading_with_prev
 WHERE setting IS DISTINCT FROM prev_setting
    OR action IS DISTINCT FROM prev_action

@@ -19,6 +19,22 @@ BEGIN
     END IF;
 END $$;
 
+-- Add notes column for v4 telemetry attribution/context
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'controller_readings' AND column_name = 'notes'
+    ) THEN
+        ALTER TABLE controller_readings ADD COLUMN notes text;
+        COMMENT ON COLUMN controller_readings.notes
+            IS 'Freeform telemetry context (cycle, source, room compensation, etc.)';
+        RAISE NOTICE 'Added notes column';
+    ELSE
+        RAISE NOTICE 'notes column already exists';
+    END IF;
+END $$;
+
 -- Composite index for efficient time-range queries per zone
 CREATE INDEX IF NOT EXISTS idx_readings_ts_zone
     ON controller_readings (ts, zone);
