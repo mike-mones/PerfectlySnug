@@ -161,11 +161,14 @@ def _rolling_pct_gate(series, window_min: int, percentile: float,
     fewer than 6 prior valid observations returns False (insufficient stats).
     `direction` ∈ {'above','below'}.
     """
-    win = series.rolling(f"{window_min}min", min_periods=6)
+    # Coerce to float so all-None object columns (which can arise when a
+    # health metric is missing entirely for a night) don't break comparisons.
+    s = pd.to_numeric(series, errors="coerce") if pd is not None else series
+    win = s.rolling(f"{window_min}min", min_periods=6)
     thresh = win.quantile(percentile)
     if direction == "above":
-        return series.gt(thresh).fillna(False)
-    return series.lt(thresh).fillna(False)
+        return s.gt(thresh).fillna(False)
+    return s.lt(thresh).fillna(False)
 
 
 def compute_candidate_signals(per_min: "pd.DataFrame") -> "pd.DataFrame":
@@ -247,9 +250,9 @@ def build_label_corpus(per_min: "pd.DataFrame",
         per_min = compute_candidate_signals(per_min)
     df = per_min.copy()
 
-    occupied = df.get("occupied", pd.Series(True, index=df.index)).fillna(False)
-    is_ovr   = df.get("is_override", pd.Series(False, index=df.index)).fillna(False)
-    proxy    = df["proxy_fired"].fillna(False)
+    occupied = df.get("occupied", pd.Series(True, index=df.index)).fillna(False).astype(bool)
+    is_ovr   = df.get("is_override", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+    proxy    = df["proxy_fired"].fillna(False).astype(bool)
 
     cond_empty   = ~occupied if REQUIRE_OCCUPIED else pd.Series(False, index=df.index)
     cond_ovr     = (~cond_empty) & is_ovr

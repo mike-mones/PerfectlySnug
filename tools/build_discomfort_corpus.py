@@ -96,10 +96,10 @@ def to_minute_grid(rd: pd.DataFrame, stages: pd.DataFrame,
             night_h = health[(health["ts"] >= per_min.index.min())
                              & (health["ts"] <= per_min.index.max())]
             if not night_h.empty:
-                p = (night_h.set_index("ts")
-                            .pivot_table(values="value",
-                                         columns="metric_name",
-                                         aggfunc="mean"))
+                # pandas 3.0 changed pivot_table's default index semantics; be
+                # explicit so we always pivot ts→rows, metric_name→cols.
+                p = night_h.pivot_table(values="value", index="ts",
+                                        columns="metric_name", aggfunc="mean")
                 p = p.reindex(per_min.index.union(p.index)).sort_index()
                 p = p.ffill(limit=10).reindex(per_min.index)
                 per_min["hr"]  = p.get("heart_rate")
