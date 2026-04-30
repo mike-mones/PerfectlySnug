@@ -87,8 +87,33 @@ CYCLE_SETTINGS = {
 }
 CYCLE_DURATION_MIN = 90
 
+# ── Body-temperature feedback (v5.2) ─────────────────────────────────
+# After the cycle baseline is set, apply a closed-loop correction based on
+# the actual body sensor reading. Cycle baselines are open-loop (time only);
+# adding body feedback closes the loop on the controlled variable that
+# matters (skin temp). Fit by counterfactual replay over 41 left-zone
+# overrides; held-out LOOCV MAE drops from 3.116 (v5.1) to 1.633 (v5.2).
+#
+# Mechanics: when body_avg_f is BELOW BODY_FB_TARGET, shift the cycle
+# baseline by Kp*(target-body) settings warmer (less cooling). No correction
+# applied above target — the safety rails (`hot_safety`, `overheat_hard`,
+# right-zone rail) handle hot-side. Skipped in cycles 1-2 (bedtime aggressive
+# cooling phase, where users override toward -10 regardless of body temp).
+#
+# Sweep evidence (n=41 overrides, 30 nights):
+#   v5  : MAE=3.024 hit=26.8% bias=-2.00 (open-loop, monotonic baselines)
+#   v5.1: MAE=2.683 hit=31.7% bias=-1.71 (refit baselines)
+#   v5.2: MAE=1.732 hit=61.0% bias=+0.32 (refit + body feedback)
+#   LOOCV: v5.2=1.633 vs v5.1=3.116 (-48% on held-out)
+BODY_FB_ENABLED = True
+BODY_FB_TARGET_F = 86.0     # below this body_avg_f, we ease off cooling
+BODY_FB_KP_COLD = 0.55      # settings per °F below target
+BODY_FB_MAX_DELTA = 5       # cap upward correction (warmer-shift) from baseline
+BODY_FB_MIN_CYCLE = 3       # apply only from cycle 3 onward; cycles 1-2 honor
+                            # bedtime aggressive cooling regardless of body temp
+
 # ── Control Model ────────────────────────────────────────────────────
-CONTROLLER_VERSION = "v5_rc_off"
+CONTROLLER_VERSION = "v5_2_rc_off"
 ENABLE_LEARNING = True
 MAX_SETTING = 0
 
@@ -263,7 +288,10 @@ class SleepControllerV5(hass.Hass):
         # Gap 5: If sleep_mode is already ON (mid-night restart), resume
         self._check_midnight_restart()
 
-        self.log("Controller v5 ready — left side in RC-off blower-proxy mode")
+        self.log(f"Controller {CONTROLLER_VERSION} ready — left side in RC-off blower-proxy mode")
+        self.log(f"  Body feedback: enabled={BODY_FB_ENABLED}, "
+                 f"target={BODY_FB_TARGET_F}°F, Kp_cold={BODY_FB_KP_COLD}, "
+                 f"max_delta={BODY_FB_MAX_DELTA}, min_cycle={BODY_FB_MIN_CYCLE}")
         self.log(f"  Cycles: {CYCLE_SETTINGS}")
         self.log(f"  Learned: {self._learned}")
         self.log(f"  Room temp: {self._get_room_temp_entity()}")
@@ -466,7 +494,7 @@ class SleepControllerV5(hass.Hass):
                      level="WARNING")
 
     def _compute_setting(self, elapsed_min, room_temp, sleep_stage, body_avg=None, current_setting=None):
-        """Compute target L1 from cycle/stage, room compensation, and learned blower residuals."""
+        """Compute target L1 from cycle/stage, body feedback, room compensation, and learned blower residuals."""
         cycle_num = self._get_cycle_num(elapsed_min)
         self._state["current_cycle_num"] = cycle_num
 
@@ -477,6 +505,24 @@ class SleepControllerV5(hass.Hass):
             if staged_setting is not None:
                 base_setting = staged_setting
                 data_source = "stage"
+
+        # ── v5.2 body-temperature feedback ───────────────────────────
+        # Closed-loop correction on the cycle baseline. See module-level
+        # BODY_FB_* constants for the rationale and fit numbers.
+        body_fb_correction = 0
+        if (BODY_FB_ENABLED
+                and cycle_num >= BODY_FB_MIN_CYCLE
+                and body_avg is not None):
+            body_delta = body_avg - BODY_FB_TARGET_F
+            if body_delta < 0:
+                # Body cooler than target → ease off (warmer correction)
+                raw = -BODY_FB_KP_COLD * body_delta  # positive
+                body_fb_correction = int(round(min(raw, BODY_FB_MAX_DELTA)))
+                if body_fb_correction:
+                    new_base = max(-10, min(MAX_SETTING, base_setting + body_fb_correction))
+                    if new_base != base_setting:
+                        base_setting = new_base
+                        data_source += f"+body_fb({body_fb_correction:+d})"
 
         base_blower_pct = self._l1_to_blower_pct(base_setting)
         target_blower_pct = base_blower_pct

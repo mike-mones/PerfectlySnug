@@ -478,3 +478,99 @@ class TestPostgresLogging:
         assert "controller_proxy_blower=100" in notes
         assert "override_proxy_blower=75" in notes
         assert "actual_blower=33" in notes
+
+
+class TestBodyFeedback:
+    """v5.2: closed-loop body-temperature feedback on cycle baselines."""
+
+    def _fresh_controller(self):
+        c = SleepControllerV5()
+        c._learned = {}
+        c._state = {"current_cycle_num": 0}
+        return c
+
+    def test_skip_in_cycles_1_2(self):
+        """Bedtime aggressive cooling — skip feedback regardless of body."""
+        c = self._fresh_controller()
+        # cycle 1 (elapsed_min < 90)
+        plan = c._compute_setting(elapsed_min=10, room_temp=68.0, sleep_stage=None,
+                                  body_avg=72.0)
+        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[1]
+        # cycle 2 (90 <= elapsed_min < 180)
+        plan = c._compute_setting(elapsed_min=120, room_temp=68.0, sleep_stage=None,
+                                  body_avg=72.0)
+        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[2]
+
+    def test_no_correction_when_body_at_or_above_target(self):
+        c = self._fresh_controller()
+        for body in (86.0, 88.0, 90.0):
+            plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
+                                      sleep_stage=None, body_avg=body)
+            assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[3], \
+                f"body={body} should not trigger correction"
+
+    def test_correction_when_body_below_target(self):
+        """body 6°F below target → +3.3 → +3 settings warmer."""
+        c = self._fresh_controller()
+        plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
+                                  sleep_stage=None, body_avg=80.0)
+        # cycle 3 baseline -7 + 3 = -4
+        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[3] + 3
+
+    def test_correction_capped(self):
+        """body 12°F below target → +6.6 → cap at +5."""
+        c = self._fresh_controller()
+        plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
+                                  sleep_stage=None, body_avg=74.0)
+        cap = ctrl_module.BODY_FB_MAX_DELTA
+        expected = max(-10, ctrl_module.CYCLE_SETTINGS[3] + cap)
+        assert plan["base_setting"] == expected
+
+    def test_no_correction_when_body_missing(self):
+        c = self._fresh_controller()
+        plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
+                                  sleep_stage=None, body_avg=None)
+        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[3]
+
+    def test_correction_does_not_exceed_zero(self):
+        """If correction would push setting above 0 (heating), clamp at 0."""
+        c = self._fresh_controller()
+        # Synthetic cycle baseline -1, body very low → +5 cap → -1+5=+4 → clamp 0
+        original = dict(ctrl_module.CYCLE_SETTINGS)
+        try:
+            ctrl_module.CYCLE_SETTINGS[3] = -1
+            plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
+                                      sleep_stage=None, body_avg=72.0)
+            assert plan["base_setting"] == 0  # MAX_SETTING
+        finally:
+            ctrl_module.CYCLE_SETTINGS.clear()
+            ctrl_module.CYCLE_SETTINGS.update(original)
+
+    def test_data_source_logs_correction(self):
+        c = self._fresh_controller()
+        plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
+                                  sleep_stage=None, body_avg=80.0)
+        assert "body_fb" in plan["data_source"]
+
+    def test_constants_are_locked(self):
+        """v5.2 constants pinned by parse-time AST so a refactor can't drift."""
+        import ast as _ast
+        src = CONTROLLER_PATH.read_text()
+        consts = {}
+        for node in _ast.walk(_ast.parse(src)):
+            if isinstance(node, _ast.Assign) and len(node.targets) == 1:
+                t = node.targets[0]
+                if not isinstance(t, _ast.Name):
+                    continue
+                v = node.value
+                if isinstance(v, _ast.Constant):
+                    consts[t.id] = v.value
+                elif (isinstance(v, _ast.UnaryOp) and isinstance(v.op, _ast.USub)
+                      and isinstance(v.operand, _ast.Constant)):
+                    consts[t.id] = -v.operand.value
+        assert consts.get("CONTROLLER_VERSION") == "v5_2_rc_off"
+        assert consts.get("BODY_FB_ENABLED") is True
+        assert consts.get("BODY_FB_TARGET_F") == 86.0
+        assert consts.get("BODY_FB_KP_COLD") == 0.55
+        assert consts.get("BODY_FB_MAX_DELTA") == 5
+        assert consts.get("BODY_FB_MIN_CYCLE") == 3
