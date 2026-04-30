@@ -54,11 +54,24 @@ import hassapi as hass
 
 # ── Constants ────────────────────────────────────────────────────────────
 
-OVERHEAT_HARD_F = 88.0       # body ≥ this for STREAK polls → engage
+OVERHEAT_HARD_F = 88.0       # body ≥ this for STREAK polls → engage.
+                             # Per user: ≥88°F should never happen naturally;
+                             # her observed warmer right-zone p99 (~95°F raw)
+                             # is BedJet contamination, not real comfort range.
 OVERHEAT_HARD_STREAK = 2     # 2 consecutive polls (~2 min)
 OVERHEAT_RELEASE_F = 84.0    # release engagement when body drops below
 RAIL_FORCE_SETTING = -10     # value forced on bedtime_temperature
 POLL_INTERVAL_SEC = 60
+
+# BedJet warm-blanket window. The wife runs a BedJet on heat for the first
+# ~30 min of sleep to pre-warm the sheets while the topper cools. The BedJet
+# blows hot air across the right-zone body sensors and inflates readings to
+# 90-99°F. Engaging the rail during this window would force the topper to
+# max-cool against an intentional heating cycle, which the user explicitly
+# does not want. So we SUPPRESS engagement (do not even count toward the
+# streak) for the first BEDJET_SUPPRESS_MIN minutes after right-bed
+# occupancy onset. After the window we operate normally.
+BEDJET_SUPPRESS_MIN = 30.0
 
 E_RAIL_FLAG = "input_boolean.snug_right_overheat_rail_enabled"
 E_BEDTIME_R = "number.smart_topper_right_side_bedtime_temperature"
@@ -83,13 +96,16 @@ class RightOverheatSafety(hass.Hass):
             "engaged_at": None,
             "released_at": None,
             "engage_count_session": 0,
+            "occupied_since": None,      # ISO ts of latest off→on right-bed transition
+            "last_occupied": False,
         }
         self._load_state()
 
         self.run_every(self._tick, "now", POLL_INTERVAL_SEC)
         self.log("Right-zone overheat safety rail ready "
                  f"(engage ≥{OVERHEAT_HARD_F}°F x{OVERHEAT_HARD_STREAK}, "
-                 f"release <{OVERHEAT_RELEASE_F}°F, force={RAIL_FORCE_SETTING})")
+                 f"release <{OVERHEAT_RELEASE_F}°F, force={RAIL_FORCE_SETTING}, "
+                 f"bedjet_suppress={BEDJET_SUPPRESS_MIN:.0f}min)")
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -135,17 +151,57 @@ class RightOverheatSafety(hass.Hass):
             # If we're disabled mid-engagement, release immediately.
             if self._state["engaged"]:
                 self._release(reason="rail_disabled")
+            self._state["last_occupied"] = False
+            self._state["occupied_since"] = None
             return
 
         # Gate 2: bed occupied? Don't fight the firmware when she's not in bed.
-        if self._read_str(E_OCCUPIED_R) != "on":
+        occupied = self._read_str(E_OCCUPIED_R) == "on"
+        if not occupied:
             if self._state["engaged"]:
                 self._release(reason="bed_unoccupied")
+            self._state["last_occupied"] = False
+            self._state["occupied_since"] = None
+            self._save_state()
             return
+
+        # Track right-bed occupancy onset for the BedJet suppression window.
+        now = datetime.now()
+        if not self._state.get("last_occupied"):
+            self._state["occupied_since"] = now.isoformat()
+            self._state["last_occupied"] = True
 
         body = self._read_float(E_BODY_CENTER_R)
         if body is None:
             # Don't update streak on a missing read — neither engage nor release.
+            self._save_state()
+            return
+
+        # Gate 3: BedJet suppression. For the first BEDJET_SUPPRESS_MIN minutes
+        # after right-bed occupancy onset, the BedJet's heated airflow inflates
+        # the body sensor (commonly 90-99°F). Do NOT count toward the streak,
+        # do NOT engage. Already-engaged state is preserved (the operator
+        # might have turned the rail on while a previous engagement was active),
+        # but a fresh occupancy session starts engaged=False because release
+        # already fired on the bed-empty transition.
+        in_bedjet_window = False
+        occ_since = self._state.get("occupied_since")
+        if occ_since:
+            try:
+                occ_dt = datetime.fromisoformat(occ_since)
+                mins = (now - occ_dt).total_seconds() / 60.0
+                in_bedjet_window = mins <= BEDJET_SUPPRESS_MIN
+            except (TypeError, ValueError):
+                in_bedjet_window = False
+
+        if in_bedjet_window:
+            # Hold streak at 0 so any post-window readings start fresh.
+            if body >= OVERHEAT_HARD_F:
+                self.log(f"BedJet window ({BEDJET_SUPPRESS_MIN:.0f}min): "
+                         f"suppressing body={body:.1f}°F (no streak, no engage)",
+                         level="INFO")
+            self._state["streak"] = 0
+            self._save_state()
             return
 
         already_engaged = self._state["engaged"]

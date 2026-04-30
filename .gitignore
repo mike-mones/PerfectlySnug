@@ -10,3 +10,13 @@ docs/proxy_logs/
 docs/ws_logs/
 docs/web_dump/
 .env
+.DS_Store
+
+# Analysis artifacts (kept local, not committed)
+ml/state/lono_per_night.csv
+ml/state/lono_report.json
+ml/state/snug_model_v6.txt
+ml/state/v5_1_sweep_*.json
+ml/state/discomfort_corpus.parquet
+ml/state/recovered_training_data.json
+ml/state/fitted_baselines.candidate.json
