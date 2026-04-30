@@ -216,3 +216,58 @@ def test_window_resets_on_bed_empty_then_re_entry():
     assert _step(s, body=95.0, minutes_since_onset=10.0) is None
     assert not s.get("engaged")
 
+
+# ── Module-level invariants ──────────────────────────────────────────
+#
+# These tests pin down structural choices that aren't exercised by the
+# pure-function _step replica above (which takes body as a parameter and
+# never reads any HA entity). Without these, a future refactor could
+# silently change the entity name we read, the engage threshold, or the
+# release hysteresis without breaking any other test.
+
+def test_entity_constants_locked():
+    """Lock the right-zone sensor and engagement thresholds.
+
+    The 2026-04-30 sensor swap (body_center_f → body_left_f) is data-driven
+    (see _archive/right_zone_rollout_2026-04-30.md); regressing it would
+    cause the rail to engage 5.8× more often on warm-sheet readings. Pin
+    the entity name so a future mass rename or copy-paste from left-zone
+    code can't silently revert it.
+    """
+    import importlib.util as _u
+    from pathlib import Path as _P
+    spec = _u.spec_from_file_location(
+        "ros_module",
+        _P(__file__).resolve().parents[1] / "appdaemon" / "right_overheat_safety.py",
+    )
+    # We can't fully import (depends on `hassapi`), so parse the AST.
+    import ast
+    src = (_P(__file__).resolve().parents[1] / "appdaemon"
+           / "right_overheat_safety.py").read_text()
+    tree = ast.parse(src)
+    consts = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            t = node.targets[0]
+            if not isinstance(t, ast.Name):
+                continue
+            v = node.value
+            if isinstance(v, ast.Constant):
+                consts[t.id] = v.value
+            elif (isinstance(v, ast.UnaryOp) and isinstance(v.op, ast.USub)
+                  and isinstance(v.operand, ast.Constant)):
+                consts[t.id] = -v.operand.value
+
+    assert consts.get("E_BODY_LEFT_R") == \
+        "sensor.smart_topper_right_side_body_sensor_left", \
+        "right-rail must read body_sensor_left (skin-contact); see " \
+        "_archive/right_zone_rollout_2026-04-30.md for the data."
+    assert "E_BODY_CENTER_R" not in consts, (
+        "stale center-sensor constant — replace with E_BODY_LEFT_R "
+        "(body_center_f reads warm-sheet heat, not skin temp)."
+    )
+    assert consts.get("OVERHEAT_HARD_F") == OVERHEAT_HARD_F
+    assert consts.get("OVERHEAT_RELEASE_F") == OVERHEAT_RELEASE_F
+    assert consts.get("OVERHEAT_HARD_STREAK") == OVERHEAT_HARD_STREAK
+    assert consts.get("BEDJET_SUPPRESS_MIN") == BEDJET_SUPPRESS_MIN
+    assert consts.get("RAIL_FORCE_SETTING") == -10
