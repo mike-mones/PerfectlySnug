@@ -109,6 +109,166 @@ def load_health_metrics(metrics: tuple[str, ...] = (
     return df
 
 
+# ── Bed-pressure movement (from HA recorder, not PG) ──────────────────
+#
+# The bed-presence sensor publishes pressure% at sub-second cadence, capturing
+# every breath, body shift, and roll-over. Controller_readings only sees a
+# 5-min snapshot, which is too coarse to extract movement signal. This loader
+# pulls the high-resolution stream from HA history API and aggregates to
+# per-minute movement-event counts for use as a discomfort proxy signal.
+
+HA_HOST = "192.168.0.106"
+HA_PORT = 8123
+PRESSURE_ENTITIES = {
+    "left":  "sensor.bed_presence_2bcab8_left_pressure",
+    "right": "sensor.bed_presence_2bcab8_right_pressure",
+}
+
+
+def _ha_token() -> str:
+    """Read HA token from macOS Keychain (preferred) or HA_TOKEN env var."""
+    import os
+    import subprocess
+    tok = os.environ.get("HA_TOKEN")
+    if tok:
+        return tok
+    try:
+        r = subprocess.run(
+            ["security", "find-generic-password",
+             "-s", "homeassistant-copilot-token", "-a", "copilot", "-w"],
+            capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except Exception:
+        pass
+    raise RuntimeError(
+        "No HA token. Set HA_TOKEN env var or store with: "
+        "security add-generic-password -s homeassistant-copilot-token "
+        "-a copilot -w 'TOKEN_HERE'"
+    )
+
+
+def load_bed_pressure_history(start, end, side: str = "left") -> pd.DataFrame:
+    """Fetch bed-pressure state changes from HA history API.
+
+    For ranges >24h, splits into multiple API calls (HA history endpoint is
+    bounded at one day per call by default). Returns a single concatenated
+    DataFrame with [ts, pressure_pct].
+    """
+    import json
+    import urllib.parse
+    import urllib.request
+    from datetime import datetime as _dt, timedelta as _td
+
+    if isinstance(start, str):
+        start_dt = _dt.fromisoformat(start)
+    else:
+        start_dt = start
+    if isinstance(end, str):
+        end_dt = _dt.fromisoformat(end)
+    else:
+        end_dt = end
+
+    entity = PRESSURE_ENTITIES.get(side)
+    if entity is None:
+        raise ValueError(f"unknown side {side!r}; expected 'left' or 'right'")
+
+    token = _ha_token()
+    chunks = []
+    cur = start_dt
+    while cur < end_dt:
+        chunk_end = min(cur + _td(hours=23, minutes=59), end_dt)
+        params = urllib.parse.urlencode({
+            "end_time": chunk_end.isoformat(),
+            "filter_entity_id": entity,
+            "minimal_response": "1",
+        })
+        url = (f"http://{HA_HOST}:{HA_PORT}/api/history/period/"
+               f"{cur.isoformat()}?{params}")
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"Bearer {token}"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                payload = json.load(r)
+        except Exception:  # noqa: BLE001 — skip unreachable chunks gracefully
+            cur = chunk_end + _td(seconds=1)
+            continue
+        if payload and payload[0]:
+            chunks.extend(payload[0])
+        cur = chunk_end + _td(seconds=1)
+
+    if not chunks:
+        return pd.DataFrame(columns=["ts", "pressure_pct"])
+
+    rows = []
+    for evt in chunks:
+        state = evt.get("state")
+        if state in (None, "unknown", "unavailable", ""):
+            continue
+        try:
+            v = float(state)
+        except (ValueError, TypeError):
+            continue
+        ts = evt.get("last_changed") or evt.get("last_updated")
+        rows.append({"ts": ts, "pressure_pct": v})
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df["ts"] = pd.to_datetime(df["ts"], utc=True, format="ISO8601").dt.tz_convert("America/New_York")
+    return df.sort_values("ts").drop_duplicates("ts").reset_index(drop=True)
+
+
+def compute_movement_per_minute(pressure_df: pd.DataFrame, *,
+                                 occupied_threshold: float = 50.0,
+                                 movement_delta: float = 1.0,
+                                 ) -> pd.DataFrame:
+    """Aggregate raw pressure events into per-minute movement features.
+
+    Args:
+        pressure_df: output of load_bed_pressure_history (ts, pressure_pct).
+        occupied_threshold: pressure% above which we consider the bed occupied.
+        movement_delta: |Δ pressure| in % between consecutive samples that
+            counts as a "movement event" (not just normal breathing).
+
+    Returns DataFrame indexed by per-minute timestamps with columns:
+        pressure_mean    — mean pressure% in that minute
+        pressure_std     — stddev of pressure% (continuous restlessness)
+        n_events         — total state changes in that minute
+        n_movements      — count of |Δ|≥movement_delta between consecutive events
+        max_delta        — largest |Δ| in the minute
+        occupied         — pressure_mean > occupied_threshold
+        moved            — n_movements > 0 (binary)
+    """
+    if pressure_df.empty:
+        return pd.DataFrame(columns=[
+            "pressure_mean", "pressure_std", "n_events", "n_movements",
+            "max_delta", "occupied", "moved",
+        ])
+    df = pressure_df.copy()
+    df["delta"] = df["pressure_pct"].diff().abs()
+    df["minute"] = df["ts"].dt.floor("min")
+
+    g = df.groupby("minute")
+    out = pd.DataFrame({
+        "pressure_mean": g["pressure_pct"].mean(),
+        "pressure_std": g["pressure_pct"].std().fillna(0),
+        "n_events": g.size(),
+        "n_movements": g["delta"].apply(lambda s: int((s >= movement_delta).sum())),
+        "max_delta": g["delta"].max().fillna(0),
+    })
+    out["occupied"] = out["pressure_mean"] > occupied_threshold
+    out["moved"] = out["n_movements"] > 0
+    out.index.name = "ts"
+    return out
+
+
+def load_movement_per_minute(start, end, side: str = "left", **kwargs) -> pd.DataFrame:
+    """Convenience wrapper: fetch + aggregate in one call."""
+    raw = load_bed_pressure_history(start, end, side=side)
+    return compute_movement_per_minute(raw, **kwargs)
+
+
 # ── Night grouping ─────────────────────────────────────────────────────
 
 def assign_nights(df: pd.DataFrame, gap_hours: float = 2.0,

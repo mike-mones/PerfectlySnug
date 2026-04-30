@@ -207,8 +207,24 @@ def compute_candidate_signals(per_min: "pd.DataFrame") -> "pd.DataFrame":
     body_sd_thr = body_sd.rolling("4h", min_periods=20).quantile(0.75)
     df["sig_body_sd_q4"] = body_sd.gt(body_sd_thr).fillna(False)
 
+    # ── High-resolution movement-density signal ──────────────────────
+    # `n_movements` is the per-minute count of |Δpressure|≥1% events from the
+    # bed-presence sensor (sub-second cadence, vs the 5-min snapshot used by
+    # sig_pressure_burst above). When the column is available, fire when
+    # movement density exceeds the trailing 30-min p75 — this is a stronger,
+    # noise-free restlessness signal. Fail-closed if column is missing.
+    if "n_movements" in df.columns:
+        n_mov = pd.to_numeric(df["n_movements"], errors="coerce").fillna(0)
+        mov_thr = n_mov.rolling(f"{ROLLING_WINDOW_MIN}min",
+                                 min_periods=6).quantile(0.75)
+        # Require at least 1 movement AND above trailing p75 to fire.
+        df["sig_movement_density"] = (n_mov >= 1) & n_mov.gt(mov_thr.fillna(0))
+    else:
+        df["sig_movement_density"] = pd.Series(False, index=df.index)
+
     candidate_cols = ["sig_hr_spike", "sig_hrv_dip", "sig_rr_jump",
-                      "sig_stage_frag", "sig_pressure_burst", "sig_body_sd_q4"]
+                      "sig_stage_frag", "sig_pressure_burst", "sig_body_sd_q4",
+                      "sig_movement_density"]
     n_active = df[candidate_cols].astype(int).sum(axis=1)
     df["sig_combined"] = (
         df["sig_body_sd_q4"]
@@ -272,7 +288,8 @@ def build_label_corpus(per_min: "pd.DataFrame",
     df.loc[cond_ovr,    "label_source"] = "override"
 
     sigs = ["sig_hr_spike", "sig_hrv_dip", "sig_rr_jump",
-            "sig_stage_frag", "sig_pressure_burst", "sig_body_sd_q4"]
+            "sig_stage_frag", "sig_pressure_burst", "sig_body_sd_q4",
+            "sig_movement_density"]
     df["proxy_signals"] = df[sigs].apply(
         lambda r: ",".join(s.removeprefix("sig_") for s, v in r.items() if bool(v)),
         axis=1)
@@ -307,6 +324,7 @@ def precision_recall_vs_overrides(per_min: "pd.DataFrame",
     out = {}
     sig_cols = ["sig_hr_spike", "sig_hrv_dip", "sig_rr_jump",
                 "sig_stage_frag", "sig_pressure_burst", "sig_body_sd_q4",
+                "sig_movement_density",
                 "sig_combined", "proxy_fired"]
     lo, hi = lead_window_min
     for col in sig_cols:

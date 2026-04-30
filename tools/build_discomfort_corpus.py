@@ -41,12 +41,17 @@ from ml.discomfort_label import (
 # ── Minute-resolution joiner ───────────────────────────────────────────
 
 def to_minute_grid(rd: pd.DataFrame, stages: pd.DataFrame,
-                   health: pd.DataFrame) -> pd.DataFrame:
+                   health: pd.DataFrame,
+                   movement: pd.DataFrame | None = None) -> pd.DataFrame:
     """Join 5-min controller readings + Apple Watch stages + health metrics
-    onto a regular per-minute grid, per night.
+    + (optional) per-minute movement-density onto a regular per-minute grid,
+    per night.
 
     Forward-fills controller fields up to 6 min (skip past gaps); HR/HRV/RR
-    are forward-filled up to 10 min (Apple Watch arrives in batches).
+    are forward-filled up to 10 min (Apple Watch arrives in batches). Movement
+    fields are NOT forward-filled — a missing minute means no pressure events
+    were recorded (likely either bed empty or sensor offline), and we want to
+    distinguish that from "0 movements but bed sensor was active".
     """
     rd = rd.sort_values("ts").set_index("ts")
     if rd.empty:
@@ -109,6 +114,27 @@ def to_minute_grid(rd: pd.DataFrame, stages: pd.DataFrame,
             if c not in per_min.columns:
                 per_min[c] = np.nan
 
+        # Bed-pressure movement density (high-resolution per-minute counts)
+        if movement is not None and not movement.empty:
+            try:
+                night_mv = movement[
+                    (movement.index >= per_min.index.min())
+                    & (movement.index <= per_min.index.max())
+                ]
+                if not night_mv.empty:
+                    per_min = per_min.join(night_mv[
+                        ["n_events", "n_movements", "max_delta", "pressure_std"]
+                    ])
+                    # Fill explicit zeros for minutes with no events
+                    for c in ["n_events", "n_movements", "max_delta", "pressure_std"]:
+                        if c in per_min.columns:
+                            per_min[c] = per_min[c].fillna(0)
+            except Exception:
+                pass
+        for c in ["n_events", "n_movements", "max_delta", "pressure_std"]:
+            if c not in per_min.columns:
+                per_min[c] = 0.0
+
         per_min["night"] = night
         night_grids.append(per_min)
 
@@ -149,13 +175,26 @@ def main() -> int:
     print(f"  sleep_segments:      {len(stages):,} rows")
     print(f"  health_metrics:      {len(health):,} rows")
 
+    # Bed-pressure movement (HA recorder, optional — depends on HA reachable)
+    movement = pd.DataFrame()
+    if not rd.empty:
+        try:
+            mv_start = rd["ts"].min().isoformat()
+            mv_end   = rd["ts"].max().isoformat()
+            movement = data_io.load_movement_per_minute(
+                start=mv_start, end=mv_end, side="left")
+            print(f"  bed_movement_min:    {len(movement):,} minute-rows "
+                  f"(HA recorder, sub-second pressure events aggregated)")
+        except Exception as e:
+            print(f"  bed_movement_min:    SKIPPED ({e.__class__.__name__}: {e})")
+
     n_overrides = int((rd["action"] == "override").sum())
     print(f"\nGround-truth overrides (left): {n_overrides}")
     if n_overrides != 47:
         print(f"  ⚠ note: PROGRESS_REPORT cited 47, actual is {n_overrides}")
 
     print("\nGridding to per-minute…")
-    per_min = to_minute_grid(rd, stages, health)
+    per_min = to_minute_grid(rd, stages, health, movement=movement)
     print(f"  {len(per_min):,} minute-rows across {per_min['night'].nunique()} nights")
 
     print("\nComputing candidate signals (per-night)…")
@@ -186,6 +225,8 @@ def main() -> int:
             "proxy_signals",
             "sig_hr_spike", "sig_hrv_dip", "sig_rr_jump",
             "sig_stage_frag", "sig_pressure_burst", "sig_body_sd_q4",
+            "sig_movement_density",
+            "n_movements", "max_delta", "pressure_std",
             "sig_combined"]
     cols = [c for c in cols if c in labelled.columns]
     try:
