@@ -20,3 +20,6 @@ ml/state/v5_1_sweep_*.json
 ml/state/discomfort_corpus.parquet
 ml/state/recovered_training_data.json
 ml/state/fitted_baselines.candidate.json
+ml/state/discomfort_corpus.csv
+ml/state/discomfort_corpus.parquet
+docs/discomfort_labeling_metrics.json
