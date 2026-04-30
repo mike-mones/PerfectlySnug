@@ -88,8 +88,8 @@ The v5.2 mechanism: after computing the v5.1 cycle baseline, apply a
 **closed-loop body-temperature correction**:
 
 ```python
-if cycle >= 3 and body_avg < BODY_FB_TARGET_F (86°F):
-    correction = min(0.55 * (BODY_FB_TARGET_F - body_avg), 5)
+if cycle >= 3 and body_left < BODY_FB_TARGET_F (80°F):
+    correction = min(1.25 * (BODY_FB_TARGET_F - body_left), 5)
     base_setting = clip(base_setting + correction, -10, 0)
 ```
 
@@ -253,7 +253,7 @@ Any future training pipeline must either:
 
 | Component | State | Notes |
 |---|---|---|
-| `sleep_controller_v5.py` (`v5_2_rc_off`) — **left zone live** | ✅ Running on HA | v5.2 with closed-loop body feedback (target 86°F, Kp_cold 0.55, max_delta 5, min_cycle 3) |
+| `sleep_controller_v5.py` (`v5_2_rc_off`) — **left zone live** | ✅ Running on HA | v5.2 with closed-loop body feedback on `body_left_f` (target 80°F, Kp_cold 1.25, Kp_hot=0, max_delta 5, min_cycle 3) |
 | `sleep_controller_v5.py` — **right zone live** | ✅ Running on HA | RIGHT_LIVE_ENABLED=True + input_boolean.snug_right_controller_enabled=on (two-key arming). Right-zone-specific params: baselines `[-8,-7,-6,-5,-5,-5]`, target 80°F, Kp_hot=0.5, Kp_cold=0.3, cap=4, skip cycle 1 |
 | `right_overheat_safety.py` (`RightOverheatSafety`) | ✅ Live | Skin-side sensor (body_left_f), engage 86°F, release 82°F, BedJet 30-min suppression, force −10. Per-zone calibrated to her physiology |
 | Hard overheat rail on left v5 (body ≥90°F → −10) | ✅ Deployed | Gated by `input_boolean.snug_overheat_rail_enabled`; **default off** |
