@@ -5,7 +5,7 @@
 > document is the running log of what's actually been built, what's deployed,
 > what's been tried and rejected, and what the data actually says today.
 
-**Last updated:** 2026-04-30 (v5.1 baselines shipped at 14:04 ET)
+**Last updated:** 2026-04-30 (v5.2 + right-zone live shipped same evening)
 
 ---
 
@@ -67,9 +67,98 @@ under-warming bias dropped 26% (−1.92 → −1.41). See
 that ran the sweep is `tools/v5_1_baseline_sweep.py` against
 `controller_readings`; rerun after every ~5 new overrides.
 
+### v5.2 update — 2026-04-30 (live, same evening as v5.1)
+
+User pushback: with two months of data, why aren't we beating the
+firmware's "responsive cooling"? The honest answer was that the
+override-fitted cycle baselines were optimizing within the wrong frame.
+Investigation surfaced two things:
+
+1. The topper firmware exposes its own PID
+   (`sensor.smart_topper_*_pid_control_output/integral_term/proportional_term`,
+   `temperature_setpoint`, `blower_output`). Our "setting" is just a knob
+   on the firmware setpoint. The firmware closes the loop on surface
+   temperature; nothing was closing the loop on body temperature.
+2. Linear regression of `body_delta ~ setting + body + room_temp` had
+   R²=0.03 over 14 days. Settings barely move body temp at our 5-min
+   cadence. Cycle baselines optimized against override events were
+   essentially fitting noise.
+
+The v5.2 mechanism: after computing the v5.1 cycle baseline, apply a
+**closed-loop body-temperature correction**:
+
+```python
+if cycle >= 3 and body_avg < BODY_FB_TARGET_F (86°F):
+    correction = min(0.55 * (BODY_FB_TARGET_F - body_avg), 5)
+    base_setting = clip(base_setting + correction, -10, 0)
+```
+
+Cycles 1–2 still honor bedtime aggressive cooling (skip body feedback).
+Above 86°F, the safety rails handle hot-side. Asymmetric (no Kp_hot) by
+design.
+
+Held-out LOOCV on the override corpus: v5 MAE 3.116 → v5.2 MAE 1.633
+(−48%). In-sample: hit-rate 26.8% → 61.0%, max error 8 → 7, signed bias
+−2.00 → +0.32. Per-cycle: c1/c2 unchanged, c3 marginal, c4/c5/c6 cut by
+1.5–2 MAE each.
+
+`CONTROLLER_VERSION` bumped `v5_rc_off` → `v5_2_rc_off`. New live tag for
+PG analysis.
+
+### Right-zone v5.2 — 2026-04-30 (live, same evening)
+
+The wife's right zone is no longer firmware-default. Two-key arming via
+Python const + HA helper (`input_boolean.snug_right_controller_enabled`,
+default off; flipped on at 16:34 ET).
+
+Architecture (matches user's left-zone pattern):
+- Responsive Cooling: **off** (deterministic setting→blower% via our table)
+- 3-tier schedule: **off** (controller has full authority over `bedtime_temperature`)
+- bedtime_temperature default: −8 (matches v5.2 c1 baseline)
+- Right-zone-specific parameters (her n=6 overrides + audit-validated):
+  - cycle baselines `[-8, -7, -6, -5, -5, -5]` (gentler than user's −10/−10)
+  - body feedback target = 80°F, asymmetric Kp_hot=0.5, Kp_cold=0.3, cap=4
+  - skip cycle 1
+- BedJet 30-min suppression both in safety rail and shadow controller
+- Safety rail body sensor swapped from `body_center_f` to `body_left_f`
+  (skin-contact channel; eliminates warm-sheet contamination). Rail
+  thresholds calibrated to her physiology: engage at 86°F (was 88°F),
+  release at 82°F (was 84°F). User-stated rule: he runs hot at 84°F on
+  body_left; her body_left runs +2°F warmer at every percentile.
+- Override-freeze (60 min after manual change), rate limit (30 min
+  between writes), self-write suppression (controller's own writes
+  don't trigger override freeze).
+
+Live operational kill-switch: toggle `input_boolean.snug_right_controller_enabled`
+in HA UI; takes effect on the next 5-min tick, no redeploy. See
+`_archive/right_zone_rollout_2026-04-30.md`.
+
+### Discomfort proxy — bed-pressure movement signal added
+
+User pointed out the bed-presence sensor publishes pressure% at sub-second
+cadence (371 state changes between 22:00 and 08:00 in last night's data).
+Previous discomfort proxy was using only the 5-min PG-snapshot pressure,
+missing 90% of movement signal.
+
+Added `sig_movement_density` to `ml/discomfort_label.py` candidate
+signals. Built via `ml/data_io.load_movement_per_minute()` which fetches
+HA history API state changes (sub-second), aggregates to per-minute
+features (`n_movements`, `max_delta`, `pressure_std`).
+
+Validation against override events (lead window 5–15 min):
+- Old `sig_pressure_burst` (5-min PG snapshot): 12% recall, 5/41 caught
+- **New `sig_movement_density` (sub-sec HA recorder): 28% recall, 11/41 caught**
+- 2.2× improvement. Discomfort corpus effective sample size: 443 → 502.
+
+This unlocks signal capture for the right zone (where the wife has only
+6 overrides — too thin for fitting, but plenty of restless-minutes that
+will show up in pressure data). Same pipeline, swap entity to
+`sensor.bed_presence_2bcab8_right_pressure`.
+
 ### v5's heuristic algorithm (in one paragraph)
 Cycle baselines (was hand-picked `[-10,-9,-8,-7,-6,-5]`; now refit
-`[-10,-8,-7,-5,-5,-6]` per the v5.1 update above) plus room-temperature compensation (cool-comp below 68°F, hot-comp above) plus a learned per-cycle blower-percentage adjustment (clipped to ±15%) plus two safety rails (`hot_safety` steps one colder when body > 85°F sustained; nothing on the cold side). The "learning" updates the blower adjustment from the most recent override delta, which causes oscillation.
+`[-10,-10,-7,-5,-5,-6]` per the v5.1 update above; v5.2 then adds a
+body-feedback correction on top — see v5.2 section) plus room-temperature compensation (cool-comp below 68°F, hot-comp above) plus a learned per-cycle blower-percentage adjustment (clipped to ±15%) plus two safety rails (`hot_safety` steps one colder when body > 85°F sustained; nothing on the cold side). The "learning" updates the blower adjustment from the most recent override delta, which causes oscillation.
 
 ---
 
