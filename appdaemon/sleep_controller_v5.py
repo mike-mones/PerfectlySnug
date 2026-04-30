@@ -62,14 +62,21 @@ if str(_project_root) not in sys.path:
 CYCLE_SETTINGS = {
     # v5.1 baselines — refit from 49 left-zone overrides across 30 nights, motivated
     # by 2026-04-30 user report ("cold mid-night, slightly warm in the morning").
-    # Posterior-mean shrinkage (prior_n=5) for c2..c5; c6 manually dipped one step
-    # cooler than v5 to address late-cycle overheat reports that don't trigger
-    # overrides (mild pre-wake heat). Override corpus per-cycle means (n, mean):
+    # c1, c3-c5 from posterior-mean shrinkage (prior_n=5); c2 reverted to v5's
+    # value after counterfactual replay (tools/replay_v51_vs_v5.py) showed the
+    # shrunk c2=-8 was the WORST integer choice for hit-rate (0/7), because the
+    # c2 user_pref distribution is bimodal: [-10,-10,-10,-10,-6,-6,-4]. The
+    # mean (-8) falls in a no-man's-land between the cooling cluster and the
+    # mild cluster. c2=-10 matches the dominant cluster (4/7) and recovers
+    # hit-rate. c6 manually dipped one step cooler than v5 to address late-cycle
+    # overheat reports that don't trigger overrides (mild pre-wake heat).
+    # Override corpus per-cycle means (n, mean):
     # c1=(11,-9.27) c2=(7,-8.0) c3=(10,-6.0) c4=(5,-3.0) c5=(7,-2.86) c6=(9,-3.11).
     # See _archive/v5_1_baseline_fit_2026-04-30.md.
     1: -10,  # Aggressive cool: support core temp drop at sleep onset (kept; c1 means
              # are heavily room_comp-confounded — trust the prior here).
-    2:  -8,  # Was -9; shrunken posterior with prior_n=5 over 7 overrides (mean -8.0).
+    2: -10,  # was -9 (v5), then -8 (initial v5.1); reverted to -10 after hit-rate
+             # replay showed bimodal preference dominated by [-10,-10,-10,-10] cluster.
     3:  -7,  # Was -8; shrunken posterior over 10 overrides (mean -6.0).
     4:  -5,  # Was -7; shrunken posterior over 5 overrides (mean -3.0). Largest single
              # change; addresses 2026-04-30 "cold in the middle of the night" report.

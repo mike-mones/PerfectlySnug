@@ -24,7 +24,7 @@ from ml import data_io
 
 
 V5_BASELINES   = {1: -10, 2: -9, 3: -8, 4: -7, 5: -6, 6: -5}
-V5_1_BASELINES = {1: -10, 2: -8, 3: -7, 4: -5, 5: -5, 6: -6}
+V5_1_BASELINES = {1: -10, 2: -10, 3: -7, 4: -5, 5: -5, 6: -6}
 CYCLE_DURATION_MIN = 90
 
 
