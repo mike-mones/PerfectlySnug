@@ -249,38 +249,65 @@ Any future training pipeline must either:
 
 ## 7. What's deployed today
 
+**As of 2026-04-30 16:30 ET:**
+
 | Component | State | Notes |
 |---|---|---|
-| `sleep_controller_v5.py` (`v5_rc_off`) | ✅ Running on HA | Left-zone comfort controller |
-| `right_overheat_safety.py` (`RightOverheatSafety`) | ✅ Deployed 2026-04-29 | Standalone safety-only rail for the right zone — engages -10 setting after 2 consecutive readings ≥88°F, releases <84°F, snapshots and restores prior setpoint, releases on bed-empty or rail-disabled. No comfort logic, no learning, no per-cycle baselines. Threshold tuned from right-zone p90 (87.9°F). |
-| Right-zone comfort control | ❌ Not present | Only the safety rail above; otherwise wife controls the bed manually |
-| Hard overheat rail on left v5 (body ≥90°F → -10) | ✅ Deployed 2026-04-29 | Gated by `input_boolean.snug_overheat_rail_enabled`; **default off** (left has no demonstrated overheat events) |
-| Shadow logger writing `/config/snug_shadow.jsonl` | ✅ Deployed 2026-04-29 | Lazy-imports `ml.policy`; wrapped in broad try/except so it cannot break the live loop |
-| `input_boolean.snug_overheat_rail_enabled` (left) | ✅ Loaded | initial: off |
-| `input_boolean.snug_right_overheat_rail_enabled` (right) | ✅ Loaded | initial: **on** — wife has 4 sustained ≥90°F events on record |
-| `ml/policy.py`, `ml/features.py`, `ml/state/fitted_baselines.json` | ✅ Deployed 2026-04-29 | Required by shadow logger; not on the live action path |
-| `tools/backfill_ha_recorder.py` | ✅ Run once on 2026-04-29 | Should be cron'd weekly on Mac Mini to capture short-term rows before recorder purge |
+| `sleep_controller_v5.py` (`v5_2_rc_off`) — **left zone live** | ✅ Running on HA | v5.2 with closed-loop body feedback (target 86°F, Kp_cold 0.55, max_delta 5, min_cycle 3) |
+| `sleep_controller_v5.py` — **right zone live** | ✅ Running on HA | RIGHT_LIVE_ENABLED=True + input_boolean.snug_right_controller_enabled=on (two-key arming). Right-zone-specific params: baselines `[-8,-7,-6,-5,-5,-5]`, target 80°F, Kp_hot=0.5, Kp_cold=0.3, cap=4, skip cycle 1 |
+| `right_overheat_safety.py` (`RightOverheatSafety`) | ✅ Live | Skin-side sensor (body_left_f), engage 86°F, release 82°F, BedJet 30-min suppression, force −10. Per-zone calibrated to her physiology |
+| Hard overheat rail on left v5 (body ≥90°F → −10) | ✅ Deployed | Gated by `input_boolean.snug_overheat_rail_enabled`; **default off** |
+| Shadow logger `/config/snug_shadow.jsonl` (ml.policy) | ✅ Live | Defensive try/except |
+| Right-zone shadow log `/config/snug_right_v52_shadow.jsonl` | ✅ Live | Logs all proposals + actuated/blocked status; consumed by `tools/eval_right_shadow.py` |
+| Discomfort proxy with `sig_movement_density` | ✅ Pipeline-only | Extracts sub-second pressure events from HA recorder; recall on overrides 28% (was 12% with PG-snapshot pressure); not yet wired to live control |
+| `input_boolean.snug_overheat_rail_enabled` (left) | ✅ off (default) | |
+| `input_boolean.snug_right_overheat_rail_enabled` (right) | ✅ **on** | |
+| `input_boolean.snug_right_controller_enabled` (right v5.2 live arm) | ✅ **on** | Operational kill switch — toggle off in HA UI to instantly disable right-zone control, no redeploy |
+| Right-side firmware: Responsive Cooling | ✅ **off** | Deterministic setting → blower% via L1_TO_BLOWER_PCT |
+| Right-side firmware: 3-tier schedule | ✅ **off** | Controller has full authority over `bedtime_temperature` |
+| Right-side `bedtime_temperature` default | −8 | Matches v5.2 c1 baseline; controller takes over from c2 onward |
+| `ml/policy.py`, `ml/features.py`, `ml/state/fitted_baselines.json` | ✅ Deployed | NOTE: `fitted_baselines.json` is stale relative to v5.2 — read by shadow logger only, not live actuation path. Audit backlog item §10. |
+| PG nightly backup (macmini cron 04:00) | ✅ Live | `/home/mike/backups/sleepdata/backup.sh`; pg_dump -F c, gzipped, 14-dump retention |
 
-To deploy further v5 changes (no behavior change unless you flip the input_boolean):
+### Operational kill switches (instant, no redeploy)
+
+| To disable | Toggle this in HA UI |
+|---|---|
+| Right-zone v5.2 controller | `input_boolean.snug_right_controller_enabled` → off |
+| Right-zone safety rail | `input_boolean.snug_right_overheat_rail_enabled` → off |
+| Left-zone hard-overheat rail | `input_boolean.snug_overheat_rail_enabled` → off (already off) |
+| All AppDaemon (nuclear option) | Stop the AppDaemon addon in HA UI |
+
+### Tomorrow morning's review pipeline
+
+```bash
+cd PerfectlySnug && .venv/bin/python tools/eval_right_shadow.py
+```
+
+Shows tick-by-tick what the right-zone controller proposed, whether it actuated, and the gate that blocked it (BedJet window / occupancy / freeze / rate-limit / no-change).
+
+### Deploy command for future controller changes
 
 ```bash
 scp PerfectlySnug/appdaemon/sleep_controller_v5.py PerfectlySnug/appdaemon/right_overheat_safety.py root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
-scp PerfectlySnug/ml/policy.py PerfectlySnug/ml/features.py root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/ml/
-scp -r PerfectlySnug/ml/state root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/ml/
-scp ha-config/configuration.yaml root@192.168.0.106:/config/configuration.yaml
-ssh root@192.168.0.106 'ha core check --no-progress && /config/scripts/reload_automations.sh'
-# Restart HA (`ha core restart`) when adding new input_boolean / new AppDaemon module.
+scp PerfectlySnug/ml/policy.py PerfectlySnug/ml/features.py PerfectlySnug/ml/contamination.py PerfectlySnug/ml/learner.py PerfectlySnug/ml/__init__.py root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/ml/
+scp PerfectlySnug/appdaemon/apps.yaml root@192.168.0.106:/addon_configs/a0d7b954_appdaemon/apps/
+ssh root@192.168.0.106 'ha addon restart a0d7b954_appdaemon'
+sleep 30
+ssh root@192.168.0.106 'ha addon logs a0d7b954_appdaemon 2>&1 | tail -20'
+# For HA config changes (new input_boolean): scp ha-config/configuration.yaml + ha core restart
 ```
 
 ---
 
 ## 8. Pipeline / what's next (priority ordered)
 
-1. **Right-zone comfort controller** — the safety rail (§7) only kicks in at body ≥90°F. Below that, the right zone is still fully manual. Easiest path: extract v5's `_compute_setting`/`_control_loop` into a per-zone function, instantiate twice, reuse the hard overheat rail. **Do NOT** copy the heuristic baselines blindly without per-zone validation against `ha_topper_hourly` — her body trajectory is structurally warmer.
-2. **Schedule `tools/backfill_ha_recorder.py` weekly on Mac Mini cron** — captures short-term raw rows before the 30-day recorder purge, growing the high-resolution dataset.
-3. **Find an unbiased preference signal** — candidates: presence-sensor movement spikes (proxy for restlessness), Apple Watch arousal density, sleep-stage fragmentation. Any of these would let us label "uncomfortable" minutes without requiring a manual override. Until we have one, the override-only training data is the binding constraint, not the model architecture.
-4. **Fit per-zone "typical body trajectory" curves** from `ha_topper_hourly` (57 nights, both zones) — purely descriptive, not for control. Useful as the calibration target for any new hard rail and as a sanity check for the wife's right-zone controller.
-5. **Defer LightGBM residual model** until override corpus crosses ~150 events (currently 53). This is straight from PRD §4.2.
+1. **Tomorrow morning review** — run `tools/eval_right_shadow.py` plus subjective sleep reports. If she sleeps better, leave on and refine target/Kp from new data. If worse, toggle `input_boolean.snug_right_controller_enabled` off and tune.
+2. **Right-zone movement-density signal** — same `tools/build_discomfort_corpus.py` pipeline using `sensor.bed_presence_2bcab8_right_pressure`. Her n=6 override corpus is too thin for fitting; movement signal is the path to actually capturing her late-night discomfort.
+3. **Refit her baselines after ~10 nights of v5.2 right-zone data** — current params (target 80, Kp_hot 0.5, Kp_cold 0.3, baselines `[-8,-7,-6,-5,-5,-5]`) are educated starting points. Use `tools/v5_1_baseline_sweep.py` (extend to right-zone if needed) on her newly-accumulated override corpus.
+4. **Audit backlog (§10)** — 11+ open items, prioritize by severity.
+5. **Schedule `tools/backfill_ha_recorder.py` weekly on Mac Mini cron** — captures short-term raw rows before HA recorder purge.
+6. **Defer LightGBM residual model** until override corpus crosses ~150 events (currently ~50 left-zone, ~6 right-zone).
 
 ---
 
@@ -292,3 +319,49 @@ ssh root@192.168.0.106 'ha core check --no-progress && /config/scripts/reload_au
 - Use the dehumidifier room-temp sensor or bedroom Aqara, never the topper's onboard ambient (5-10°F too high — see §4.5).
 - Use `body_*_f` from `controller_readings` (PG) or `sensor.smart_topper_*_body_sensor_center` (HA), not the side body sensors.
 - Update this document at the end of any session that adds new evidence, deploys code, or changes the system architecture.
+
+---
+
+## 10. Audit backlog (8-agent deep audit, 2026-04-30)
+
+Findings from `_archive/audit_2026-04-30/` (in-conversation, not separately committed). Severity per finding; cite file:line where actionable.
+
+### CRITICAL — fix before next deploy
+
+| ID | Issue | Location | Status |
+|---|---|---|---|
+| C1 | NaN crash in `_read_zone_snapshot`: `int(setting)` on transient `nan` sensor read | `appdaemon/sleep_controller_v5.py:1166` | ✅ FIXED 2026-04-30 (NaN guard in `_read_float`) |
+| C2 | `apps.yaml` missing `right_overheat_safety` block (would silently drop the rail on next deploy) | `appdaemon/apps.yaml` | ✅ FIXED 2026-04-30 (backported from HA host) |
+| C3 | Migration 006 fails — `PERCENTILE_DISC` cannot be window function | `tools/sql/006_discomfort_labels.sql` | ⚠ OPEN. View `v_discomfort_minutes_left` does not exist in PG. Rewrite as CTE. |
+| C4 | `ml/contamination.py:SQL_VIEW_DDL` references non-existent column `body_f` | `ml/contamination.py:135` | ⚠ OPEN. Either delete the constant (deployed migration 007 is source of truth) or rewrite. |
+| C5 | `ml/state/fitted_baselines.json` is stale relative to v5.2 | `ml/state/fitted_baselines.json` | ⚠ OPEN. Used only by shadow logger, but produces misleading "what-if" output. Regenerate or stop reading. |
+| C6 | Test pollution: `tests/test_controller_v3.py` connected to live PG and inserted synthetic rows tagged controller_version='v3' | `tests/test_controller_v3.py` | ✅ FIXED 2026-04-30 (file deleted; 24 polluted rows purged from PG) |
+
+### HIGH — should address this week
+
+| ID | Issue | Location | Status |
+|---|---|---|---|
+| H1 | Rail engagement state not persisted on rail-only mutations (overheat_hard_streak, hot_streak) | `appdaemon/sleep_controller_v5.py:665-670, 678-687` | ⚠ OPEN. AppDaemon restart mid-engagement loses streak. Add `_save_state()` after rail mutations. |
+| H2 | `_set_l1` race with `_on_setting_change` callback can mis-classify controller's own write as user override | `sleep_controller_v5.py:976-979, 787-823` | ⚠ OPEN. Update `last_setting` BEFORE `call_service`, or add 2-sec suppression flag. |
+| H3 | `_setting_for_stage` clobbers v5.2 cycle baselines when SleepSync feeds fresh sleep stages | `sleep_controller_v5.py:611-615` | ⚠ OPEN. Stage table `{deep:-10, core:-8, rem:-6, awake:-5}` is unfitted v5-era data; v5.2 c4=-5 jumps to -10 the moment a 'deep' event arrives. Disable, make a delta, or refit. |
+| H4 | Cold overrides have no all-night floor (warm overrides do) | `sleep_controller_v5.py:816-821, 419-423` | ⚠ OPEN. Asymmetric override-floor design. Document or symmetrize. |
+| H5 | `hot_safety` anchored to `current_setting` erodes warm overrides one step every 5 min | `sleep_controller_v5.py:677-685` | ⚠ OPEN. Anchor to `max(base_setting, override_floor)` instead. |
+| H6 | Right-zone shadow used contaminated `body_avg` instead of skin-side `body_left` | `sleep_controller_v5.py:_right_v52_shadow_tick` | ✅ FIXED 2026-04-30 (switched to body_skin = body_left + BedJet 30-min gate) |
+| H7 | PG had no backups; full data loss risk on PG crash | macmini | ✅ FIXED 2026-04-30 (`/home/mike/backups/sleepdata/backup.sh`, cron 04:00 daily, 14-dump retention) |
+| H8 | HRV cadence implausibly high (~172/day same as HR; should be ~24/day) — likely Health Receiver miscoding RR-interval as HRV | `health_metrics` table | ⚠ OPEN. Sample 10 rows; if values are 60-100 with units bpm, the discomfort proxy's HRV signal is garbage. |
+
+### MEDIUM — backlog
+
+| ID | Issue | Location |
+|---|---|---|
+| M1 | `tools/refit_with_proxy_labels.py` `PROXY_DIR=-1` is wrong direction for warm-running user | `tools/refit_with_proxy_labels.py:49` |
+| M2 | `ml/features.py:289` body fusion uses mean (amplifies center-sensor sheet contamination) | `ml/features.py:289` |
+| M3 | `tools/v5_1_baseline_sweep.py` LOOCV separates by override timestamps not full nights → leaky | `tools/v5_1_baseline_sweep.py` |
+| M4 | BedJet window restarts on every bed re-entry, not first-onset-of-night | `appdaemon/right_overheat_safety.py:178-189` |
+| M5 | `_blower_pct_to_l1` ties bias colder by accident (intentional?) | `sleep_controller_v5.py:985-990` |
+| M6 | `learner.py` is dead code that disagrees with everything else | `ml/learner.py` |
+| M7 | Right-zone shadow log + main shadow log not rotated | `sleep_controller_v5.py:567-569, 598` |
+| M8 | `v_setting_timeline` action vocab outdated (preference, hot_safety, deadband not mapped) | `tools/sql/002_analysis_views.sql:91-93` |
+| M9 | Custom component `client.py:_io_lock` held across all retries — UI commands block ~50s on flaky topper | `custom_components/perfectly_snug/client.py:138-155` |
+| M10 | Custom component `client.py` set-setting has no ack matching → optimistic update sticks on dropped frames | `custom_components/perfectly_snug/client.py:201-252` |
+| M11 | Right-zone telemetry: live controller writes go to JSONL only, not `controller_readings` rows. Need a controlled-zone branch in `_log_to_postgres`. | `sleep_controller_v5.py` |
