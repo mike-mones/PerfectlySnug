@@ -28,11 +28,18 @@ Key principles:
 
 import json
 import os
+import sys
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import hassapi as hass
+
+# Add the apps/ directory to sys.path so ml.* (policy, features) can be
+# imported by the shadow-mode logger. This mirrors v3/v4's pattern.
+_project_root = Path(__file__).parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
 
 # ── Sleep Phase Science ──────────────────────────────────────────────────
 #
@@ -104,6 +111,17 @@ BODY_HOT_THRESHOLD_F = 85.0
 BODY_HOT_STREAK_COUNT = 2
 BODY_TEMP_MIN_F = 55.0
 BODY_TEMP_MAX_F = 110.0
+
+# Hard-overheat rail (separate from BODY_HOT_THRESHOLD step-colder logic).
+# At sustained body ≥90°F we jump straight to max cooling instead of climbing
+# one step at a time. Historical analysis (14 nights) shows body_left_f
+# never reached 90°F (max 88.6°F), so this rail is a future-only safety net
+# for the left zone — it is gated behind input_boolean.snug_overheat_rail_enabled
+# so it can be disabled instantly if it ever misbehaves.
+OVERHEAT_HARD_F = 90.0
+OVERHEAT_HARD_STREAK = 2            # consecutive readings before firing
+OVERHEAT_HARD_RELEASE_F = 86.0      # hysteresis: stay engaged until we drop below
+E_OVERHEAT_RAIL_FLAG = "input_boolean.snug_overheat_rail_enabled"
 
 # Override handling
 OVERRIDE_FREEZE_MIN = 60            # Freeze controller for 1 hour after manual change
@@ -374,7 +392,8 @@ class SleepControllerV5(hass.Hass):
             self._state["last_change_ts"] = now.isoformat()
             self._state["last_target_blower_pct"] = target_blower_pct
             self._save_state()
-            action = "hot_safety" if plan["hot_safety"] else "set"
+            action = ("overheat_hard" if plan.get("overheat_hard")
+                      else "hot_safety" if plan["hot_safety"] else "set")
 
         # ── Always log to Postgres — no telemetry gaps ────────────────
         self._log_to_postgres(
@@ -392,6 +411,52 @@ class SleepControllerV5(hass.Hass):
         self._log_passive_zone_snapshot(
             "right", elapsed_min, room_temp, sleep_stage, bed_presence=bed_presence
         )
+
+        # ── Shadow-mode: log what ml.policy.controller_decision would set ──
+        # No hardware effect; pure observability for both zones. We use this to
+        # compare the proposed new policy against v5 over real nights before
+        # deciding to wire it up live.
+        self._shadow_log_decision(
+            zone="left", elapsed_min=elapsed_min, room_temp_f=room_temp,
+            body_f=body_left, v5_setting=setting,
+        )
+        right_snap = self._read_zone_snapshot("right")
+        if right_snap.get("body_left") is not None:
+            self._shadow_log_decision(
+                zone="right", elapsed_min=elapsed_min, room_temp_f=room_temp,
+                body_f=right_snap.get("body_left"),
+                v5_setting=right_snap.get("setting"),
+            )
+
+    def _shadow_log_decision(self, *, zone, elapsed_min, room_temp_f, body_f, v5_setting):
+        """Append one shadow-policy evaluation to /config/snug_shadow.jsonl.
+
+        Defensive: any failure here must NEVER affect the live control loop,
+        so the whole thing is wrapped in a broad try/except that just logs.
+        """
+        try:
+            from ml.policy import controller_decision  # lazy import (HA path)
+            shadow_setting, rail = controller_decision(
+                zone=zone, elapsed_min=elapsed_min,
+                room_temp_f=room_temp_f, body_f=body_f,
+            )
+            entry = {
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "zone": zone,
+                "elapsed_min": round(elapsed_min, 1) if elapsed_min is not None else None,
+                "room_temp_f": room_temp_f,
+                "body_f": body_f,
+                "v5_setting": v5_setting,
+                "shadow_setting": shadow_setting,
+                "shadow_rail": rail,
+                "differs": v5_setting != shadow_setting,
+            }
+            import json as _json
+            with open("/config/snug_shadow.jsonl", "a") as f:
+                f.write(_json.dumps(entry) + "\n")
+        except Exception as exc:  # noqa: BLE001 — must never break control loop
+            self.log(f"shadow log skipped ({exc.__class__.__name__}): {exc}",
+                     level="WARNING")
 
     def _compute_setting(self, elapsed_min, room_temp, sleep_stage, body_avg=None, current_setting=None):
         """Compute target L1 from cycle/stage, room compensation, and learned blower residuals."""
@@ -426,6 +491,28 @@ class SleepControllerV5(hass.Hass):
             data_source += "+room"
 
         hot_safety = False
+        overheat_hard = False
+        body_max = body_avg  # used by both rails
+        # ── Hard overheat rail: sustained body ≥90°F → force -10 ──
+        # Gated behind input_boolean so user can disable instantly. Hysteresis
+        # via OVERHEAT_HARD_RELEASE_F prevents single-spike chattering.
+        rail_enabled = self._read_str(E_OVERHEAT_RAIL_FLAG) == "on"
+        if rail_enabled and body_avg is not None:
+            already_engaged = self._state.get("overheat_hard_engaged", False)
+            release_threshold = OVERHEAT_HARD_RELEASE_F if already_engaged else OVERHEAT_HARD_F
+            if body_avg >= OVERHEAT_HARD_F:
+                self._state["overheat_hard_streak"] = self._state.get("overheat_hard_streak", 0) + 1
+            elif body_avg < release_threshold:
+                self._state["overheat_hard_streak"] = 0
+                self._state["overheat_hard_engaged"] = False
+            if self._state.get("overheat_hard_streak", 0) >= OVERHEAT_HARD_STREAK:
+                self._state["overheat_hard_engaged"] = True
+                hard_blower_pct = self._l1_to_blower_pct(-10)
+                if hard_blower_pct > target_blower_pct:
+                    target_blower_pct = hard_blower_pct
+                    overheat_hard = True
+                    data_source += "+overheat_hard"
+
         if body_avg is not None and body_avg > BODY_HOT_THRESHOLD_F:
             self._state["hot_streak"] = self._state.get("hot_streak", 0) + 1
             if self._state["hot_streak"] >= BODY_HOT_STREAK_COUNT:
@@ -452,6 +539,7 @@ class SleepControllerV5(hass.Hass):
             "learned_adj_pct": learned_adj_pct,
             "data_source": data_source,
             "hot_safety": hot_safety,
+            "overheat_hard": overheat_hard,
         }
 
     def _setting_for_stage(self, stage):
