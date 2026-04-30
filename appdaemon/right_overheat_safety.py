@@ -2,16 +2,15 @@
 Right-zone overheat safety rail (standalone AppDaemon app).
 
 Purpose: the wife's right zone has NO automated controller (v5 is left-zone
-only). Across 20 nights of logged data her body sensor has crossed 90°F in
-four sustained stretches, peaking at 98.9°F across 80 minutes on 2026-04-24.
-This app provides a *safety-only* response — it does not try to optimize
-comfort, it just prevents sustained extreme overheating.
+only). This app provides a *safety-only* response — it does not try to
+optimize comfort, it just prevents sustained extreme overheating.
 
 Behavior
 --------
 Every 60 seconds, while the right side of the bed is occupied:
 
-  1. Read body_sensor_center on the right side.
+  1. Read body_sensor_LEFT on the right zone (the sensor closest to her
+     skin; see "Sensor selection" below).
   2. If the reading is ≥ OVERHEAT_HARD_F for OVERHEAT_HARD_STREAK consecutive
      polls AND the right-zone setpoint is not already at OR below the
      emergency value, snapshot the current setpoint and force the right-zone
@@ -21,10 +20,27 @@ Every 60 seconds, while the right side of the bed is occupied:
   4. On release, restore the snapshotted setpoint so we don't permanently
      override her manual choice.
 
-Gated by `input_boolean.snug_right_overheat_rail_enabled`. Default ON
-(unlike the left-zone rail which defaults OFF) because she has demonstrated
-overheat events and zero historical readings below the engagement threshold
-that would falsely trigger.
+Gated by `input_boolean.snug_right_overheat_rail_enabled`.
+
+Sensor selection (2026-04-30 update)
+------------------------------------
+This app originally read body_sensor_CENTER on the right side, with a 88°F
+engage threshold. Analysis on 14 nights of post-BedJet-window data showed:
+
+    body_center_f (right zone): p50=86.1  p95=95.5  → would engage 22% of
+                                                     occupied minutes
+    body_left_f   (right zone): p50=79.7  p95=86.5  p99=88.7  → 1.5%
+
+The center sensor is dominated by warm-sheet/blanket heat, not skin
+temperature. The left sensor (closest to her body since she sleeps on the
+right side of the bed and her body lies on the left edge of her zone)
+gives a true skin-contact signal, with statistics statistically
+indistinguishable from the user's left zone (p50=79.3, p95=84.7, p99=86.6
+on body_left_f).
+
+Switching to body_sensor_LEFT keeps the 88°F engage threshold (her own p99
+on body_left_f) and reduces false engagements 15× while still catching
+real overheat events. See _archive/right_zone_rollout_2026-04-30.md.
 
 This app is intentionally narrow:
   - It has no notion of cycle baselines, room temperature compensation,
@@ -54,10 +70,9 @@ import hassapi as hass
 
 # ── Constants ────────────────────────────────────────────────────────────
 
-OVERHEAT_HARD_F = 88.0       # body ≥ this for STREAK polls → engage.
-                             # Per user: ≥88°F should never happen naturally;
-                             # her observed warmer right-zone p99 (~95°F raw)
-                             # is BedJet contamination, not real comfort range.
+OVERHEAT_HARD_F = 88.0       # body_left_f ≥ this for STREAK polls → engage.
+                             # 88°F is her p99 on the skin-side sensor — i.e.
+                             # natural overheat threshold, ~2σ above her p50.
 OVERHEAT_HARD_STREAK = 2     # 2 consecutive polls (~2 min)
 OVERHEAT_RELEASE_F = 84.0    # release engagement when body drops below
 RAIL_FORCE_SETTING = -10     # value forced on bedtime_temperature
@@ -75,7 +90,9 @@ BEDJET_SUPPRESS_MIN = 30.0
 
 E_RAIL_FLAG = "input_boolean.snug_right_overheat_rail_enabled"
 E_BEDTIME_R = "number.smart_topper_right_side_bedtime_temperature"
-E_BODY_CENTER_R = "sensor.smart_topper_right_side_body_sensor_center"
+# Skin-contact sensor (left of right zone, where her body lies). Was previously
+# the center sensor; see "Sensor selection" in the module docstring.
+E_BODY_LEFT_R = "sensor.smart_topper_right_side_body_sensor_left"
 E_OCCUPIED_R = "binary_sensor.bed_presence_2bcab8_bed_occupied_right"
 
 # State persistence (mirrors v5's pattern — primary state is in-memory)
@@ -171,7 +188,7 @@ class RightOverheatSafety(hass.Hass):
             self._state["occupied_since"] = now.isoformat()
             self._state["last_occupied"] = True
 
-        body = self._read_float(E_BODY_CENTER_R)
+        body = self._read_float(E_BODY_LEFT_R)
         if body is None:
             # Don't update streak on a missing read — neither engage nor release.
             self._save_state()
