@@ -23,3 +23,7 @@ ml/state/fitted_baselines.candidate.json
 ml/state/discomfort_corpus.csv
 ml/state/discomfort_corpus.parquet
 docs/discomfort_labeling_metrics.json
+
+# Raw data audit dumps (regenerable from HA / PG)
+audit_*.json
+audit_*.csv
