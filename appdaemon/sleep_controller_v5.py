@@ -195,6 +195,15 @@ RIGHT_OVERRIDE_FREEZE_MIN = 60          # 1 hour freeze after manual change
 
 # ── Control Model ────────────────────────────────────────────────────
 CONTROLLER_VERSION = "v5_2_rc_off"
+# CONTROLLER_PATCH_LEVEL is a finer-grained marker for in-place patches that
+# must not reset the cross-night learner (which filters PG history on
+# CONTROLLER_VERSION). Tonight's 2026-05-01 patch set:
+#   - override floor removed (override is a learning event, not a night-long floor)
+#   - 3-level mode forced OFF as a watchdog (init + every control loop tick)
+#   - right-zone proactive-cool: -1 step when body_left ≥ 86°F sustained ≥10 min,
+#     gated off during BedJet/initial-bed/unoccupied windows
+# See PROGRESS_REPORT.md and docs/2026-05-01_v52_patches.md for detail.
+CONTROLLER_PATCH_LEVEL = "v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86"
 ENABLE_LEARNING = True
 MAX_SETTING = 0
 
@@ -284,6 +293,17 @@ E_BEDTIME_TEMP = "number.smart_topper_left_side_bedtime_temperature"
 E_RUNNING = "switch.smart_topper_left_side_running"
 E_RESPONSIVE_COOLING = "switch.smart_topper_left_side_responsive_cooling"
 E_PROFILE_3LEVEL = "switch.smart_topper_left_side_3_level_mode"
+E_PROFILE_3LEVEL_RIGHT = "switch.smart_topper_right_side_3_level_mode"
+
+# Right-zone proactive-cool rail (override-absence trap mitigation, 2026-05-01).
+# When body_left on the right zone stays ≥ this threshold for ≥ this many ticks
+# AND we're not in BedJet/initial-bed/unoccupied/sensor-missing windows, bias
+# the proposed right-side setting one step cooler. Threshold 86°F (not 84°F)
+# because the existing right body feedback (Kp_hot=0.5 × delta from 80°F target)
+# already corrects -2 at body=84°F; this rail is the next escalation.
+RIGHT_HOT_RAIL_F = 86.0
+RIGHT_HOT_RAIL_STREAK = 2          # 2 consecutive ticks (≈10 min @ 5 min cycles)
+RIGHT_HOT_RAIL_BIAS = -1           # one step cooler when streak triggers
 E_BODY_CENTER = "sensor.smart_topper_left_side_body_sensor_center"
 E_BODY_LEFT = "sensor.smart_topper_left_side_body_sensor_left"
 E_BODY_RIGHT = "sensor.smart_topper_left_side_body_sensor_right"
@@ -368,13 +388,16 @@ class SleepControllerV5(hass.Hass):
             "last_restart_ts": None,    # Last time we auto-restarted the topper
             "last_target_blower_pct": None,
             "override_freeze_until": None,
-            "override_floor": None,     # User's last manual value (floor)
-            "override_floor_blower_pct": None,
+            # NOTE 2026-05-01: override_floor removed. Manual overrides are now
+            # treated as learning data points (cross-night via _learn_from_history)
+            # rather than night-long floors. The 60-min freeze still prevents
+            # immediate re-fighting of a fresh user input.
             "manual_mode": False,       # Kill switch triggered
             "recent_changes": [],       # Timestamps of recent manual changes
             "override_count": 0,        # Total overrides this night
             "body_below_since": None,   # When body first dropped below BODY_EMPTY_THRESHOLD_F
             "hot_streak": 0,
+            "right_hot_streak": 0,      # 2026-05-01: right-zone 86°F sustained counter
             "current_cycle_num": None,
         }
         self._load_state()
@@ -383,6 +406,8 @@ class SleepControllerV5(hass.Hass):
 
         # Force left-side responsive cooling OFF — v5 owns the outer proxy model.
         self.call_service("switch/turn_off", entity_id=E_RESPONSIVE_COOLING)
+        # Force 3-level mode OFF on BOTH sides at boot. User runs single-stage L1.
+        self._ensure_3_level_off()
 
         # Run control loop every 5 minutes
         self.run_every(self._control_loop, "now", 300)
@@ -429,6 +454,9 @@ class SleepControllerV5(hass.Hass):
 
         # Responsive cooling watchdog — keep the left side in RC-off mode.
         self._ensure_responsive_cooling_off()
+        # 3-level mode watchdog — keep BOTH sides in single-stage L1 mode
+        # so L_active == L1 and the controller's writes apply to the live dial.
+        self._ensure_3_level_off()
 
         # ── Always read sensors (telemetry must never have gaps) ──────
         room_temp = self._read_temperature(self._get_room_temp_entity())
@@ -509,12 +537,11 @@ class SleepControllerV5(hass.Hass):
         learned_adj_pct = plan["learned_adj_pct"]
         data_source = plan["data_source"]
 
-        # Apply override floor for the rest of the night.
-        floor = self._state.get("override_floor")
-        if floor is not None and setting < floor:
-            self.log(f"Override floor: computed {setting:+d} < floor {floor:+d}, using floor")
-            setting = floor
-            target_blower_pct = self._l1_to_blower_pct(setting)
+        # NOTE 2026-05-01: override floor removed. We no longer clamp `setting`
+        # to a night-long floor based on the user's last manual change; manual
+        # changes are learning events (consumed cross-night via
+        # _learn_from_history) and the 60-min freeze below still prevents
+        # immediate re-fighting of a fresh user input.
 
         # ── Determine if we can change the setting ────────────────────
         changed = int(current) != setting
@@ -566,7 +593,7 @@ class SleepControllerV5(hass.Hass):
         self._log_to_postgres(
             elapsed_min, room_temp, sleep_stage, body_center, setting,
             cycle_num=cycle_num, room_temp_comp=room_temp_comp,
-            data_source=data_source, override_floor=floor,
+            data_source=data_source, override_floor=None,
             body_avg=body_avg, body_left=body_left, body_right=body_right,
             action=action, ambient=ambient, setpoint=setpoint,
             effective=setting if changed and not blocked else int(current),
@@ -706,6 +733,41 @@ class SleepControllerV5(hass.Hass):
                 source = "cycle+body_fb"
                 if right_room_comp:
                     source += "+right_room_hot"
+
+            # ── Right-zone proactive-cool rail (override-absence trap) ──────
+            # 2026-05-01: wife rarely overrides — absence of overrides is NOT
+            # evidence of comfort. If body_left stays ≥ RIGHT_HOT_RAIL_F for
+            # ≥ RIGHT_HOT_RAIL_STREAK consecutive ticks while we're in normal
+            # control (not BedJet, not initial-bed-cooling, occupied, sensor
+            # available), bias one step cooler. Reset the streak in any
+            # excluded window or when occupancy/sensor is missing.
+            in_excluded_window = (
+                in_initial_bed_cooling or in_bedjet_window or pre_sleep_stage
+                or not occupied or body_skin is None
+            )
+            if in_excluded_window:
+                self._state["right_hot_streak"] = 0
+            elif body_skin >= RIGHT_HOT_RAIL_F:
+                self._state["right_hot_streak"] = (
+                    self._state.get("right_hot_streak", 0) + 1
+                )
+            else:
+                self._state["right_hot_streak"] = 0
+
+            right_hot_streak = self._state.get("right_hot_streak", 0)
+            hot_rail_fired = (
+                right_hot_streak >= RIGHT_HOT_RAIL_STREAK
+                and not in_excluded_window
+            )
+            if hot_rail_fired:
+                pre_rail_proposed = proposed
+                proposed = max(-10, proposed + RIGHT_HOT_RAIL_BIAS)
+                source += f"+hot_rail_{right_hot_streak}"
+                self.log(
+                    f"Right hot-rail fired: body_left={body_skin:.1f}°F "
+                    f"streak={right_hot_streak} → "
+                    f"{pre_rail_proposed:+d} → {proposed:+d}"
+                )
 
             # ── Live actuation gate ──────────────────────────────────
             # ALL of the following must hold:
@@ -980,19 +1042,19 @@ class SleepControllerV5(hass.Hass):
             self._state["sleep_start_epoch"] = now.timestamp()
             self._state["manual_mode"] = False
             self._state["override_freeze_until"] = None
-            self._state["override_floor"] = None
-            self._state["override_floor_blower_pct"] = None
             self._state["recent_changes"] = []
             self._state["override_count"] = 0
             self._state["last_change_ts"] = None
             self._state["last_restart_ts"] = None
             self._state["body_below_since"] = None
             self._state["hot_streak"] = 0
+            self._state["right_hot_streak"] = 0
             self._state["left_zone_last_occupied"] = False
             self._state["left_zone_occupied_since"] = None
             self._state["right_zone_last_occupied"] = False
             self._state["right_zone_occupied_since"] = None
             self._ensure_responsive_cooling_off()
+            self._ensure_3_level_off()
             self.call_service(
                 "input_text/set_value",
                 entity_id=E_SLEEP_STAGE, value="unknown",
@@ -1026,10 +1088,9 @@ class SleepControllerV5(hass.Hass):
             self._state["sleep_start_epoch"] = None
             self._state["manual_mode"] = False
             self._state["override_freeze_until"] = None
-            self._state["override_floor"] = None
-            self._state["override_floor_blower_pct"] = None
             self._state["last_restart_ts"] = None
             self._state["hot_streak"] = 0
+            self._state["right_hot_streak"] = 0
             self._save_state()
 
     # ── Override Detection ───────────────────────────────────────────
@@ -1063,12 +1124,12 @@ class SleepControllerV5(hass.Hass):
         self._state["recent_changes"].append(now.timestamp())
         self._check_kill_switch()
 
-        floor = min(new_val, MAX_SETTING)
+        # 2026-05-01: do NOT set a night-long floor. Override is a learning
+        # event consumed cross-night by _learn_from_history; the 60-min freeze
+        # below is the only short-term respect of the user's input.
         self._state["override_freeze_until"] = (
             now + timedelta(minutes=OVERRIDE_FREEZE_MIN)
         ).isoformat()
-        self._state["override_floor"] = floor
-        self._state["override_floor_blower_pct"] = self._l1_to_blower_pct(floor)
         self._state["last_setting"] = new_val
         self._state["last_target_blower_pct"] = self._l1_to_blower_pct(new_val)
         self._state["override_count"] = self._state.get("override_count", 0) + 1
@@ -1369,6 +1430,38 @@ class SleepControllerV5(hass.Hass):
             self.call_service("switch/turn_off", entity_id=E_RESPONSIVE_COOLING)
             return True
         return False
+
+    def _ensure_3_level_off(self):
+        """Watchdog: keep 3-level mode OFF on BOTH sides.
+
+        The user runs single-stage L1 (bedtime_temperature). If 3-level mode
+        drifts on, the firmware will start advancing L1→L2→L3 by run_progress
+        and our writes to the bedtime entity stop affecting the live dial.
+        Called from initialize(), _on_sleep_mode("on"), and every _control_loop
+        tick. Idempotent and safe to call when already OFF (no service call
+        emitted).
+        """
+        changed = False
+        for label, eid in (("left", E_PROFILE_3LEVEL),
+                           ("right", E_PROFILE_3LEVEL_RIGHT)):
+            try:
+                state = self.get_state(eid)
+            except Exception:
+                state = None
+            if state == "on":
+                self.log(
+                    f"WARNING: 3-level mode ON ({label}) — turning OFF",
+                    level="WARNING",
+                )
+                try:
+                    self.call_service("switch/turn_off", entity_id=eid)
+                    changed = True
+                except Exception as err:
+                    self.log(
+                        f"FAILED to turn OFF 3-level mode ({label}): {err}",
+                        level="ERROR",
+                    )
+        return changed
 
     def _ensure_topper_running(self, now):
         """Re-enable the topper if sleep_mode is on and firmware turned it off."""

@@ -1,0 +1,934 @@
+{
+  "policy_name": "v5.2_reference",
+  "generated_at": "2026-05-01T18:54:27",
+  "primary": {
+    "overall": {
+      "n": 61,
+      "mae": 1.7704918032786885,
+      "hit_rate_abs_le_1": 0.47540983606557374,
+      "bias": -0.26229508196721313,
+      "baseline_mae_observed": 1.7704918032786885,
+      "pred_better_than_observed_count": 0,
+      "pred_worse_than_observed_count": 0
+    },
+    "by_zone": {
+      "left": {
+        "n": 54,
+        "mae": 1.7777777777777777,
+        "hit_rate_abs_le_1": 0.48148148148148145,
+        "bias": -0.4074074074074074,
+        "baseline_mae_observed": 1.7777777777777777,
+        "pred_better_than_observed_count": 0,
+        "pred_worse_than_observed_count": 0
+      },
+      "right": {
+        "n": 7,
+        "mae": 1.7142857142857142,
+        "hit_rate_abs_le_1": 0.42857142857142855,
+        "bias": 0.8571428571428571,
+        "baseline_mae_observed": 1.7142857142857142,
+        "pred_better_than_observed_count": 0,
+        "pred_worse_than_observed_count": 0
+      }
+    },
+    "final_test": {
+      "n": 9,
+      "mae": 2.0,
+      "hit_rate_abs_le_1": 0.4444444444444444,
+      "bias": -1.3333333333333333,
+      "baseline_mae_observed": 2.0,
+      "pred_better_than_observed_count": 0,
+      "pred_worse_than_observed_count": 0
+    }
+  },
+  "secondary": {
+    "time_too_cold_min": 2006.7278049333336,
+    "time_too_hot_min": 764.9818621500001,
+    "spurious_override_predicted_count": 0,
+    "override_precluded_count": 8,
+    "override_precluded_rate": 0.13114754098360656,
+    "left_time_too_cold_min": 1414.8837174833334,
+    "left_time_too_hot_min": 364.99497353333334,
+    "right_time_too_cold_min": 591.84408745,
+    "right_time_too_hot_min": 399.98688861666665
+  },
+  "right_comfort_proxy": {
+    "n_rows": 2365,
+    "mean": 0.21672534180792297,
+    "p90": 0.3371805499940936,
+    "minutes_score_ge_0_5": 115.00556534999998,
+    "definition": "0.35*body_out_of_range(73..86F) + 0.25*body_30m_sd_excess(>1.2F) + 0.20*awake/unknown + 0.20*pressure_abs_delta/8"
+  },
+  "splits": {
+    "n_cv_folds": 23,
+    "final_test_nights": {
+      "left": [
+        "2026-04-28",
+        "2026-04-29",
+        "2026-04-30"
+      ],
+      "right": [
+        "2026-04-28",
+        "2026-04-29",
+        "2026-04-30"
+      ]
+    },
+    "holdout_n_recent": 3
+  },
+  "power": {
+    "n_overrides": 61,
+    "n_zone_nights_with_overrides": 25,
+    "bootstrap_block": "zone-night",
+    "bootstrap_policy_mae_ci95": [
+      1.3636363636363635,
+      2.209723945409429
+    ],
+    "bootstrap_mae_diff_vs_observed_ci95": [
+      0.0,
+      0.0
+    ],
+    "paired_sd_abs_error_diff": 0.0,
+    "mde_80pct_power_alpha_0_05_paired_mae_steps": 0.0,
+    "baseline_abs_error_sd": 1.2960638181683137,
+    "approx_mde_80pct_power_alpha_0_05_mae_steps": 0.46464310892212385,
+    "by_zone": {
+      "left": {
+        "n_overrides": 54,
+        "baseline_abs_error_sd": 1.355167143721166,
+        "approx_mde_80pct_power_alpha_0_05_mae_steps": 0.5163616917358314
+      },
+      "right": {
+        "n_overrides": 7,
+        "baseline_abs_error_sd": 0.7559289460184545,
+        "approx_mde_80pct_power_alpha_0_05_mae_steps": 0.8
+      }
+    },
+    "claim_rule": "candidate must improve MAE by >= max(0.5 L-step, MDE) and zone-night bootstrap 95% CI for MAE(candidate)-MAE(v5.2) must be < 0; no case-test failures"
+  },
+  "cases": {
+    "A": {
+      "case_id": "A",
+      "passed": false,
+      "details": {
+        "definition": {
+          "description": "2026-05-01 LEFT 01:37-02:05 too-cold override cluster (-10 -> -3)",
+          "zone": "left",
+          "start": "2026-05-01 01:20:00-04:00",
+          "end": "2026-05-01 02:15:00-04:00",
+          "eval_start": "2026-05-01 01:37:00-04:00",
+          "eval_end": "2026-05-01 02:05:59-04:00",
+          "pass": "median_setting >= -5, >=20 minutes at setting >= -6, and median counterfactual surface >= +1.0\u00b0F vs observed"
+        },
+        "median_setting": -6.0,
+        "minutes_setting_ge_-6": 25.839715216666665,
+        "median_cf_surface_delta_f": 0.0,
+        "trajectory": [
+          {
+            "ts": "2026-05-01 01:23:03.041056-04:00",
+            "zone": "left",
+            "elapsed_min": 130.0965,
+            "body_left_f": 76.28,
+            "body_center_f": 84.542,
+            "room_temp_f": 69.17,
+            "observed_effective": -10,
+            "pred_setting": -10,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 01:28:03.200269-04:00",
+            "zone": "left",
+            "elapsed_min": 135.09917,
+            "body_left_f": 76.442,
+            "body_center_f": 83.984,
+            "room_temp_f": 69.17,
+            "observed_effective": -10,
+            "pred_setting": -10,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 01:33:03.300372-04:00",
+            "zone": "left",
+            "elapsed_min": 140.10083,
+            "body_left_f": 76.532,
+            "body_center_f": 84.074,
+            "room_temp_f": 69.17,
+            "observed_effective": -10,
+            "pred_setting": -10,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 01:37:49.616949-04:00",
+            "zone": "left",
+            "elapsed_min": 144.87308,
+            "body_left_f": 75.848,
+            "body_center_f": 83.048,
+            "room_temp_f": 69.134,
+            "observed_effective": -10,
+            "pred_setting": -10,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 01:38:03.688660-04:00",
+            "zone": "left",
+            "elapsed_min": 145.10722,
+            "body_left_f": 75.848,
+            "body_center_f": 83.048,
+            "room_temp_f": 69.134,
+            "observed_effective": -9,
+            "pred_setting": -9,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 01:38:20.711247-04:00",
+            "zone": "left",
+            "elapsed_min": 145.39128,
+            "body_left_f": 75.596,
+            "body_center_f": 82.886,
+            "room_temp_f": 69.134,
+            "observed_effective": -9,
+            "pred_setting": -9,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 01:39:23.349494-04:00",
+            "zone": "left",
+            "elapsed_min": 146.43527,
+            "body_left_f": 75.416,
+            "body_center_f": 82.958,
+            "room_temp_f": 69.134,
+            "observed_effective": -8,
+            "pred_setting": -8,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 01:43:03.012080-04:00",
+            "zone": "left",
+            "elapsed_min": 150.09592,
+            "body_left_f": 75.848,
+            "body_center_f": 84.146,
+            "room_temp_f": 69.134,
+            "observed_effective": -6,
+            "pred_setting": -6,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 01:48:03.064466-04:00",
+            "zone": "left",
+            "elapsed_min": 155.09674,
+            "body_left_f": 75.848,
+            "body_center_f": 83.984,
+            "room_temp_f": 69.134,
+            "observed_effective": -6,
+            "pred_setting": -6,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 01:53:03.013359-04:00",
+            "zone": "left",
+            "elapsed_min": 160.09593,
+            "body_left_f": 76.01,
+            "body_center_f": 83.984,
+            "room_temp_f": 69.134,
+            "observed_effective": -6,
+            "pred_setting": -6,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 01:58:03.013506-04:00",
+            "zone": "left",
+            "elapsed_min": 165.09593,
+            "body_left_f": 76.01,
+            "body_center_f": 83.354,
+            "room_temp_f": 69.134,
+            "observed_effective": -6,
+            "pred_setting": -6,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 02:03:03.442015-04:00",
+            "zone": "left",
+            "elapsed_min": 170.10307,
+            "body_left_f": 76.1,
+            "body_center_f": 83.516,
+            "room_temp_f": 68.864,
+            "observed_effective": -6,
+            "pred_setting": -6,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 02:04:43.558979-04:00",
+            "zone": "left",
+            "elapsed_min": 171.77206,
+            "body_left_f": 75.506,
+            "body_center_f": 83.516,
+            "room_temp_f": 68.864,
+            "observed_effective": -6,
+            "pred_setting": -6,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 02:05:13.732407-04:00",
+            "zone": "left",
+            "elapsed_min": 172.27504,
+            "body_left_f": 76.532,
+            "body_center_f": 83.588,
+            "room_temp_f": 68.864,
+            "observed_effective": -4,
+            "pred_setting": -4,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 02:08:03.363788-04:00",
+            "zone": "left",
+            "elapsed_min": 175.10179,
+            "body_left_f": 76.442,
+            "body_center_f": 84.542,
+            "room_temp_f": 68.864,
+            "observed_effective": -3,
+            "pred_setting": -3,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 02:13:03.531900-04:00",
+            "zone": "left",
+            "elapsed_min": 180.10469,
+            "body_left_f": 75.848,
+            "body_center_f": 85.1,
+            "room_temp_f": 68.864,
+            "observed_effective": -3,
+            "pred_setting": -3,
+            "cf_surface_delta_f": 0.0
+          }
+        ]
+      }
+    },
+    "B": {
+      "case_id": "B",
+      "passed": false,
+      "details": {
+        "definition": {
+          "description": "2026-05-01 RIGHT 03:25 under-cooled override (-4 -> -5)",
+          "zone": "right",
+          "start": "2026-05-01 03:00:00-04:00",
+          "end": "2026-05-01 03:50:00-04:00",
+          "eval_start": "2026-05-01 03:10:00-04:00",
+          "eval_end": "2026-05-01 03:40:00-04:00",
+          "pass": "setting <= -5 for >=15 minutes and median setting <= -5 around 03:25"
+        },
+        "minutes_setting_le_-5": 12.1734325,
+        "median_setting_0320_0331": -4.0,
+        "trajectory": [
+          {
+            "ts": "2026-05-01 03:03:03.633715-04:00",
+            "zone": "right",
+            "elapsed_min": 230.10582,
+            "body_left_f": 72.788,
+            "body_center_f": 76.28,
+            "room_temp_f": 68.432,
+            "observed_effective": -4,
+            "pred_setting": -4,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 03:08:03.790631-04:00",
+            "zone": "right",
+            "elapsed_min": 235.10843,
+            "body_left_f": 72.788,
+            "body_center_f": 76.874,
+            "room_temp_f": 68.396,
+            "observed_effective": -4,
+            "pred_setting": -4,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 03:13:03.058999-04:00",
+            "zone": "right",
+            "elapsed_min": 240.09593,
+            "body_left_f": 73.13,
+            "body_center_f": 76.784,
+            "room_temp_f": 68.396,
+            "observed_effective": -4,
+            "pred_setting": -4,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 03:18:03.086655-04:00",
+            "zone": "right",
+            "elapsed_min": 245.0967,
+            "body_left_f": 73.13,
+            "body_center_f": 76.784,
+            "room_temp_f": 68.36,
+            "observed_effective": -4,
+            "pred_setting": -4,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 03:23:03.424599-04:00",
+            "zone": "right",
+            "elapsed_min": 250.10231,
+            "body_left_f": 72.95,
+            "body_center_f": 76.442,
+            "room_temp_f": 68.27,
+            "observed_effective": -4,
+            "pred_setting": -4,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 03:25:52.655135-04:00",
+            "zone": "right",
+            "elapsed_min": 252.9237,
+            "body_left_f": 73.13,
+            "body_center_f": 76.946,
+            "room_temp_f": 68.27,
+            "observed_effective": -4,
+            "pred_setting": -4,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 03:28:03.823406-04:00",
+            "zone": "right",
+            "elapsed_min": 255.10892,
+            "body_left_f": 74.228,
+            "body_center_f": 78.926,
+            "room_temp_f": 68.27,
+            "observed_effective": -5,
+            "pred_setting": -5,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 03:33:03.909593-04:00",
+            "zone": "right",
+            "elapsed_min": 260.1102,
+            "body_left_f": 76.622,
+            "body_center_f": 80.6,
+            "room_temp_f": 68.27,
+            "observed_effective": -5,
+            "pred_setting": -5,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 03:38:03.061085-04:00",
+            "zone": "right",
+            "elapsed_min": 265.09592,
+            "body_left_f": 77.504,
+            "body_center_f": 80.906,
+            "room_temp_f": 68.27,
+            "observed_effective": -5,
+            "pred_setting": -5,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 03:43:03.456823-04:00",
+            "zone": "right",
+            "elapsed_min": 270.10284,
+            "body_left_f": 77.666,
+            "body_center_f": 81.14,
+            "room_temp_f": 68.27,
+            "observed_effective": -5,
+            "pred_setting": -5,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-05-01 03:48:03.775271-04:00",
+            "zone": "right",
+            "elapsed_min": 275.10812,
+            "body_left_f": 78.062,
+            "body_center_f": 80.744,
+            "room_temp_f": 68.27,
+            "observed_effective": -5,
+            "pred_setting": -5,
+            "cf_surface_delta_f": 0.0
+          }
+        ]
+      }
+    },
+    "C": {
+      "case_id": "C",
+      "passed": false,
+      "details": {
+        "definition": {
+          "description": "2026-04-30 morning: cold mid-night, slightly warm in morning",
+          "zone": "left",
+          "start": "2026-04-30 04:00:00-04:00",
+          "end": "2026-04-30 07:20:00-04:00",
+          "warm_start": "2026-04-30 04:15:00-04:00",
+          "warm_end": "2026-04-30 04:40:00-04:00",
+          "cool_start": "2026-04-30 06:40:00-04:00",
+          "cool_end": "2026-04-30 07:10:00-04:00",
+          "pass": "mid-night median setting >= -3 and morning median setting <= -4"
+        },
+        "midnight_warm_window_median_setting": -5.0,
+        "morning_cool_window_median_setting": -2.0,
+        "trajectory": [
+          {
+            "ts": "2026-04-30 04:01:53.593922-04:00",
+            "zone": "left",
+            "elapsed_min": 335.26245,
+            "body_left_f": 76.532,
+            "body_center_f": 81.77,
+            "room_temp_f": 69.602,
+            "observed_effective": -7,
+            "pred_setting": -7,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 04:06:53.262010-04:00",
+            "zone": "left",
+            "elapsed_min": 340.2569,
+            "body_left_f": 76.28,
+            "body_center_f": 81.698,
+            "room_temp_f": 69.602,
+            "observed_effective": -7,
+            "pred_setting": -7,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 04:11:53.261511-04:00",
+            "zone": "left",
+            "elapsed_min": 345.2569,
+            "body_left_f": 76.532,
+            "body_center_f": 82.022,
+            "room_temp_f": 69.602,
+            "observed_effective": -7,
+            "pred_setting": -7,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 04:16:53.263550-04:00",
+            "zone": "left",
+            "elapsed_min": 350.25693,
+            "body_left_f": 76.01,
+            "body_center_f": 81.626,
+            "room_temp_f": 69.296,
+            "observed_effective": -7,
+            "pred_setting": -7,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 04:21:53.474672-04:00",
+            "zone": "left",
+            "elapsed_min": 355.26044,
+            "body_left_f": 76.19,
+            "body_center_f": 81.392,
+            "room_temp_f": 69.332,
+            "observed_effective": -7,
+            "pred_setting": -7,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 04:26:54.930784-04:00",
+            "zone": "left",
+            "elapsed_min": 360.25693,
+            "body_left_f": 76.1,
+            "body_center_f": 81.464,
+            "room_temp_f": 69.332,
+            "observed_effective": -5,
+            "pred_setting": -5,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 04:27:29.178258-04:00",
+            "zone": "left",
+            "elapsed_min": 360.8558,
+            "body_left_f": 76.19,
+            "body_center_f": 81.23,
+            "room_temp_f": 69.332,
+            "observed_effective": -5,
+            "pred_setting": -5,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 04:31:53.268130-04:00",
+            "zone": "left",
+            "elapsed_min": 365.25693,
+            "body_left_f": 75.506,
+            "body_center_f": 83.912,
+            "room_temp_f": 69.332,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 04:36:53.274769-04:00",
+            "zone": "left",
+            "elapsed_min": 370.257,
+            "body_left_f": 76.28,
+            "body_center_f": 85.262,
+            "room_temp_f": 69.332,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 04:41:53.409919-04:00",
+            "zone": "left",
+            "elapsed_min": 375.25928,
+            "body_left_f": 76.28,
+            "body_center_f": 86.036,
+            "room_temp_f": 69.332,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 04:46:53.266256-04:00",
+            "zone": "left",
+            "elapsed_min": 380.2569,
+            "body_left_f": 76.784,
+            "body_center_f": 86.72,
+            "room_temp_f": 69.332,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 04:51:53.296624-04:00",
+            "zone": "left",
+            "elapsed_min": 385.25735,
+            "body_left_f": 76.694,
+            "body_center_f": 87.08,
+            "room_temp_f": 68.864,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 04:56:53.267959-04:00",
+            "zone": "left",
+            "elapsed_min": 390.25693,
+            "body_left_f": 76.694,
+            "body_center_f": 87.008,
+            "room_temp_f": 68.864,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 05:01:53.269991-04:00",
+            "zone": "left",
+            "elapsed_min": 395.257,
+            "body_left_f": 77.27,
+            "body_center_f": 87.53,
+            "room_temp_f": 68.864,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 05:06:53.887949-04:00",
+            "zone": "left",
+            "elapsed_min": 400.26727,
+            "body_left_f": 77.504,
+            "body_center_f": 87.98,
+            "room_temp_f": 68.864,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 05:11:53.287194-04:00",
+            "zone": "left",
+            "elapsed_min": 405.25726,
+            "body_left_f": 77.504,
+            "body_center_f": 88.358,
+            "room_temp_f": 68.864,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 05:16:53.265670-04:00",
+            "zone": "left",
+            "elapsed_min": 410.2569,
+            "body_left_f": 77.27,
+            "body_center_f": 88.952,
+            "room_temp_f": 68.63,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 05:21:53.286879-04:00",
+            "zone": "left",
+            "elapsed_min": 415.25723,
+            "body_left_f": 77.36,
+            "body_center_f": 89.096,
+            "room_temp_f": 68.63,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 05:26:53.943526-04:00",
+            "zone": "left",
+            "elapsed_min": 420.2682,
+            "body_left_f": 77.594,
+            "body_center_f": 89.474,
+            "room_temp_f": 68.63,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 05:31:53.545908-04:00",
+            "zone": "left",
+            "elapsed_min": 425.26154,
+            "body_left_f": 76.784,
+            "body_center_f": 89.78,
+            "room_temp_f": 68.63,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 05:36:53.267975-04:00",
+            "zone": "left",
+            "elapsed_min": 430.2569,
+            "body_left_f": 76.784,
+            "body_center_f": 90.14,
+            "room_temp_f": 68.63,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 05:41:53.288859-04:00",
+            "zone": "left",
+            "elapsed_min": 435.25723,
+            "body_left_f": 77.036,
+            "body_center_f": 90.374,
+            "room_temp_f": 68.63,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 05:46:53.576518-04:00",
+            "zone": "left",
+            "elapsed_min": 440.26202,
+            "body_left_f": 77.36,
+            "body_center_f": 90.518,
+            "room_temp_f": 68.63,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 05:51:53.269214-04:00",
+            "zone": "left",
+            "elapsed_min": 445.2569,
+            "body_left_f": 77.036,
+            "body_center_f": 90.896,
+            "room_temp_f": 68.63,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 05:56:53.282973-04:00",
+            "zone": "left",
+            "elapsed_min": 450.2571,
+            "body_left_f": 77.036,
+            "body_center_f": 90.824,
+            "room_temp_f": 68.63,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 06:01:53.757921-04:00",
+            "zone": "left",
+            "elapsed_min": 455.26498,
+            "body_left_f": 77.036,
+            "body_center_f": 91.274,
+            "room_temp_f": 68.63,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 06:06:53.792978-04:00",
+            "zone": "left",
+            "elapsed_min": 460.26562,
+            "body_left_f": 76.784,
+            "body_center_f": 91.274,
+            "room_temp_f": 68.63,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 06:11:53.341744-04:00",
+            "zone": "left",
+            "elapsed_min": 465.25812,
+            "body_left_f": 76.874,
+            "body_center_f": 91.184,
+            "room_temp_f": 68.63,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 06:16:53.268194-04:00",
+            "zone": "left",
+            "elapsed_min": 470.25693,
+            "body_left_f": 77.036,
+            "body_center_f": 91.49,
+            "room_temp_f": 68.324,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 06:21:53.887033-04:00",
+            "zone": "left",
+            "elapsed_min": 475.26724,
+            "body_left_f": 76.622,
+            "body_center_f": 91.184,
+            "room_temp_f": 68.324,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 06:26:53.343640-04:00",
+            "zone": "left",
+            "elapsed_min": 480.2582,
+            "body_left_f": 76.784,
+            "body_center_f": 91.634,
+            "room_temp_f": 68.234,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 06:31:53.267037-04:00",
+            "zone": "left",
+            "elapsed_min": 485.25696,
+            "body_left_f": 81.86,
+            "body_center_f": 90.662,
+            "room_temp_f": 68.234,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 06:36:53.268733-04:00",
+            "zone": "left",
+            "elapsed_min": 490.25693,
+            "body_left_f": 84.47,
+            "body_center_f": 91.274,
+            "room_temp_f": 68.234,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 06:41:53.264885-04:00",
+            "zone": "left",
+            "elapsed_min": 495.25693,
+            "body_left_f": 85.73,
+            "body_center_f": 91.04,
+            "room_temp_f": 68.234,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 06:46:53.268392-04:00",
+            "zone": "left",
+            "elapsed_min": 500.25696,
+            "body_left_f": 86.198,
+            "body_center_f": 90.896,
+            "room_temp_f": 68.72,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 06:51:53.266949-04:00",
+            "zone": "left",
+            "elapsed_min": 505.25693,
+            "body_left_f": 86.414,
+            "body_center_f": 91.04,
+            "room_temp_f": 68.72,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 06:56:22.719045-04:00",
+            "zone": "left",
+            "elapsed_min": 509.74817,
+            "body_left_f": 86.648,
+            "body_center_f": 91.112,
+            "room_temp_f": 68.72,
+            "observed_effective": -2,
+            "pred_setting": -2,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 06:56:53.483703-04:00",
+            "zone": "left",
+            "elapsed_min": 510.26044,
+            "body_left_f": 86.648,
+            "body_center_f": 91.112,
+            "room_temp_f": 68.72,
+            "observed_effective": -4,
+            "pred_setting": -4,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 07:01:53.389948-04:00",
+            "zone": "left",
+            "elapsed_min": 515.259,
+            "body_left_f": 81.302,
+            "body_center_f": 86.864,
+            "room_temp_f": 68.72,
+            "observed_effective": -4,
+            "pred_setting": -4,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 07:06:53.324657-04:00",
+            "zone": "left",
+            "elapsed_min": 520.2579,
+            "body_left_f": 77.756,
+            "body_center_f": 84.146,
+            "room_temp_f": 68.72,
+            "observed_effective": -4,
+            "pred_setting": -4,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 07:11:53.268033-04:00",
+            "zone": "left",
+            "elapsed_min": 525.2569,
+            "body_left_f": 77.666,
+            "body_center_f": 82.418,
+            "room_temp_f": 68.72,
+            "observed_effective": -4,
+            "pred_setting": -4,
+            "cf_surface_delta_f": 0.0
+          },
+          {
+            "ts": "2026-04-30 07:16:53.273757-04:00",
+            "zone": "left",
+            "elapsed_min": 530.25696,
+            "body_left_f": 77.036,
+            "body_center_f": 80.906,
+            "room_temp_f": 69.08,
+            "observed_effective": -4,
+            "pred_setting": -4,
+            "cf_surface_delta_f": 0.0
+          }
+        ]
+      }
+    }
+  },
+  "rows": {
+    "readings": 5094,
+    "replayed": 5094,
+    "overrides": 61
+  }
+}

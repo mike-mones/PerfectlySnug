@@ -5,7 +5,7 @@
 > document is the running log of what's actually been built, what's deployed,
 > what's been tried and rejected, and what the data actually says today.
 
-**Last updated:** 2026-05-01 (RC fleet reverse-engineering — see findings/2026-05-01_rc_synthesis.md)
+**Last updated:** 2026-05-01 evening (10-agent fleet + tonight's patches deployed — see §11 below and `docs/proposals/2026-05-01_recommendation.md`)
 
 > 🎯 **2026-05-01 RC reverse-engineering — canonical synthesis:**
 > [`findings/2026-05-01_rc_synthesis.md`](findings/2026-05-01_rc_synthesis.md).
@@ -467,3 +467,230 @@ Findings from `_archive/audit_2026-04-30/` (in-conversation, not separately comm
 | M9 | Custom component `client.py:_io_lock` held across all retries — UI commands block ~50s on flaky topper | `custom_components/perfectly_snug/client.py:138-155` |
 | M10 | Custom component `client.py` set-setting has no ack matching → optimistic update sticks on dropped frames | `custom_components/perfectly_snug/client.py:201-252` |
 | M11 | Right-zone telemetry: live controller writes go to JSONL only, not `controller_readings` rows. Need a controlled-zone branch in `_log_to_postgres`. | `sleep_controller_v5.py` |
+
+---
+
+## 11. 2026-05-01 evening — fleet design + tonight's deployed patches
+
+This is the most consequential session in the project's history. It produced
+a complete v6 design (10-agent fleet, 9 detailed proposal docs), then a
+pragmatic minimum-shippable patch set that was deployed to HA at 19:33 ET
+on 2026-05-01 ahead of tonight's sleep. Read this whole section before any
+follow-up work — most of the analysis is in the docs referenced here, not
+inline.
+
+### 11.1 The 10-agent fleet (Wave 1 → Wave 2 → Wave 3)
+
+Run from this repo's `PerfectlySnug/docs/proposals/` directory:
+
+| Agent | Model | Output |
+|---|---|---|
+| recon-deployed | claude-opus-4.7 | `2026-05-01_recon-deployed.md` — line-by-line audit of deployed v5.2 |
+| recon-data | gpt-5.5 | `2026-05-01_recon-data.md` — signal map, info content, override-absence trap quantified |
+| opt-mpc | claude-opus-4.7 | `2026-05-01_opt-mpc.md` — MPC over the RC firmware as inner plant |
+| opt-scratch | gpt-5.5 | `2026-05-01_opt-scratch.md` — RC-bypass from-scratch controller |
+| opt-hybrid | claude-opus-4.6 | `2026-05-01_opt-hybrid.md` — defer-to-RC + regime classifier |
+| opt-learned | claude-opus-4.7 | `2026-05-01_opt-learned.md` — offline RL / IL with override-absence-trap mitigation |
+| val-eval | gpt-5.5 | `2026-05-01_val-eval.md` + `tools/v6_eval.py` (executable) |
+| red-comfort | claude-opus-4.7 | `2026-05-01_red-comfort.md` — adversarial comfort failure modes |
+| red-safety | gpt-5.5 | `2026-05-01_red-safety.md` — adversarial hardware/safety failure modes |
+| synth | claude-opus-4.7 | **`2026-05-01_recommendation.md`** — chief-architect synthesis (862 lines) |
+
+The synth doc is the long-term roadmap. **Read it in full before any v6
+follow-up work.**
+
+### 11.2 Synth's recommendation in one paragraph
+
+Deterministic regime-classifier controller (opt-hybrid spine + red-comfort
+fixes) wrapped in an unconditional safety actuator (red-safety wrapper),
+with a bounded learned residual added to LEFT only after 14 nights of
+shadow logging. The firmware Stage-1+2 cascade (rc_synthesis) is a forward
+predictor for divergence sanity, never the planner. Random-shooting MPC
+and RC-bypass scratch were rejected as primary controllers (highest safety
+surface, cold-room extrapolation risk) but their best ideas — sensor
+fusion, movement-density proxy, plant model — survive as features. With
+30 nights / 61 overrides total, structural lifting must come from explicit
+physics + explicit policy, not capacity.
+
+### 11.3 User's decisions on synth's open questions (2026-05-01 19:24 ET)
+
+1. **Ship tonight, both zones live** — no 14-night canary, no shadow mode for right.
+2. **No A/B with thermostat** — building heat, can't control.
+3. **BedJet** = the first ~30 min of sleep blasting heated air into sheets.
+   - Right side should be at -10 max-cooling during BedJet window.
+   - BedJet window data should NOT be fed to preference learning (it's a
+     known confound, not user-stated preference).
+4. **84°F right-side proactive-cool threshold acceptable.**
+5. **No "all-night override floor" wanted at all.** *Manual user adjustments are
+   LEARNING DATA POINTS, not constraints.* The model is supposed to learn
+   from them. This is a fundamental philosophical shift from v5.2.
+6. **Wake-cool right side late cycles**: defer to controller author judgment.
+7. **Residual head**: defer to author judgment.
+8. **3-level mode forced OFF** confirmed.
+
+### 11.4 What was deployed tonight (2026-05-01 19:33 ET)
+
+**Approach:** rather than ship the full v6 (14 modules, 800+ lines new
+code, multiple new HA helpers, requires a HA restart), the patches were
+applied surgically *in place* on `appdaemon/sleep_controller_v5.py`. The
+module name and class name were preserved, so `apps.yaml` did not change
+and AppDaemon hot-reloaded automatically on `scp`. CONTROLLER_VERSION was
+deliberately kept at `"v5_2_rc_off"` so the cross-night learner
+(`_learn_from_history`) inherits the existing override corpus; a new
+`CONTROLLER_PATCH_LEVEL` constant carries the marker
+`"v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86"`.
+
+Detailed patch description: **`docs/2026-05-01_v52_patches.md`**.
+
+The four patches:
+
+1. **Override floor REMOVED.** v5.2's `override_floor` state field +
+   night-long clamp (formerly at `_compute_setting` lines 512-517) is
+   gone. The 60-min `override_freeze_until` is preserved (so we don't
+   immediately re-fight a fresh manual change). After the freeze elapses,
+   the controller resumes algorithmic decisions. Manual changes are
+   consumed as learning data points by `_learn_from_history` on the next
+   night-start (queries PG `controller_readings WHERE action='override'`).
+
+2. **3-level mode watchdog.** New `_ensure_3_level_off()` method that
+   turns OFF both `switch.smart_topper_left_side_3_level_mode` and
+   `switch.smart_topper_right_side_3_level_mode`. Called from
+   `initialize()`, `_on_sleep_mode("on")`, and EVERY 5-min `_control_loop`
+   tick. Idempotent. Without this, 3-level mode drifting on causes
+   firmware to advance L1→L2→L3 by run_progress and our writes to the
+   bedtime entity stop affecting the live dial.
+
+3. **Right-zone proactive-cool rail.** New constants `RIGHT_HOT_RAIL_F=86.0`,
+   `RIGHT_HOT_RAIL_STREAK=2` (≈10 min @ 5-min cycles), `RIGHT_HOT_RAIL_BIAS=-1`.
+   New `right_hot_streak` state slot. In `_right_v52_shadow_tick`, after
+   computing the body-feedback proposal, count consecutive ticks where
+   `body_left ≥ 86°F` outside excluded windows (BedJet window,
+   initial-bed-cooling, unoccupied, sensor-missing, pre-sleep stages —
+   streak resets to 0 in any of these). When streak hits ≥2, bias the
+   proposed setting one step cooler. **Threshold is 86°F not 84°F**
+   because the existing right body feedback (Kp_hot=0.5 × delta from 80°F
+   target) already corrects -2 at body=84°F; this rail is the next
+   escalation, not redundant with body_fb. Mitigates the *override-absence
+   trap* (wife rarely overrides → absence ≠ comfort).
+
+4. **BedJet → -10 force on right zone: NOT NEEDED.** The rubber-duck pass
+   pointed out this would have been a no-op patch — `INITIAL_BED_RIGHT_SETTING
+   = -10` already forces the right side to -10 for the first
+   `INITIAL_BED_COOLING_MIN=30` minutes after right-bed onset, and the
+   BedJet window is also 30 min, so v5.2 *already* pins right=-10 during
+   the BedJet window. Documented the existing behavior; no code change.
+
+### 11.5 What was DEFERRED (intentional, low-priority for tonight)
+
+The synth recommendation's full v6 design is intentionally not in this
+patch set. These items are queued for follow-up:
+
+- **Composite right-zone comfort proxy** (body distribution percentiles +
+  movement density + sleep-stage-normality). Right-side hot-rail at 86°F
+  is a coarse first-pass approximation.
+- **Movement-density logger** (`tools/v6_pressure_logger.py` + new
+  `controller_pressure_movement` PG table). Needs a new AppDaemon app and
+  PG migration; not on critical path.
+- **Bounded learned residual head** (BayesianRidge + GP under LCB) on
+  LEFT zone — synth gates this behind 14 nights of shadow logging.
+- **Mutex w/ `right_overheat_safety`** via new
+  `input_boolean.snug_right_rail_engaged`. Both apps currently race the
+  same entity. Functionally OK because the rail is rare (engages only at
+  ≥86°F sustained), but red-safety §1 flagged it as a top risk that
+  needs fixing before any aggressive right-zone changes.
+- **`tools/v6_eval.py` v6 Policy wrapper** for case A/B/C replay
+  validation — the framework was built tonight but no v6 policy is wired.
+- **PG schema migration** (`controller_readings` ADD COLUMN regime,
+  residual, divergence_steps).
+- **BedJet entity** `climate.bedjet_shar` not yet in HA recorder include
+  list; tonight's controller has no awareness of BedJet activation
+  timing beyond the empirical 30-min window.
+- **Body-trend-15m guard** on cold-room comp (red-comfort §3.1 flagged
+  the over-warm risk when body is sweat-cooled). The existing v5.2
+  cold-room comp logic is unchanged — possible regression vector worth
+  monitoring in the morning report.
+
+### 11.6 What was learned about v5.2's existing behavior (verified, document so we don't relearn)
+
+- **v5.2 already enforces right=-10 for the first 30 min** via
+  `INITIAL_BED_RIGHT_SETTING = -10` + `INITIAL_BED_COOLING_MIN = 30.0`.
+  This subsumes the BedJet-warm-window force-cool requirement.
+- **v5.2 already feeds overrides into a cross-night learner** via
+  `_learn_from_history` querying PG `action='override'` rows. Removing
+  the floor doesn't remove learning — it just removes the within-night
+  clamp that used to override the algorithm.
+- **`_log_to_postgres` does NOT write an `override_floor` SQL column** —
+  the kwarg only formats into the `notes` text column. Removing floor
+  state was schema-safe; the kwarg is preserved as `None` for backward
+  compat with the function signature.
+- **Setting `override_floor=None` permanently is fine** for the postgres
+  notes formatting; the `if override_floor is not None` guard in
+  `_log_to_postgres` handles it correctly.
+- **`_ensure_responsive_cooling_off` was already a watchdog** (called
+  from both `initialize` and every `_control_loop` tick). The new
+  `_ensure_3_level_off` mirrors that pattern — same call sites.
+- **`right_overheat_safety.py` already has a 30-min BedJet suppression**
+  (`BEDJET_SUPPRESS_MIN=30`) — it does NOT engage the 86°F rail during
+  the first 30 min after right-bed onset. This means our forcing right=-10
+  during the BedJet window cannot spuriously trip the rail.
+- **The deployed room temperature sensor is
+  `sensor.bedroom_temperature_sensor_temperature`** (Aqara), not the
+  topper-onboard ambient (which reads 5-10°F high) and not the older
+  `sensor.superior_6000s_temperature` dehumidifier sensor. Wired via
+  `apps.yaml`. Some old memory entries still cite the dehumidifier — they
+  are stale.
+
+### 11.7 Verification of the deploy
+
+1. Syntax check passed (`python3 -c "import ast; ast.parse(...)"`).
+2. **All 67 tests pass** (`tests/test_controller_v5.py` 44 tests +
+   `tests/test_v5_overheat_rail.py` 8 + `tests/test_right_overheat_safety.py`
+   15). One test (`TestOverrideFloor.test_override_floor_persists_after_freeze`)
+   was rewritten to assert the new no-floor semantic.
+3. SCP to HA succeeded; AppDaemon detected the modification and reloaded
+   `sleep_controller` automatically at **2026-05-01 19:33:19 ET**.
+4. Initialization log clean: `Controller v5_2_rc_off ready`, body feedback
+   enabled, right-zone shadow live=True, room temp from
+   `sensor.bedroom_temperature_sensor_temperature`.
+5. Verified patches landed on HA via `grep` — all four patch markers
+   present in the deployed file.
+
+### 11.8 What the user owes the next session
+
+A subjective morning report with one of these three labels per zone:
+**too hot / too cold / just right**, plus any free-text observations.
+That feedback is the comfort signal we cannot get from sensors alone
+(especially for the wife — see override-absence trap discussion in
+recon-data and red-comfort).
+
+### 11.9 Where to start the next session
+
+Read these in this order, before doing anything:
+
+1. This file (`docs/PROGRESS_REPORT.md`) — especially §11 (just added).
+2. `docs/2026-05-01_v52_patches.md` — line-level diff of tonight's patches.
+3. `docs/proposals/2026-05-01_recommendation.md` — full v6 roadmap.
+4. `docs/NEXT_STEPS.md` — concrete to-do list (just added).
+5. The user's morning report.
+
+Then run morning analysis:
+
+```bash
+cd PerfectlySnug
+.venv/bin/python tools/eval_right_shadow.py
+.venv/bin/python -c "
+import psycopg2
+conn = psycopg2.connect(host='192.168.0.3', dbname='sleepdata',
+                         user='sleepsync', password='sleepsync_local')
+cur = conn.cursor()
+cur.execute('''
+  SELECT ts, zone, action, setting, body_left, room_temp, notes
+  FROM controller_readings
+  WHERE ts > now() - interval '12 hours'
+    AND (action = \\'override\\' OR notes LIKE \\'%hot_rail%\\')
+  ORDER BY ts
+''')
+for row in cur.fetchall():
+    print(row)
+"
+```

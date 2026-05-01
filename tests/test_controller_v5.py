@@ -110,13 +110,12 @@ def _make_controller(*, current_setting=-7, current_blower=65):
         "last_restart_ts": None,
         "last_target_blower_pct": ctrl_module.L1_TO_BLOWER_PCT[current_setting],
         "override_freeze_until": None,
-        "override_floor": None,
-        "override_floor_blower_pct": None,
         "manual_mode": False,
         "recent_changes": [],
         "override_count": 0,
         "body_below_since": None,
         "hot_streak": 0,
+        "right_hot_streak": 0,
         "current_cycle_num": None,
         "left_zone_last_occupied": True,
         "left_zone_occupied_since": (datetime.now() - timedelta(minutes=60)).isoformat(),
@@ -307,10 +306,15 @@ class TestAutoRestart:
 
 
 class TestOverrideFloor:
-    def test_override_floor_persists_after_freeze(self):
+    def test_no_floor_after_freeze_returns_to_algorithmic(self):
+        """2026-05-01: Override floor was removed. After the 60-min freeze
+        elapses, the controller resumes algorithmic decisions (does NOT clamp
+        to the user's last manual value). User overrides become learning data
+        points consumed cross-night via _learn_from_history, not night-long
+        floors."""
         controller = _make_controller(current_setting=-6, current_blower=50)
         _set_states(controller, running="on", responsive="off")
-        controller._state["override_floor"] = -5
+        # Freeze has elapsed (1 minute ago). Algorithm wants -10.
         controller._state["override_freeze_until"] = (
             datetime.now() - timedelta(minutes=1)
         ).isoformat()
@@ -328,13 +332,16 @@ class TestOverrideFloor:
 
         controller._control_loop({})
 
+        # Algorithm should drive to -10, NOT clamp to a user-supplied floor.
         controller.call_service.assert_called_with(
             "number/set_value",
             entity_id=ctrl_module.E_BEDTIME_TEMP,
-            value=-5,
+            value=-10,
         )
-        assert controller._state["override_floor"] == -5
-        assert controller._log_to_postgres.call_args.kwargs["override_floor"] == -5
+        # No floor state remains in the controller.
+        assert "override_floor" not in controller._state
+        # Logging path passes None for legacy override_floor kwarg.
+        assert controller._log_to_postgres.call_args.kwargs["override_floor"] is None
 
 
 class TestControlLoopLogging:
