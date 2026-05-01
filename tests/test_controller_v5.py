@@ -118,6 +118,10 @@ def _make_controller(*, current_setting=-7, current_blower=65):
         "body_below_since": None,
         "hot_streak": 0,
         "current_cycle_num": None,
+        "left_zone_last_occupied": True,
+        "left_zone_occupied_since": (datetime.now() - timedelta(minutes=60)).isoformat(),
+        "right_zone_last_occupied": True,
+        "right_zone_occupied_since": (datetime.now() - timedelta(minutes=60)).isoformat(),
     }
     controller._learned = {}
     controller._pg_conn = None
@@ -489,17 +493,52 @@ class TestBodyFeedback:
         c._state = {"current_cycle_num": 0}
         return c
 
-    def test_skip_in_cycles_1_2(self):
-        """Bedtime aggressive cooling — skip feedback regardless of body."""
+    def test_early_sleep_feedback_warms_cycles_1_2(self):
+        """After initial-bed gate expires, early cycles can warm from body feedback."""
         c = self._fresh_controller()
-        # cycle 1 (elapsed_min < 90)
         plan = c._compute_setting(elapsed_min=10, room_temp=68.0, sleep_stage=None,
-                                  body_avg=72.0, body_left=68.0)
-        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[1]
-        # cycle 2 (90 <= elapsed_min < 180)
+                                   body_avg=72.0, body_left=68.0,
+                                   mins_since_occupied=45.0)
+        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[1] + ctrl_module.BODY_FB_MAX_DELTA
+        assert "body_fb" in plan["data_source"]
+
         plan = c._compute_setting(elapsed_min=120, room_temp=68.0, sleep_stage=None,
+                                   body_avg=72.0, body_left=68.0)
+        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[2] + ctrl_module.BODY_FB_MAX_DELTA
+        assert "body_fb" in plan["data_source"]
+
+    def test_inbed_pre_sleep_precooling_stays_aggressive(self):
+        """Explicit in-bed/not-yet-asleep stage preserves intentional pre-cooling."""
+        c = self._fresh_controller()
+        plan = c._compute_setting(elapsed_min=10, room_temp=68.0, sleep_stage="inbed",
                                   body_avg=72.0, body_left=68.0)
-        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[2]
+        assert plan["setting"] == ctrl_module.INITIAL_BED_LEFT_SETTING
+        assert plan["base_setting"] == ctrl_module.INITIAL_BED_LEFT_SETTING
+        assert "body_fb" not in plan["data_source"]
+        assert plan["room_temp_comp"] == 0
+        assert plan["data_source"] == "pre_sleep_precool"
+
+    def test_left_first_30_min_occupied_forces_max_despite_cold_body(self):
+        """Occupancy-based initial-bed gate overrides body feedback and room comp."""
+        c = self._fresh_controller()
+        plan = c._compute_setting(elapsed_min=10, room_temp=60.0, sleep_stage=None,
+                                  body_avg=72.0, body_left=68.0,
+                                  mins_since_occupied=10.0)
+        assert plan["setting"] == ctrl_module.INITIAL_BED_LEFT_SETTING
+        assert plan["base_setting"] == ctrl_module.INITIAL_BED_LEFT_SETTING
+        assert plan["target_blower_pct"] == 100
+        assert plan["room_temp_comp"] == 0
+        assert "body_fb" not in plan["data_source"]
+        assert "initial_bed_cooling" in plan["data_source"]
+
+    def test_deep_sleep_cycle_1_can_warm_from_stage_baseline(self):
+        """After initial-bed gate, stage deep can warm from low body feedback."""
+        c = self._fresh_controller()
+        plan = c._compute_setting(elapsed_min=10, room_temp=68.0, sleep_stage="deep",
+                                  body_avg=72.0, body_left=68.0,
+                                  mins_since_occupied=45.0)
+        assert plan["base_setting"] == -10 + ctrl_module.BODY_FB_MAX_DELTA
+        assert "body_fb" in plan["data_source"]
 
     def test_no_correction_when_body_at_or_above_target(self):
         c = self._fresh_controller()
@@ -590,7 +629,123 @@ class TestBodyFeedback:
         assert consts.get("BODY_FB_TARGET_F") == 80.0
         assert consts.get("BODY_FB_KP_COLD") == 1.25
         assert consts.get("BODY_FB_MAX_DELTA") == 5
-        assert consts.get("BODY_FB_MIN_CYCLE") == 3
+        assert consts.get("BODY_FB_MIN_CYCLE") == 1
+        assert consts.get("INITIAL_BED_COOLING_MIN") == 30.0
+        assert consts.get("INITIAL_BED_LEFT_SETTING") == -10
+        assert consts.get("INITIAL_BED_RIGHT_SETTING") == -10
+
+
+class TestRightRoomCompensation:
+    """Right-zone room compensation: shared 72°F reference, wife-specific gains."""
+
+    def _fresh_controller(self):
+        c = SleepControllerV5()
+        c._learned = {}
+        c._state = {}
+        return c
+
+    def test_constants_are_safe_and_hot_only(self):
+        assert ctrl_module.RIGHT_ROOM_BLOWER_REFERENCE_F == ctrl_module.ROOM_BLOWER_REFERENCE_F
+        assert ctrl_module.RIGHT_ROOM_BLOWER_REFERENCE_F == 72.0
+        assert ctrl_module.RIGHT_ROOM_BLOWER_HOT_COMP_PER_F == 4.0
+        assert ctrl_module.RIGHT_ROOM_BLOWER_COLD_COMP_PER_F == 0.0
+
+    def test_cold_room_has_zero_right_compensation(self):
+        c = self._fresh_controller()
+        assert c._right_room_temp_to_blower_comp(67.0) == 0
+        assert c._right_room_temp_to_blower_comp(68.3) == 0
+        assert c._right_room_temp_to_blower_comp(72.0) == 0
+
+    def test_hot_room_adds_only_cooling_blower_points(self):
+        c = self._fresh_controller()
+        assert c._right_room_temp_to_blower_comp(72.2) == 1
+        assert c._right_room_temp_to_blower_comp(75.0) == 12
+
+
+class TestRightEarlySleepFeedback:
+    """Right-zone controller no longer skips body feedback in cycle 1 during sleep."""
+
+    def _fresh_controller(self, monkeypatch):
+        import builtins
+        import io
+        from datetime import datetime as _dt, timedelta as _td
+
+        c = SleepControllerV5()
+        c._state = {
+            "right_zone_last_occupied": True,
+            "right_zone_occupied_since": (_dt.now() - _td(minutes=45)).isoformat(),
+        }
+        c._save_state = lambda: None
+        c._set_l1_right = lambda value: None
+        c.log = lambda *args, **kwargs: None
+        c._read_str = lambda entity_id: (
+            "on" if entity_id == ctrl_module.BED_PRESENCE_ENTITIES["occupied_right"] else "off"
+        )
+        sink = io.StringIO()
+
+        class _FakeOpen:
+            def __enter__(self):
+                return sink
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        monkeypatch.setattr(builtins, "open", lambda *args, **kwargs: _FakeOpen())
+        return c, sink
+
+    def test_right_cycle_1_cold_body_feedback_warms(self, monkeypatch):
+        import json
+
+        c, sink = self._fresh_controller(monkeypatch)
+        c._right_v52_shadow_tick(
+            elapsed_min=10,
+            room_temp=68.0,
+            sleep_stage="core",
+            right_snap=_snapshot(setting=-8, blower_pct=75) | {"body_left": 76.0, "body_avg": 78.0},
+        )
+        entry = json.loads(sink.getvalue().strip())
+        assert entry["cycle"] == 1
+        assert entry["right_v52_base"] == ctrl_module.RIGHT_CYCLE_SETTINGS[1]
+        assert entry["right_v52_correction"] == 1
+        assert entry["right_v52_body_proposed"] == ctrl_module.RIGHT_CYCLE_SETTINGS[1] + 1
+        assert entry["right_v52_reason"].startswith("cold_")
+
+    def test_right_first_30_min_occupied_forces_max_despite_cold_body(self, monkeypatch):
+        import json
+        from datetime import datetime as _dt, timedelta as _td
+
+        c, sink = self._fresh_controller(monkeypatch)
+        c._state["right_zone_occupied_since"] = (_dt.now() - _td(minutes=10)).isoformat()
+        c._right_v52_shadow_tick(
+            elapsed_min=10,
+            room_temp=68.0,
+            sleep_stage="core",
+            right_snap=_snapshot(setting=-8, blower_pct=75) | {"body_left": 76.0, "body_avg": 78.0},
+        )
+        entry = json.loads(sink.getvalue().strip())
+        assert entry["in_initial_bed_cooling"] is True
+        assert entry["right_v52_correction"] == 0
+        assert entry["right_v52_body_proposed"] == ctrl_module.INITIAL_BED_RIGHT_SETTING
+        assert entry["right_v52_proposed"] == ctrl_module.INITIAL_BED_RIGHT_SETTING
+        assert entry["right_v52_source"] == "initial_bed_cooling"
+        assert entry["right_v52_reason"].startswith("initial_bed_cooling_")
+
+    def test_right_inbed_pre_sleep_feedback_suppressed(self, monkeypatch):
+        import json
+
+        c, sink = self._fresh_controller(monkeypatch)
+        c._right_v52_shadow_tick(
+            elapsed_min=10,
+            room_temp=68.0,
+            sleep_stage="inbed",
+            right_snap=_snapshot(setting=-8, blower_pct=75) | {"body_left": 76.0, "body_avg": 78.0},
+        )
+        entry = json.loads(sink.getvalue().strip())
+        assert entry["right_v52_correction"] == 0
+        assert entry["right_v52_body_proposed"] == ctrl_module.INITIAL_BED_RIGHT_SETTING
+        assert entry["right_v52_proposed"] == ctrl_module.INITIAL_BED_RIGHT_SETTING
+        assert entry["right_v52_reason"] == "pre_sleep_inbed"
+        assert entry["right_v52_source"] == "pre_sleep_precool"
 
 
 class TestRightZoneLiveGate:

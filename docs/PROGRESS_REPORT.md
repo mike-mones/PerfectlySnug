@@ -5,7 +5,49 @@
 > document is the running log of what's actually been built, what's deployed,
 > what's been tried and rejected, and what the data actually says today.
 
-**Last updated:** 2026-04-30 (v5.2 + right-zone live shipped same evening)
+**Last updated:** 2026-05-01 (RC fleet reverse-engineering — see findings/2026-05-01_rc_synthesis.md)
+
+> 🎯 **2026-05-01 RC reverse-engineering — canonical synthesis:**
+> [`findings/2026-05-01_rc_synthesis.md`](findings/2026-05-01_rc_synthesis.md).
+> Combined output of 8 parallel agents (2 audit, 6 deep-dive analysis) plus
+> a controlled empty-bed experiment. RC is now identified as a **two-stage
+> cascade** (slow leaky-max-hold setpoint generator + Hammerstein P-controller
+> with rate and ambient feedforward, no integral term in stage 2). Three
+> independent agents converged on the same structure with TS-CV R² up to 0.97.
+
+> 🔬 **2026-05-01 data audit (post setpoint finding):**
+> 1. **HA recorder was excluding the firmware PID stream**
+>    (`sensor.smart_topper_*_pid_*`) and `run_progress`, capping any
+>    blower-prediction model at R²≈0.21. Excludes have been removed from
+>    `/config/configuration.yaml` (backup at `.bak.20260501`); HA
+>    restarted to begin collection.
+> 2. **`bedtime_temperature` (L1) is not the active dial for most
+>    rows.** `switch.smart_topper_<side>_3_level_mode` is ON, so the
+>    firmware advances L1 → L2 → L3 by `run_progress`. All future
+>    analysis must use **L_active**, not L1. Helper:
+>    `tools/lib_active_setting.py`. Entity table and threshold formula in
+>    `findings/2026-05-01_data_audit_labels.md` §9.
+> 3. **L1_TO_BLOWER delta correction.** The earlier "−45 pts under RC"
+>    figure was inflated by `running=off` synthetic-zero rows and
+>    unoccupied rows. Correct value on occupied RC-on data (n=43,827):
+>    mean −21, median −18, std 22. Comment in
+>    `appdaemon/sleep_controller_v5.py:201` updated.
+> 4. **Use external room sensor for ambient features in modeling**, not
+>    `sensor.smart_topper_*_ambient_temperature` (which the audit
+>    confirmed is biased high by 5–10 °F). `sleep_controller_v5.py`
+>    already does this via `_get_room_temp_entity()` →
+>    `sensor.bedroom_temperature_sensor_temperature`. Any offline
+>    feature-extraction pipeline that has been pulling the
+>    topper-onboard ambient must switch to the same entity.
+> 5. **Drop `running=off` rows from training.** The integration
+>    overrides output sensors to 0 when running=off; those zeros are
+>    synthetic, not real labels.
+
+> 🔬 **Earlier 2026-05-01 finding:** `sensor.smart_topper_*_temperature_setpoint`
+> tracks `max(body_*)` only inside the active blower band (5–60 %); in
+> deadband and saturation it slews toward an ambient-anchored default.
+> See [`findings/2026-05-01_setpoint_is_max_body.md`](findings/2026-05-01_setpoint_is_max_body.md)
+> and [`findings/2026-05-01_data_audit_labels.md`](findings/2026-05-01_data_audit_labels.md) §3.
 
 ---
 
@@ -105,6 +147,22 @@ Held-out LOOCV on the override corpus: v5 MAE 3.116 → v5.2 MAE 1.633
 `CONTROLLER_VERSION` bumped `v5_rc_off` → `v5_2_rc_off`. New live tag for
 PG analysis.
 
+### Room compensation reference — 2026-05-01
+
+Changed `ROOM_BLOWER_REFERENCE_F` in `appdaemon/sleep_controller_v5.py` from
+68°F to **72°F**. Rationale: last night's room range was roughly 67.3–72.2°F,
+so the old 68°F anchor treated most of the night as neutral-to-warm and even
+added cooling near 72°F. The 72°F anchor treats the same conditions as mildly
+cold-to-neutral, reducing blower demand in the 67–71°F band while preserving
+hot compensation above 72°F. Retrospective replay for 2026-04-30→2026-05-01:
+left-zone room compensation shifted by −16 blower points at comparable room
+temps (e.g. ~67°F: old −3 vs new −19; ~72°F: old +16 vs new 0). This made the
+unfloored target 0–2 L1 steps warmer on most logged left-zone ticks, but live
+actuation would still have been constrained by the user's manual override floor
+and the normal freeze/rate-limit holds. Right-zone v5.2 does not use
+`ROOM_BLOWER_REFERENCE_F`; it uses cycle baselines plus body feedback, so this
+change has no direct effect on right-zone proposals.
+
 ### Right-zone v5.2 — 2026-04-30 (live, same evening)
 
 The wife's right zone is no longer firmware-default. Two-key arming via
@@ -133,6 +191,50 @@ Live operational kill-switch: toggle `input_boolean.snug_right_controller_enable
 in HA UI; takes effect on the next 5-min tick, no redeploy. See
 `_archive/right_zone_rollout_2026-04-30.md`.
 
+### Right-zone room compensation — 2026-05-01
+
+Added wife/right-zone room compensation to `sleep_controller_v5.py` using the
+same physical room reference as the left side (`72°F`) but wife-specific gains:
+`RIGHT_ROOM_BLOWER_HOT_COMP_PER_F=4.0` and
+`RIGHT_ROOM_BLOWER_COLD_COMP_PER_F=0.0`. This addresses the user's point that
+the 72°F reference is about the room, not a person, while keeping the personal
+response separate. Initial deployment is deliberately **hot-only**: room
+temperatures above 72°F add cooling in blower-proxy space; temperatures below
+72°F add **zero** warming. Rationale: the only right-side manual override from
+2026-04-30→2026-05-01 was colder (`−4→−5`) around 03:25 ET with room ≈68.3°F
+and body_left ≈73°F, so a below-72°F warming multiplier would contradict fresh
+evidence. Replay of that night: 67.3°F low → `right_room_comp=0`; 68.3°F
+override → `right_room_comp=0`; 72.2°F high → `right_room_comp=+1` blower point,
+which did not change the snapped right-zone proposal. Net changed ticks: 0/120.
+
+### Explicit pre-cool / initial-bed cooling gate — 2026-05-01
+
+Correction to the earlier same-day "early-sleep forced-cooling removal": the
+user clarified they **do** want intentional max/aggressive cooling before bed
+and for roughly the first 30 minutes after getting into bed. Deployed controller
+change: `INITIAL_BED_COOLING_MIN=30.0`,
+`INITIAL_BED_LEFT_SETTING=-10`, and `INITIAL_BED_RIGHT_SETTING=-10`.
+
+Behavior now:
+- pre-sleep Apple stages (`inbed` / `awake`) force pre-cool/max cooling and
+  bypass body feedback, learned residuals, and room compensation;
+- the first 30 minutes after bed-presence occupancy onset force max cooling on
+  both zones (`-10`), using ESPHome bed occupancy when available rather than
+  sleep-stage labels alone;
+- after that occupancy-based gate expires, body feedback is active from cycle 1
+  (`BODY_FB_MIN_CYCLE=1`, `RIGHT_BODY_FB_SKIP_CYCLES=()`), so low `body_left`
+  can warm the model normally;
+- right-zone BedJet suppression still prevents inflated body sensors from
+  driving body-feedback corrections, but it no longer blocks the user-requested
+  initial-bed max-cooling gate.
+
+Replay of 2026-04-30→2026-05-01 early rows shows the corrected policy holds
+left at `-10` through 26 minutes then allows body-feedback warming at 31+
+minutes; right would change the first 30 minutes from the old gentler `-8`
+behavior to `-10`, then return to the model at 35+ minutes. Tests cover left
+and right first-30-minute forced cooling, post-window warming, and pre-sleep
+forced pre-cooling.
+
 ### Discomfort proxy — bed-pressure movement signal added
 
 User pointed out the bed-presence sensor publishes pressure% at sub-second
@@ -158,7 +260,7 @@ will show up in pressure data). Same pipeline, swap entity to
 ### v5's heuristic algorithm (in one paragraph)
 Cycle baselines (was hand-picked `[-10,-9,-8,-7,-6,-5]`; now refit
 `[-10,-10,-7,-5,-5,-6]` per the v5.1 update above; v5.2 then adds a
-body-feedback correction on top — see v5.2 section) plus room-temperature compensation (cool-comp below 68°F, hot-comp above) plus a learned per-cycle blower-percentage adjustment (clipped to ±15%) plus two safety rails (`hot_safety` steps one colder when body > 85°F sustained; nothing on the cold side). The "learning" updates the blower adjustment from the most recent override delta, which causes oscillation.
+body-feedback correction on top — see v5.2 section) plus room-temperature compensation (cool-comp below 72°F, hot-comp above) plus a learned per-cycle blower-percentage adjustment (clipped to ±15%) plus two safety rails (`hot_safety` steps one colder when body > 85°F sustained; nothing on the cold side). The "learning" updates the blower adjustment from the most recent override delta, which causes oscillation.
 
 ---
 

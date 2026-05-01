@@ -53,8 +53,9 @@ if str(_project_root) not in sys.path:
 #   Light/transitions: normal regulation → follow preferences
 #
 # Ideal cooling trajectory:
-#   Cycle 1 (0-90 min): aggressive cool → body needs help dropping core temp
-#   Cycle 2 (90-180 min): moderate cool → deep sleep dominant, body is cold
+#   Pre-sleep/in-bed: intentional pre-cooling is allowed before sleep onset
+#   Cycle 1 (0-90 min): cool-biased baseline → body feedback may ease off
+#   Cycle 2 (90-180 min): cool-biased baseline → body feedback may ease off
 #   Cycle 3-4 (180-360 min): light cool → REM increases, overcooling wakes
 #   Cycle 5+ (360+ min): minimal cool → approaching wake, body warming up
 
@@ -74,10 +75,11 @@ CYCLE_SETTINGS = {
     # Override corpus per-cycle means (n, mean):
     # c1=(11,-9.27) c2=(7,-8.0) c3=(10,-6.0) c4=(5,-3.0) c5=(7,-2.86) c6=(9,-3.11).
     # See _archive/v5_1_baseline_fit_2026-04-30.md.
-    1: -10,  # Aggressive cool: support core temp drop at sleep onset (kept; c1 means
-             # are heavily room_comp-confounded — trust the prior here).
+    1: -10,  # Cool-biased early-sleep prior. Not forced: body feedback is active
+             # from cycle 1 and can warm this immediately when body_left is cool.
     2: -10,  # was -9 (v5), then -8 (initial v5.1); reverted to -10 after hit-rate
              # replay showed bimodal preference dominated by [-10,-10,-10,-10] cluster.
+             # Body feedback is active here too, so this is no longer forced cooling.
     3:  -7,  # Was -8; shrunken posterior over 10 overrides (mean -6.0).
     4:  -5,  # Was -7; shrunken posterior over 5 overrides (mean -3.0). Largest single
              # change; addresses 2026-04-30 "cold in the middle of the night" report.
@@ -98,8 +100,8 @@ CYCLE_DURATION_MIN = 90
 # Mechanics: when body_avg_f is BELOW BODY_FB_TARGET, shift the cycle
 # baseline by Kp*(target-body) settings warmer (less cooling). No correction
 # applied above target — the safety rails (`hot_safety`, `overheat_hard`,
-# right-zone rail) handle hot-side. Skipped in cycles 1-2 (bedtime aggressive
-# cooling phase, where users override toward -10 regardless of body temp).
+# right-zone rail) handle hot-side. Applies from cycle 1 once sleep is active;
+# only explicit pre-sleep/in-bed stage labels preserve intentional pre-cooling.
 #
 # Sweep evidence (n=41 overrides, 30 nights):
 #   v5  : MAE=3.024 hit=26.8% bias=-2.00 (open-loop, monotonic baselines)
@@ -122,8 +124,8 @@ BODY_FB_KP_COLD = 1.25        # settings warmer per °F below target. Larger
                               # Refit MAE 1.81, LOOCV 1.51 (was v5.2 body_avg
                               # MAE 1.73, LOOCV 1.63).
 BODY_FB_MAX_DELTA = 5         # cap upward correction (warmer-shift) from baseline
-BODY_FB_MIN_CYCLE = 3         # apply only from cycle 3 onward; cycles 1-2 honor
-                              # bedtime aggressive cooling regardless of body temp
+BODY_FB_MIN_CYCLE = 1         # apply from cycle 1 once sleep is active; explicit
+                              # inbed/awake pre-sleep stages preserve pre-cooling
 
 # ── Right-zone v5.2 shadow controller (her side, log-only) ───────────
 # The wife's right zone runs in firmware Responsive Cooling mode (RC modulates
@@ -154,12 +156,27 @@ RIGHT_BODY_FB_TARGET_F = 80.0
 RIGHT_BODY_FB_KP_HOT  = 0.5   # body warm → cooler (her dominant complaint)
 RIGHT_BODY_FB_KP_COLD = 0.3   # body cool → slightly warmer
 RIGHT_BODY_FB_MAX_DELTA = 4   # tighter cap than left (less data)
-RIGHT_BODY_FB_SKIP_CYCLES = (1,)
+RIGHT_BODY_FB_SKIP_CYCLES = ()
 RIGHT_BEDJET_WINDOW_MIN = 30.0  # match right_overheat_safety.BEDJET_SUPPRESS_MIN
                                  # — body sensors inflate during the wife's
                                  # warm-blanket pre-warm; suppress corrections
                                  # during this window.
 RIGHT_SHADOW_LOG_PATH = "/config/snug_right_v52_shadow.jsonl"
+
+# Apple Health can report pre-sleep bed occupancy before actual sleep onset.
+# Preserve intentional pre-cooling during those explicit not-yet-asleep states;
+# once the stage is asleep/deep/core/rem (or unknown elapsed-sleep control), the
+# early-cycle body feedback is allowed to ease off cooling immediately.
+PRE_SLEEP_STAGE_VALUES = ("inbed", "awake")
+
+# User-stated preference (2026-05-01): intentionally pre-cool before getting
+# into bed, then keep maximum/aggressive cooling for the first ~30 minutes after
+# bed-occupancy onset. This explicit occupancy-based gate overrides body
+# feedback and room compensation; after it expires, body feedback may apply from
+# cycle 1.
+INITIAL_BED_COOLING_MIN = 30.0
+INITIAL_BED_LEFT_SETTING = -10
+INITIAL_BED_RIGHT_SETTING = -10
 
 # Right-zone live actuation. TWO-KEY ARMING:
 #   1. RIGHT_LIVE_ENABLED Python constant (this file) — armed by code
@@ -182,6 +199,27 @@ ENABLE_LEARNING = True
 MAX_SETTING = 0
 
 L1_TO_BLOWER_PCT = {
+    # IMPORTANT (2026-05-01 finding): this is the RC-OFF blower percentage for
+    # each user setting, validated by the empty-bed step-response test where
+    # blower output exactly equaled this table for the active setting (RC=on
+    # but no body present, so RC had nothing to modulate against).
+    #
+    # When RC is on AND the bed is occupied, the firmware modulates the
+    # blower BELOW these values. CORRECTED (2026-05-01 data audit, n=43,827
+    # occupied RC-on rows): mean delta = -21 pts, median = -18, std = 22.
+    # The earlier "-45" figure was inflated by including running=off rows
+    # (integration-injected zeros) and unoccupied rows. So this table is
+    # the *RC-off baseline*, not what the firmware actually outputs in
+    # normal operation. Any code that needs "expected blower under RC"
+    # should NOT use this table directly.
+    #
+    # ALSO: the lookup must be against L_active (the user dial that is
+    # actually live given run_progress / 3-level mode), not L1
+    # (bedtime_temperature). When 3_level_mode=on the firmware advances
+    # L1 → L2 → L3 by run_progress; using L1 alone misattributes most of
+    # the night to the wrong dial. See
+    # docs/findings/2026-05-01_data_audit_labels.md (§5) and
+    # PerfectlySnug/tools/lib_active_setting.py for the L_active helper.
     -10: 100,
     -9: 87,
     -8: 75,
@@ -195,12 +233,22 @@ L1_TO_BLOWER_PCT = {
     0: 0,
 }
 
-# Room compensation happens in blower space now.
-ROOM_BLOWER_REFERENCE_F = 68.0
+# Room compensation happens in blower space now. Anchor at a neutral/warm room
+# (72°F); below that, progressively reduce cooling, above it add cooling.
+ROOM_BLOWER_REFERENCE_F = 72.0
 ROOM_BLOWER_COLD_COMP_PER_F = 4.0
 ROOM_BLOWER_COLD_THRESHOLD_F = 63.0
 ROOM_BLOWER_COLD_EXTRA_PER_F = 3.0
 ROOM_BLOWER_HOT_COMP_PER_F = 4.0
+
+# Right-zone room compensation uses the same physical room reference as the
+# left zone (72°F), but a wife-specific multiplier/policy.  Start conservative:
+# only add cooling when the room is warmer than the shared reference.  Do NOT
+# apply cold-room warming yet; last night's only right-side override was colder
+# (-4→-5) at ~68°F, so warming below 72°F would contradict fresh evidence.
+RIGHT_ROOM_BLOWER_REFERENCE_F = ROOM_BLOWER_REFERENCE_F
+RIGHT_ROOM_BLOWER_HOT_COMP_PER_F = 4.0
+RIGHT_ROOM_BLOWER_COLD_COMP_PER_F = 0.0
 
 # Body handling stays conservative: only act on clear hot extremes.
 BODY_HOT_THRESHOLD_F = 85.0
@@ -360,7 +408,10 @@ class SleepControllerV5(hass.Hass):
                  f"live={RIGHT_LIVE_ENABLED}, "
                  f"baselines={list(RIGHT_CYCLE_SETTINGS.values())}, "
                  f"target={RIGHT_BODY_FB_TARGET_F}°F, "
-                 f"Kp_hot={RIGHT_BODY_FB_KP_HOT}, Kp_cold={RIGHT_BODY_FB_KP_COLD}")
+                 f"Kp_hot={RIGHT_BODY_FB_KP_HOT}, Kp_cold={RIGHT_BODY_FB_KP_COLD}, "
+                 f"room_ref={RIGHT_ROOM_BLOWER_REFERENCE_F}°F, "
+                 f"room_hot={RIGHT_ROOM_BLOWER_HOT_COMP_PER_F}/°F, "
+                 f"room_cold={RIGHT_ROOM_BLOWER_COLD_COMP_PER_F}/°F")
         self.log(f"  Cycles: {CYCLE_SETTINGS}")
         self.log(f"  Learned: {self._learned}")
         self.log(f"  Room temp: {self._get_room_temp_entity()}")
@@ -399,8 +450,18 @@ class SleepControllerV5(hass.Hass):
         body_max = max(body_vals) if body_vals else body_center
         body_avg = left_snapshot["body_avg"]
 
-        # Occupancy detection
-        if not self._check_occupancy(body_max, now):
+        # Occupancy detection. Bed-presence, when available, is the source for
+        # the initial-bed cooling window; body sensors remain the fallback for
+        # empty-bed detection and older data.
+        body_occupied = self._check_occupancy(body_max, now)
+        left_mins_since_onset = self._update_zone_occupancy_onset(
+            "left",
+            self._zone_occupied_from_bed_presence(
+                bed_presence, "left", fallback=body_occupied
+            ),
+            now,
+        )
+        if not body_occupied:
             elapsed_min = self._elapsed_min()
             if elapsed_min > 0:
                 self._log_to_postgres(
@@ -437,6 +498,7 @@ class SleepControllerV5(hass.Hass):
             body_avg=body_avg,
             body_left=body_left,
             current_setting=current,
+            mins_since_occupied=left_mins_since_onset,
         )
         setting = plan["setting"]
         target_blower_pct = plan["target_blower_pct"]
@@ -593,11 +655,24 @@ class SleepControllerV5(hass.Hass):
                 mins_since_onset is not None
                 and 0 <= mins_since_onset <= RIGHT_BEDJET_WINDOW_MIN
             )
+            in_initial_bed_cooling = (
+                occupied
+                and mins_since_onset is not None
+                and 0 <= mins_since_onset <= INITIAL_BED_COOLING_MIN
+            )
+            pre_sleep_stage = (
+                sleep_stage is not None
+                and str(sleep_stage).lower().strip() in PRE_SLEEP_STAGE_VALUES
+            )
 
             correction = 0
             corr_reason = "none"
-            if in_bedjet_window:
+            if in_initial_bed_cooling:
+                corr_reason = f"initial_bed_cooling_{mins_since_onset:.0f}min"
+            elif in_bedjet_window:
                 corr_reason = f"bedjet_window_{mins_since_onset:.0f}min"
+            elif pre_sleep_stage:
+                corr_reason = f"pre_sleep_{str(sleep_stage).lower().strip()}"
             elif (cycle_num not in RIGHT_BODY_FB_SKIP_CYCLES
                   and body_skin is not None):
                 delta = body_skin - RIGHT_BODY_FB_TARGET_F
@@ -610,7 +685,27 @@ class SleepControllerV5(hass.Hass):
                     correction = int(round(min(raw, RIGHT_BODY_FB_MAX_DELTA)))
                     corr_reason = f"cold_{delta:+.1f}"
 
-            proposed = max(-10, min(MAX_SETTING, base + correction))
+            if in_initial_bed_cooling or pre_sleep_stage:
+                body_proposed = INITIAL_BED_RIGHT_SETTING
+            else:
+                body_proposed = max(-10, min(MAX_SETTING, base + correction))
+
+            # Wife/right-side room compensation is in blower-proxy space, like
+            # the left controller, but deliberately hot-only for now.  A room
+            # below the shared 72°F reference yields 0, so it cannot warm her
+            # side after last night's colder-please override around 68°F.
+            right_room_comp = self._right_room_temp_to_blower_comp(room_temp)
+            if in_initial_bed_cooling or pre_sleep_stage:
+                right_room_comp = 0
+                proposed = INITIAL_BED_RIGHT_SETTING
+                source = "initial_bed_cooling" if in_initial_bed_cooling else "pre_sleep_precool"
+            else:
+                target_blower_pct = self._l1_to_blower_pct(body_proposed) + right_room_comp
+                target_blower_pct = max(0, min(100, round(target_blower_pct)))
+                proposed = self._blower_pct_to_l1(target_blower_pct)
+                source = "cycle+body_fb"
+                if right_room_comp:
+                    source += "+right_room_hot"
 
             # ── Live actuation gate ──────────────────────────────────
             # ALL of the following must hold:
@@ -628,7 +723,7 @@ class SleepControllerV5(hass.Hass):
             if RIGHT_LIVE_ENABLED and ha_flag_on:
                 if not occupied:
                     actuation_blocked = "unoccupied"
-                elif in_bedjet_window:
+                elif in_bedjet_window and not in_initial_bed_cooling:
                     actuation_blocked = "bedjet_window"
                 elif self._right_zone_in_freeze(now):
                     actuation_blocked = "override_freeze"
@@ -657,6 +752,7 @@ class SleepControllerV5(hass.Hass):
                     round(mins_since_onset, 1) if mins_since_onset is not None else None
                 ),
                 "in_bedjet_window": in_bedjet_window,
+                "in_initial_bed_cooling": in_initial_bed_cooling,
                 "body_skin": body_skin,           # body_left — primary input
                 "body_avg": body_avg,             # diagnostic only
                 "body_left": right_snap.get("body_left"),
@@ -668,8 +764,12 @@ class SleepControllerV5(hass.Hass):
                 "firmware_blower": firmware_blower,
                 "right_v52_base": base,
                 "right_v52_correction": correction,
+                "right_v52_body_proposed": body_proposed,
+                "right_room_comp": right_room_comp,
+                "right_target_blower_pct": self._l1_to_blower_pct(proposed),
                 "right_v52_proposed": proposed,
                 "right_v52_reason": corr_reason,
+                "right_v52_source": source,
                 "right_v52_diff_vs_firmware": (
                     None if firmware_setting is None
                     else proposed - firmware_setting
@@ -716,13 +816,47 @@ class SleepControllerV5(hass.Hass):
                      level="WARNING")
 
     def _compute_setting(self, elapsed_min, room_temp, sleep_stage,
-                          body_avg=None, body_left=None, current_setting=None):
+                          body_avg=None, body_left=None, current_setting=None,
+                          mins_since_occupied=None):
         """Compute target L1 from cycle/stage, body feedback, room compensation, and learned blower residuals."""
         cycle_num = self._get_cycle_num(elapsed_min)
         self._state["current_cycle_num"] = cycle_num
 
         data_source = "time_cycle"
         base_setting = CYCLE_SETTINGS.get(cycle_num, CYCLE_SETTINGS[max(CYCLE_SETTINGS.keys())])
+        pre_sleep_stage = (
+            sleep_stage is not None
+            and str(sleep_stage).lower().strip() in PRE_SLEEP_STAGE_VALUES
+        )
+        in_initial_bed_cooling = (
+            mins_since_occupied is not None
+            and 0 <= mins_since_occupied <= INITIAL_BED_COOLING_MIN
+        )
+
+        # Explicit pre-cool / initial-bed gate.  This intentionally bypasses
+        # body feedback, learned residuals, and room compensation so a cold body
+        # sensor or cold room cannot warm the first 30 minutes.
+        if pre_sleep_stage or in_initial_bed_cooling:
+            forced = INITIAL_BED_LEFT_SETTING
+            reason = (
+                "pre_sleep_precool"
+                if pre_sleep_stage
+                else f"initial_bed_cooling({mins_since_occupied:.0f}m)"
+            )
+            forced_blower = self._l1_to_blower_pct(forced)
+            return {
+                "setting": forced,
+                "target_blower_pct": forced_blower,
+                "base_setting": forced,
+                "base_blower_pct": forced_blower,
+                "cycle_num": cycle_num,
+                "room_temp_comp": 0,
+                "learned_adj_pct": 0,
+                "data_source": reason,
+                "hot_safety": False,
+                "overheat_hard": False,
+            }
+
         if sleep_stage and sleep_stage not in ("unknown", ""):
             staged_setting = self._setting_for_stage(sleep_stage)
             if staged_setting is not None:
@@ -737,6 +871,7 @@ class SleepControllerV5(hass.Hass):
         body_fb_input = body_left if BODY_FB_INPUT == "body_left" else body_avg
         if (BODY_FB_ENABLED
                 and cycle_num >= BODY_FB_MIN_CYCLE
+                and not pre_sleep_stage
                 and body_fb_input is not None):
             body_delta = body_fb_input - BODY_FB_TARGET_F
             if body_delta < 0:
@@ -853,6 +988,10 @@ class SleepControllerV5(hass.Hass):
             self._state["last_restart_ts"] = None
             self._state["body_below_since"] = None
             self._state["hot_streak"] = 0
+            self._state["left_zone_last_occupied"] = False
+            self._state["left_zone_occupied_since"] = None
+            self._state["right_zone_last_occupied"] = False
+            self._state["right_zone_occupied_since"] = None
             self._ensure_responsive_cooling_off()
             self.call_service(
                 "input_text/set_value",
@@ -864,15 +1003,8 @@ class SleepControllerV5(hass.Hass):
 
             room_temp = self._read_temperature(self._get_room_temp_entity())
             initial_snapshot = self._read_zone_snapshot("left")
-            plan = self._compute_setting(
-                0,
-                room_temp,
-                None,
-                body_avg=initial_snapshot["body_avg"],
-                body_left=initial_snapshot["body_left"],
-                current_setting=initial_snapshot["setting"],
-            )
-            initial_setting = plan["setting"]
+            initial_setting = INITIAL_BED_LEFT_SETTING
+            plan = {"target_blower_pct": self._l1_to_blower_pct(initial_setting)}
             current_setting = initial_snapshot["setting"]
             if current_setting is not None and current_setting < initial_setting:
                 initial_setting = int(current_setting)
@@ -1071,6 +1203,40 @@ class SleepControllerV5(hass.Hass):
         self._state["body_below_since"] = None
         return True
 
+    def _zone_occupied_from_bed_presence(self, bed_presence, zone, fallback):
+        """Use ESPHome bed-presence occupancy when present; fall back otherwise."""
+        if isinstance(bed_presence, dict):
+            occupied = bed_presence.get(f"occupied_{zone}")
+            if occupied is not None:
+                return bool(occupied)
+        return bool(fallback)
+
+    def _update_zone_occupancy_onset(self, zone, occupied, now):
+        """Track minutes since bed-presence occupancy onset for initial cooling."""
+        last_key = f"{zone}_zone_last_occupied"
+        since_key = f"{zone}_zone_occupied_since"
+
+        if occupied:
+            if not self._state.get(last_key):
+                self._state[since_key] = now.isoformat()
+                self._state[last_key] = True
+                self._save_state()
+        else:
+            if self._state.get(last_key) or self._state.get(since_key):
+                self._state[last_key] = False
+                self._state[since_key] = None
+                self._save_state()
+            return None
+
+        occ_since = self._state.get(since_key)
+        if not occ_since:
+            return None
+        try:
+            occ_dt = datetime.fromisoformat(occ_since)
+        except (TypeError, ValueError):
+            return None
+        return (now - occ_dt).total_seconds() / 60.0
+
     def _check_midnight_restart(self):
         """Gap 5: If AppDaemon restarts while sleeping, resume from correct position."""
         if self._is_sleeping():
@@ -1172,6 +1338,28 @@ class SleepControllerV5(hass.Hass):
                     ROOM_BLOWER_COLD_THRESHOLD_F - room_temp
                 ) * ROOM_BLOWER_COLD_EXTRA_PER_F
             return -round(comp)
+        return 0
+
+    def _right_room_temp_to_blower_comp(self, room_temp):
+        """Right-zone room compensation in blower space.
+
+        Shared physical baseline: 72°F room.  Wife-specific policy: hot-room
+        cooling only for the initial deployment.  Cold-room warming is
+        explicitly disabled (gain 0.0) so a 67–68°F room returns 0, preserving
+        the colder-please signal from the most recent right-side override.
+        """
+        if room_temp is None:
+            return 0
+        if room_temp > RIGHT_ROOM_BLOWER_REFERENCE_F:
+            return round(
+                (room_temp - RIGHT_ROOM_BLOWER_REFERENCE_F)
+                * RIGHT_ROOM_BLOWER_HOT_COMP_PER_F
+            )
+        if room_temp < RIGHT_ROOM_BLOWER_REFERENCE_F:
+            return -round(
+                (RIGHT_ROOM_BLOWER_REFERENCE_F - room_temp)
+                * RIGHT_ROOM_BLOWER_COLD_COMP_PER_F
+            )
         return 0
 
     def _ensure_responsive_cooling_off(self):
