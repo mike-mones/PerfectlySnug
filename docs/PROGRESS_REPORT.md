@@ -5,7 +5,7 @@
 > document is the running log of what's actually been built, what's deployed,
 > what's been tried and rejected, and what the data actually says today.
 
-**Last updated:** 2026-05-01 evening (10-agent fleet + tonight's patches deployed — see §11 below and `docs/proposals/2026-05-01_recommendation.md`)
+**Last updated:** 2026-05-02 afternoon (morning analysis + 3-agent fleet patches deployed — see §12 below)
 
 > 🎯 **2026-05-01 RC reverse-engineering — canonical synthesis:**
 > [`findings/2026-05-01_rc_synthesis.md`](findings/2026-05-01_rc_synthesis.md).
@@ -693,4 +693,163 @@ cur.execute('''
 for row in cur.fetchall():
     print(row)
 "
+```
+
+---
+
+## 12. 2026-05-02 morning — analysis + bed-onset / body_fb / hot-rail-notes patch set
+
+User morning report (2026-05-01 → 05-02, first full night on the v5.2 evening patch
+set deployed 2026-05-01 19:33 ET):
+
+> **LEFT (me):** I wanted the max cooling while I just got in bed, but it was
+> only at -4 when I got into bed. It was a bit too cold in the middle of the
+> night at some points, hot in the morning.
+> **RIGHT (wife):** fine in the middle of the night, hot in the morning.
+> **Notes:** Ran BedJet for first 30 minutes of sleep.
+
+### 12.1 What the data showed
+
+Pulled `controller_readings`, AppDaemon logs, and the right-zone shadow JSONL
+for the overnight window. Headline findings:
+
+1. **Right-zone v5.2 controller was NOT actuating last night.**
+   `input_boolean.snug_right_controller_enabled` was OFF, so the entire
+   right-zone v5.2 control loop ran in shadow-only mode. The 23 "Right hot-rail
+   fired" lines in the AppDaemon log were *proposed* values; `actuated:false`
+   on every shadow JSONL row, with `actuation_blocked:"ha_flag_off"`. The wife's
+   right-zone behavior was **firmware default + her own 4 manual overrides**
+   (`-5→-10 @ 03:18`, `-10→-5 @ 04:18`, `-5→-10 @ 05:34`, `-10→-5 @ 07:44`),
+   not v5.2. The `right_overheat_safety` app (separate app) DID engage the
+   86°F rail twice — visible in the WARNING log lines. Memory entry from
+   2026-04-30 saying "right zone live" was stale; the helper had been
+   silently off.
+
+2. **LEFT bed-onset complaint reproduced.** Last pre-bed tick at 23:32:21 ET
+   wrote setting=**-4**: cycle-1 baseline -10 + body_fb(+5) + room_comp(-5).
+   The `body_fb` correction fired pre-bed because `body_left=75°F`
+   (empty-bed sensor reads room+3-4°F per PRD; `BODY_FB_KP_COLD=1.25 *
+   (80-75) = 6.25, capped at 5`). User climbed in around 23:36, manually
+   overrode -4→-7 at 23:36:31, -7→-10 at 23:44:15. The first algorithmic
+   tick that triggered `initial_bed_cooling` was 23:38:21 — *after* the
+   first override. Two distinct issues compounded:
+   - **No event-driven hook on bed-occupancy onset.** The 5-min `_control_loop`
+     is the only reactivation path; the controller can sit at the pre-bed
+     value for up to 5 min after the user actually gets into bed.
+   - **`body_fb` cold-correction has no occupancy gate.** Empty-bed sensors
+     trigger +5 warming bias before the user is even in bed.
+
+3. **`noFloor` patch verified.** After the 05:32:08 cold-mid-night override
+   (-4→-2), the 60-min freeze elapsed at 06:32 and the algorithm correctly
+   resumed walking colder (-5 → -6 → -7 → -8 → -9 over the next 90 min).
+   No clamp-to-floor behavior. Working as designed.
+
+4. **Hot-morning escalation is firmware-ceiling-bound, not controller-logic.**
+   By 07-08 ET LEFT was at -8/-9 settings but `actual_blower` only 50-65%.
+   The Stage-1+2 firmware cascade (`docs/findings/2026-05-01_rc_synthesis.md`)
+   limits actuation regardless of our setting. Deferred to v6.
+
+5. **3-level mode watchdog** showed no log mentions and no `notes ILIKE '%3_level%'`
+   PG hits — consistent with both sides' 3-level switches having stayed off
+   silently. Working.
+
+6. **Hot-rail notes flow gap.** Rail proposals fired 23 times (visible in
+   AppDaemon log as `Right hot-rail fired: body_left=...`) but the
+   `notes ILIKE '%hot_rail%'` PG query returns 0 rows because the rail
+   tag never made it into `controller_readings.notes` for right-zone passive
+   snapshots. Documented analysis query in `docs/NEXT_STEPS.md §0.2` did
+   not work as written.
+
+### 12.2 Pipeline bugs found while running the morning analysis
+
+- `tools/eval_right_shadow.py` had `SHADOW_LOG="/config/snug_right_v52_shadow.jsonl"`
+  but the actual path on the HA host is
+  `/addon_configs/a0d7b954_appdaemon/snug_right_v52_shadow.jsonl`. Fixed.
+- Both `docs/NEXT_STEPS.md §0.2` and this file's earlier §11.9 had the
+  PG analysis query referencing columns `body_left` / `room_temp`; actual
+  schema is `body_left_f` / `room_temp_f`. Fixed.
+
+Both pipeline fixes shipped as a single commit:
+**`7bf42e2 PerfectlySnug: fix morning-analysis pipeline paths and column names`**
+
+### 12.3 Three patches deployed today (v5.2 in-place, no module/class rename)
+
+Commit: **`13911cb` (PerfectlySnug)** — deployed to HA Green at 14:21 ET,
+AppDaemon hot-reloaded automatically, init banner confirmed new patch level.
+
+`CONTROLLER_PATCH_LEVEL` bumped to:
+`"v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes"`
+
+| Patch | Where | What |
+|---|---|---|
+| **A. Bed-onset event listener** | `initialize()`, new `_on_bed_onset` / `_on_bed_vacated` | Subscribes to `binary_sensor.bed_presence_2bcab8_bed_occupied_{left,right}`. On off→on, schedules an immediate `_control_loop` tick (≤1s vs prior ≤5 min). Records `{left,right}_bed_onset_ts`. Off-transition writes `bed_vacated_since` and clears the onset after `BED_ONSET_CLEAR_DEBOUNCE_MIN=10` minutes (brief bed exits don't reset the timer). Cleared in `_on_sleep_mode("off")`. |
+| **B. body_fb occupancy gate** | `_compute_setting(..., bed_occupied=...)` and `_right_v52_shadow_tick` | New keyword: `bed_occupied=False` skips the cold-side `body_fb` correction entirely (annotates `+body_fb_skipped(unoccupied)`); `bed_occupied=None` preserves legacy behavior. Right-zone version uses `corr_reason="body_fb_skipped_unoccupied"`. Eliminates the empty-bed +5 warming bias. |
+| **C. Hot-rail notes flow** | `_right_v52_shadow_tick` returns its entry dict; `_log_passive_zone_snapshot` accepts `data_source_suffix` | When the rail bias fires, `right_v52_source` includes `+hot_rail_<streak>`; that string is suffixed onto the right-zone passive PG row's `notes`. The `notes ILIKE '%hot_rail%'` query in `NEXT_STEPS §0.2` now returns rows. |
+
+Tests: **75 pass** (was 67). New: `TestBedOnsetEvent` (8), `TestBodyFbOccupancyGate` (3),
+`TestHotRailNotesFlow` (1).
+
+### 12.4 Right-zone re-arming + persistence automation
+
+`input_boolean.snug_right_controller_enabled` flipped ON at ~14:12 ET via
+`http://homeassistant.local:8123/api/services/input_boolean/turn_on`. Init
+banner of the freshly-reloaded controller confirms `live=True`.
+
+Belt-and-suspenders: added HA automation
+`automation.perfectlysnug_ensure_right_zone_controller_enabled_at_ha_start`
+that runs on `homeassistant_started`, waits 30 s, and force-enables the helper.
+This guards against future silent dropouts (a UI toggle, a state-restore miss,
+or another agent flipping it off). Committed in HomeAssistant repo as
+**`b60c3b7 Keep right controller enabled after HA start`**.
+
+### 12.5 What we cannot verify until tonight
+
+- Bed-onset listener behavior end-to-end. The listener fires only on a
+  real `off→on` transition; need a sleep-mode-on session for confirmation.
+  Acceptance: post-onset, the next shadow row should show
+  `in_initial_bed_cooling: true` within 5 s of bed-occupancy flipping on.
+- Right-zone v5.2 actually writing to `bedtime_temperature`. Acceptance:
+  shadow JSONL `actuated:true` entries appear, and PG right-zone rows
+  with `action='set'` / `'rate_hold'` (not just `'passive'`) appear.
+- Hot-rail PG notes flow end-to-end. Acceptance: `SELECT notes FROM
+  controller_readings WHERE zone='right' AND notes ILIKE '%hot_rail%'`
+  returns rows after a hot-rail fire.
+
+### 12.6 Deferred (Priority 1.x and beyond, unchanged from §11.5)
+
+- Body-trend-15m guard on cold-room comp (Priority 1.A). Held back pending
+  a second cold-mid-night observation; tonight's bed-onset patch may
+  remove the upstream cause (false +5 pre-bed warming).
+- Mutex with `right_overheat_safety` via `input_boolean.snug_right_rail_engaged`.
+  Still flagged in red-safety §1; no race observed last night because
+  v5.2 right-zone wasn't actuating, and the only force-write was from
+  `right_overheat_safety` itself.
+- Firmware-ceiling escalation in the morning. Needs the v6 plant
+  model / bounded learned residual head; not a tonight-fix.
+- BedJet-window override exclusion from learner.
+
+### 12.7 Where to start the next session
+
+Same morning sequence as §11.9, but with the corrected query columns
+(`body_left_f`, `room_temp_f`). Specifically check whether tonight's
+patches landed cleanly in real sleep behavior:
+
+```bash
+.venv/bin/python tools/eval_right_shadow.py
+.venv/bin/python -c "
+import psycopg2
+conn = psycopg2.connect(host='192.168.0.3', dbname='sleepdata',
+                         user='sleepsync', password='sleepsync_local')
+cur = conn.cursor()
+cur.execute('''
+  SELECT ts AT TIME ZONE 'America/New_York', zone, action, setting, body_left_f, room_temp_f, notes
+  FROM controller_readings
+  WHERE ts > now() - interval '12 hours'
+    AND (action = \\'override\\' OR notes ILIKE \\'%hot_rail%\\' OR notes ILIKE \\'%initial_bed%\\')
+  ORDER BY ts
+''')
+for row in cur.fetchall():
+    print(row)
+"
+ssh root@192.168.0.106 \"ha addon logs a0d7b954_appdaemon 2>&1 | grep -E '(Bed-onset detected|hot-rail|body_fb_skipped|initial_bed|MANUAL OVERRIDE)' | tail -30\"
 ```
