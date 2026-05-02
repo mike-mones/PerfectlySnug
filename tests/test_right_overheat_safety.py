@@ -273,3 +273,43 @@ def test_entity_constants_locked():
     assert consts.get("OVERHEAT_HARD_STREAK") == OVERHEAT_HARD_STREAK
     assert consts.get("BEDJET_SUPPRESS_MIN") == BEDJET_SUPPRESS_MIN
     assert consts.get("RAIL_FORCE_SETTING") == -10
+
+
+def test_release_does_not_stomp_user_change_during_engagement():
+    """If someone changed the setpoint while rail was engaged, release leaves it."""
+    import importlib.util
+    import sys
+    import types
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    fake_hass_module = types.ModuleType("hassapi")
+    fake_hass_module.Hass = object
+    sys.modules["hassapi"] = fake_hass_module
+
+    module_path = Path(__file__).resolve().parents[1] / "appdaemon" / "right_overheat_safety.py"
+    spec = importlib.util.spec_from_file_location("right_overheat_safety_for_restore", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    app = module.RightOverheatSafety.__new__(module.RightOverheatSafety)
+    app._state = {
+        "engaged": True,
+        "streak": 2,
+        "snapshot_setting": -4,
+        "released_at": None,
+    }
+    app._read_float = MagicMock(return_value=-7.0)
+    app.call_service = MagicMock()
+    app.log = MagicMock()
+    app._save_state = MagicMock()
+
+    app._release("body_cooled_to_81.5")
+
+    app.call_service.assert_not_called()
+    assert app._state["engaged"] is False
+    assert app._state["snapshot_setting"] is None
+    assert any(
+        "not restoring prev_setpoint=-4" in call.args[0]
+        for call in app.log.call_args_list
+    )

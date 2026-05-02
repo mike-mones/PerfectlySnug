@@ -267,16 +267,38 @@ class RightOverheatSafety(hass.Hass):
 
     def _release(self, reason: str) -> None:
         snapshot = self._state.get("snapshot_setting")
+        current = self._read_float(E_BEDTIME_R) if snapshot is not None else None
+
+        if snapshot is not None and current is None:
+            self.log(
+                f"Right rail release deferred ({reason}): current setpoint unavailable; "
+                f"will retry restore of prev_setpoint={int(snapshot)}",
+                level="WARNING",
+            )
+            self._save_state()
+            return
+
+        should_restore = (
+            snapshot is not None
+            and current <= RAIL_FORCE_SETTING + 0.5
+        )
+
         self._state["engaged"] = False
         self._state["streak"] = 0
         self._state["released_at"] = datetime.now().isoformat()
 
-        if snapshot is not None:
+        if should_restore:
             self.call_service("number/set_value", entity_id=E_BEDTIME_R,
                               value=int(snapshot))
             self.log(f"Right rail RELEASED ({reason}): "
                      f"restored setpoint to {int(snapshot)}",
                      level="WARNING")
+        elif snapshot is not None:
+            self.log(
+                f"Rail release: not restoring prev_setpoint={int(snapshot)} "
+                f"because current={current:g} was changed during engagement",
+                level="WARNING",
+            )
         else:
             self.log(f"Right rail RELEASED ({reason}): no snapshot to restore",
                      level="WARNING")

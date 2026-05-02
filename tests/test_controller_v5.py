@@ -120,6 +120,8 @@ def _make_controller(*, current_setting=-7, current_blower=65):
         "body_below_since": None,
         "hot_streak": 0,
         "right_hot_streak": 0,
+        "right_rail_force_seen": False,
+        "right_rail_force_seen_at": None,
         "current_cycle_num": None,
         "left_zone_last_occupied": True,
         "left_zone_occupied_since": occupied_since,
@@ -162,12 +164,13 @@ def _make_controller(*, current_setting=-7, current_blower=65):
             "learned_adj_pct": 0,
             "data_source": "time_cycle",
             "hot_safety": False,
+            "overheat_hard": False,
         }
     )
     return controller
 
 
-def _set_states(controller, *, running="on", sleep_mode="on", responsive="off"):
+def _set_states(controller, *, running="on", sleep_mode="on", responsive="off", responsive_right="off"):
     def _get_state(entity_id, **kwargs):
         if kwargs.get("attribute") == "last_changed":
             return None
@@ -175,6 +178,7 @@ def _set_states(controller, *, running="on", sleep_mode="on", responsive="off"):
             ctrl_module.E_RUNNING: running,
             ctrl_module.E_SLEEP_MODE: sleep_mode,
             ctrl_module.E_RESPONSIVE_COOLING: responsive,
+            ctrl_module.E_RESPONSIVE_COOLING_RIGHT: responsive_right,
         }.get(entity_id)
 
     controller.get_state = MagicMock(side_effect=_get_state)
@@ -255,21 +259,30 @@ class TestResponsiveCooling:
 
         controller.initialize()
 
-        controller.call_service.assert_called_once_with(
+        controller.call_service.assert_any_call(
             "switch/turn_off",
             entity_id=ctrl_module.E_RESPONSIVE_COOLING,
         )
+        controller.call_service.assert_any_call(
+            "switch/turn_off",
+            entity_id=ctrl_module.E_RESPONSIVE_COOLING_RIGHT,
+        )
+        assert controller.call_service.call_count == 2
         assert controller._room_temp_entity == ctrl_module.DEFAULT_ROOM_TEMP_ENTITY
 
     def test_control_loop_turns_responsive_cooling_back_off(self):
         controller = _make_controller()
-        _set_states(controller, running="on", responsive="on")
+        _set_states(controller, running="on", responsive="on", responsive_right="on")
 
         controller._control_loop({})
 
-        controller.call_service.assert_called_once_with(
+        controller.call_service.assert_any_call(
             "switch/turn_off",
             entity_id=ctrl_module.E_RESPONSIVE_COOLING,
+        )
+        controller.call_service.assert_any_call(
+            "switch/turn_off",
+            entity_id=ctrl_module.E_RESPONSIVE_COOLING_RIGHT,
         )
         controller._log_to_postgres.assert_called_once()
 
@@ -376,6 +389,78 @@ class TestControlLoopLogging:
         assert kwargs["blower_pct"] is None
 
 
+class TestSafetyBypass:
+    def _safety_plan(self, setting=-10, *, overheat_hard=False, hot_safety=False):
+        return {
+            "setting": setting,
+            "target_blower_pct": ctrl_module.L1_TO_BLOWER_PCT[setting],
+            "base_setting": -5,
+            "base_blower_pct": ctrl_module.L1_TO_BLOWER_PCT[-5],
+            "cycle_num": 1,
+            "room_temp_comp": 0,
+            "learned_adj_pct": 0,
+            "data_source": "time_cycle+safety",
+            "hot_safety": hot_safety,
+            "overheat_hard": overheat_hard,
+        }
+
+    def test_overheat_hard_bypasses_freeze(self):
+        controller = _make_controller(current_setting=-5, current_blower=41)
+        _set_states(controller, running="on", responsive="off")
+        controller._state["override_freeze_until"] = (
+            datetime.now() + timedelta(minutes=30)
+        ).isoformat()
+        controller._compute_setting.return_value = self._safety_plan(overheat_hard=True)
+
+        controller._control_loop({})
+
+        controller.call_service.assert_any_call(
+            "number/set_value", entity_id=ctrl_module.E_BEDTIME_TEMP, value=-10
+        )
+        assert controller._log_to_postgres.call_args.kwargs["action"] == "overheat_hard"
+
+    def test_overheat_hard_bypasses_manual_mode(self):
+        controller = _make_controller(current_setting=-5, current_blower=41)
+        _set_states(controller, running="on", responsive="off")
+        controller._state["manual_mode"] = True
+        controller._compute_setting.return_value = self._safety_plan(overheat_hard=True)
+
+        controller._control_loop({})
+
+        controller.call_service.assert_any_call(
+            "number/set_value", entity_id=ctrl_module.E_BEDTIME_TEMP, value=-10
+        )
+        assert controller._log_to_postgres.call_args.kwargs["action"] == "overheat_hard"
+
+    def test_hot_safety_bypasses_freeze_but_not_manual_mode(self):
+        controller = _make_controller(current_setting=-5, current_blower=41)
+        _set_states(controller, running="on", responsive="off")
+        controller._state["override_freeze_until"] = (
+            datetime.now() + timedelta(minutes=30)
+        ).isoformat()
+        controller._compute_setting.return_value = self._safety_plan(
+            setting=-6, hot_safety=True
+        )
+
+        controller._control_loop({})
+
+        controller.call_service.assert_any_call(
+            "number/set_value", entity_id=ctrl_module.E_BEDTIME_TEMP, value=-6
+        )
+        assert controller._log_to_postgres.call_args.kwargs["action"] == "hot_safety"
+
+        manual = _make_controller(current_setting=-5, current_blower=41)
+        _set_states(manual, running="on", responsive="off")
+        manual._state["manual_mode"] = True
+        manual._compute_setting.return_value = self._safety_plan(setting=-6, hot_safety=True)
+
+        manual._control_loop({})
+
+        manual.call_service.assert_not_called()
+        assert manual._log_to_postgres.call_args.kwargs["action"] == "manual_hold"
+
+
+
 class TestLearning:
     def test_learns_blower_residuals_and_filters_to_v5(self):
         controller = _make_controller()
@@ -392,6 +477,18 @@ class TestLearning:
         assert adjustments == {"1": -25, "2": -24}
         assert "controller_version = %s" in fake_conn.cursor_obj.query
         assert fake_conn.cursor_obj.params[0] == ctrl_module.CONTROLLER_VERSION
+
+    def test_learner_excludes_initial_bed_cooling_overrides(self):
+        controller = _make_controller()
+        fake_conn = _FakeConn(rows=[])
+        controller._get_pg = MagicMock(return_value=fake_conn)
+
+        SleepControllerV5._learn_from_history(controller)
+
+        query = fake_conn.cursor_obj.query
+        assert "COALESCE(notes, '') NOT LIKE '%initial_bed_cooling%'" in query
+        assert "COALESCE(notes, '') NOT LIKE '%bedjet_window%'" in query
+        assert "COALESCE(notes, '') NOT LIKE '%pre_sleep%'" in query
 
 
 class TestBodySafety:
@@ -433,6 +530,56 @@ class TestRightSideLogging:
 
         controller._read_temperature.assert_called_once_with(ctrl_module.DEFAULT_ROOM_TEMP_ENTITY)
         assert controller._log_override.call_args.kwargs["room_temp"] == 68.0
+
+
+class TestRightRailWriteDetection:
+    def _controller(self, *, body_left=87.0, rail_streak=2, rail_flag="on", live_flag="on"):
+        controller = _make_controller(current_setting=-5, current_blower=41)
+        controller._is_sleeping = MagicMock(return_value=True)
+        controller._state["right_hot_streak"] = rail_streak
+        controller._log_override = MagicMock()
+        controller._save_state = MagicMock()
+        controller._read_temperature = MagicMock(return_value=70.0)
+        controller._read_bool = MagicMock(return_value=True)
+        controller._read_zone_snapshot = MagicMock(
+            return_value=_snapshot(setting=-5, blower_pct=41) | {"body_left": body_left}
+        )
+
+        def _read_str(entity_id):
+            if entity_id == ctrl_module.E_RIGHT_OVERHEAT_RAIL_FLAG:
+                return rail_flag
+            if entity_id == ctrl_module.E_RIGHT_CONTROLLER_FLAG:
+                return live_flag
+            if entity_id == ctrl_module.E_SLEEP_STAGE:
+                return "core"
+            return None
+
+        controller._read_str = MagicMock(side_effect=_read_str)
+        return controller
+
+    def test_rail_force_not_classified_as_override(self):
+        controller = self._controller(body_left=87.0, rail_streak=2)
+
+        controller._on_right_setting_change(
+            ctrl_module.ZONE_ENTITY_IDS["right"]["bedtime"], None, "-5", "-10", {}
+        )
+
+        assert "right_zone_override_until" not in controller._state
+        assert controller._state["right_rail_force_seen"] is True
+        assert controller._log_override.call_args.kwargs["action"] == "rail_force"
+        assert controller._log_override.call_args.kwargs["source"] == "rail_force"
+
+    def test_user_max_cool_during_hot_still_classified_as_override(self):
+        controller = self._controller(body_left=87.0, rail_streak=0)
+
+        controller._on_right_setting_change(
+            ctrl_module.ZONE_ENTITY_IDS["right"]["bedtime"], None, "-5", "-10", {}
+        )
+
+        assert controller._state.get("right_zone_override_until") is not None
+        assert controller._state["right_rail_force_seen"] is False
+        assert controller._log_override.call_args.kwargs.get("action", "override") == "override"
+
 
 
 class TestPostgresLogging:
@@ -494,7 +641,7 @@ class TestPostgresLogging:
             snapshot=_snapshot(setting=-10, blower_pct=33),
         )
 
-        notes = fake_conn.cursor_obj.params[15]
+        notes = fake_conn.cursor_obj.params[16]
         assert "controller_proxy_blower=100" in notes
         assert "override_proxy_blower=75" in notes
         assert "actual_blower=33" in notes
@@ -623,7 +770,7 @@ class TestBodyFbOccupancyGate:
         assert "body_fb" in plan["data_source"]
         assert "skipped" not in plan["data_source"]
 
-    def test_body_fb_legacy_no_occupancy(self):
+    def test_body_fb_skipped_when_occupancy_unknown(self):
         c = self._fresh_controller()
         plan = c._compute_setting(
             elapsed_min=10,
@@ -634,9 +781,10 @@ class TestBodyFbOccupancyGate:
             bed_occupied=None,
         )
 
-        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[1] + ctrl_module.BODY_FB_MAX_DELTA
-        assert "body_fb" in plan["data_source"]
-        assert "skipped" not in plan["data_source"]
+        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[1]
+        assert plan["setting"] == ctrl_module.CYCLE_SETTINGS[1]
+        assert "body_fb_skipped(unknown_occupancy)" in plan["data_source"]
+        assert "body_fb(" not in plan["data_source"]
 
 
 class TestBodyFeedback:
@@ -653,12 +801,14 @@ class TestBodyFeedback:
         c = self._fresh_controller()
         plan = c._compute_setting(elapsed_min=10, room_temp=68.0, sleep_stage=None,
                                    body_avg=72.0, body_left=68.0,
-                                   mins_since_occupied=45.0)
+                                   mins_since_occupied=45.0,
+                                   bed_occupied=True)
         assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[1] + ctrl_module.BODY_FB_MAX_DELTA
         assert "body_fb" in plan["data_source"]
 
         plan = c._compute_setting(elapsed_min=120, room_temp=68.0, sleep_stage=None,
-                                   body_avg=72.0, body_left=68.0)
+                                   body_avg=72.0, body_left=68.0,
+                                   bed_occupied=True)
         assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[2] + ctrl_module.BODY_FB_MAX_DELTA
         assert "body_fb" in plan["data_source"]
 
@@ -691,7 +841,8 @@ class TestBodyFeedback:
         c = self._fresh_controller()
         plan = c._compute_setting(elapsed_min=10, room_temp=68.0, sleep_stage="deep",
                                   body_avg=72.0, body_left=68.0,
-                                  mins_since_occupied=45.0)
+                                  mins_since_occupied=45.0,
+                                  bed_occupied=True)
         assert plan["base_setting"] == -10 + ctrl_module.BODY_FB_MAX_DELTA
         assert "body_fb" in plan["data_source"]
 
@@ -710,7 +861,8 @@ class TestBodyFeedback:
         c = self._fresh_controller()
         plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
                                   sleep_stage=None,
-                                  body_avg=81.0, body_left=78.0)
+                                  body_avg=81.0, body_left=78.0,
+                                  bed_occupied=True)
         # cycle 3 baseline -7 + 2 = -5 (round(1.25*2)=round(2.5)=2 banker's)
         assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[3] + 2
 
@@ -719,7 +871,8 @@ class TestBodyFeedback:
         c = self._fresh_controller()
         plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
                                   sleep_stage=None,
-                                  body_avg=75.0, body_left=72.0)
+                                  body_avg=75.0, body_left=72.0,
+                                  bed_occupied=True)
         cap = ctrl_module.BODY_FB_MAX_DELTA
         expected = max(-10, ctrl_module.CYCLE_SETTINGS[3] + cap)
         assert plan["base_setting"] == expected
@@ -739,7 +892,8 @@ class TestBodyFeedback:
             ctrl_module.CYCLE_SETTINGS[3] = -1
             plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
                                       sleep_stage=None,
-                                      body_avg=75.0, body_left=72.0)
+                                      body_avg=75.0, body_left=72.0,
+                                      bed_occupied=True)
             assert plan["base_setting"] == 0  # MAX_SETTING
         finally:
             ctrl_module.CYCLE_SETTINGS.clear()
@@ -960,6 +1114,29 @@ class TestHotRailNotesFlow:
         assert entry["hot_rail_fired"] is True
         assert "hot_rail" in entry["right_v52_source"]
         assert "hot_rail" in notes
+
+
+class TestSelfWriteRace:
+    def test_left_self_write_does_not_trigger_override(self):
+        controller = _make_controller(current_setting=-5, current_blower=41)
+        controller._is_sleeping = MagicMock(return_value=True)
+        controller._log_override = MagicMock()
+        controller._read_temperature = MagicMock(return_value=70.0)
+        controller._read_zone_snapshot = MagicMock(return_value=_snapshot(setting=-8, blower_pct=75))
+        controller._read_str = MagicMock(return_value="core")
+        controller._state["recent_changes"] = []
+
+        def _echo(*args, **kwargs):
+            controller._on_setting_change(ctrl_module.E_BEDTIME_TEMP, None, "-5", "-8", {})
+
+        controller.call_service = MagicMock(side_effect=_echo)
+
+        controller._set_l1(-8)
+
+        controller._log_override.assert_not_called()
+        assert controller._state.get("override_freeze_until") is None
+        assert controller._state["recent_changes"] == []
+
 
 
 class TestRightZoneLiveGate:
