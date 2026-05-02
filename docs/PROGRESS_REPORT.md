@@ -684,7 +684,7 @@ conn = psycopg2.connect(host='192.168.0.3', dbname='sleepdata',
                          user='sleepsync', password='sleepsync_local')
 cur = conn.cursor()
 cur.execute('''
-  SELECT ts, zone, action, setting, body_left, room_temp, notes
+  SELECT ts, zone, action, setting, body_left_f, room_temp_f, notes
   FROM controller_readings
   WHERE ts > now() - interval '12 hours'
     AND (action = \\'override\\' OR notes LIKE \\'%hot_rail%\\')

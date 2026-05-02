@@ -26,7 +26,7 @@ import pandas as pd
 
 
 HA_HOST = "root@192.168.0.106"
-SHADOW_LOG = "/config/snug_right_v52_shadow.jsonl"
+SHADOW_LOG = "/addon_configs/a0d7b954_appdaemon/snug_right_v52_shadow.jsonl"
 
 
 def fetch(remote_path: str = SHADOW_LOG) -> list[dict]:

@@ -33,7 +33,7 @@ cur = conn.cursor()
 
 # Overrides + hot_rail fires + 3-level watchdog hits in last 12 h
 cur.execute("""
-  SELECT ts, zone, action, setting, body_left, room_temp, notes
+  SELECT ts, zone, action, setting, body_left_f, room_temp_f, notes
   FROM controller_readings
   WHERE ts > now() - interval '12 hours'
     AND (action = 'override' OR notes ILIKE '%hot_rail%' OR notes ILIKE '%3_level%')
