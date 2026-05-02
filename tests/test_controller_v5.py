@@ -28,6 +28,9 @@ class _FakeHass:
     def run_every(self, *args, **kwargs):
         pass
 
+    def run_in(self, *args, **kwargs):
+        pass
+
 
 fake_hass_module = types.ModuleType("hassapi")
 fake_hass_module.Hass = _FakeHass
@@ -99,6 +102,7 @@ def _bed_presence_snapshot():
 
 
 def _make_controller(*, current_setting=-7, current_blower=65):
+    occupied_since = (datetime.now() - timedelta(minutes=60)).isoformat()
     controller = SleepControllerV5.__new__(SleepControllerV5)
     controller.args = {}
     controller._room_temp_entity = ctrl_module.DEFAULT_ROOM_TEMP_ENTITY
@@ -118,15 +122,20 @@ def _make_controller(*, current_setting=-7, current_blower=65):
         "right_hot_streak": 0,
         "current_cycle_num": None,
         "left_zone_last_occupied": True,
-        "left_zone_occupied_since": (datetime.now() - timedelta(minutes=60)).isoformat(),
+        "left_zone_occupied_since": occupied_since,
+        "left_bed_onset_ts": occupied_since,
+        "left_bed_vacated_since": None,
         "right_zone_last_occupied": True,
-        "right_zone_occupied_since": (datetime.now() - timedelta(minutes=60)).isoformat(),
+        "right_zone_occupied_since": occupied_since,
+        "right_bed_onset_ts": occupied_since,
+        "right_bed_vacated_since": None,
     }
     controller._learned = {}
     controller._pg_conn = None
     controller.call_service = MagicMock()
     controller.get_state = MagicMock(return_value=None)
     controller.log = MagicMock()
+    controller.run_in = MagicMock()
     controller._save_state = MagicMock()
     controller._log_to_postgres = MagicMock()
     controller._log_passive_zone_snapshot = MagicMock()
@@ -491,6 +500,145 @@ class TestPostgresLogging:
         assert "actual_blower=33" in notes
 
 
+class TestBedOnsetEvent:
+    def _fresh_controller(self):
+        c = _make_controller()
+        c._state["left_bed_onset_ts"] = None
+        c._state["left_zone_occupied_since"] = None
+        c._state["left_bed_vacated_since"] = None
+        c._compute_setting = SleepControllerV5._compute_setting.__get__(c, SleepControllerV5)
+        c._learned = {}
+        return c
+
+    def test_bed_onset_event_schedules_immediate_tick(self):
+        c = self._fresh_controller()
+
+        c._on_bed_onset(
+            ctrl_module.BED_PRESENCE_ENTITIES["occupied_left"],
+            "state",
+            "off",
+            "on",
+            {"zone": "left"},
+        )
+
+        c.run_in.assert_called_once_with(c._control_loop, 1)
+
+    def test_bed_onset_event_sets_state_timestamp(self):
+        c = self._fresh_controller()
+
+        c._on_bed_onset(
+            ctrl_module.BED_PRESENCE_ENTITIES["occupied_left"],
+            "state",
+            "off",
+            "on",
+            {"zone": "left"},
+        )
+
+        assert c._state["left_bed_onset_ts"] is not None
+        datetime.fromisoformat(c._state["left_bed_onset_ts"])
+        assert c._state["left_zone_occupied_since"] == c._state["left_bed_onset_ts"]
+        c._save_state.assert_called()
+
+    def test_initial_bed_cooling_uses_event_timestamp(self):
+        c = self._fresh_controller()
+        now = datetime.now()
+        c._state["left_bed_onset_ts"] = (now - timedelta(minutes=10)).isoformat()
+        c._state["left_zone_occupied_since"] = None
+        c._state["left_zone_last_occupied"] = True
+
+        mins_since_occupied = c._update_zone_occupancy_onset("left", True, now)
+        plan = c._compute_setting(
+            elapsed_min=200,
+            room_temp=72.0,
+            sleep_stage=None,
+            body_avg=75.0,
+            body_left=75.0,
+            mins_since_occupied=mins_since_occupied,
+            bed_occupied=True,
+        )
+
+        assert mins_since_occupied < ctrl_module.INITIAL_BED_COOLING_MIN
+        assert plan["setting"] == ctrl_module.INITIAL_BED_LEFT_SETTING
+        assert "initial_bed_cooling" in plan["data_source"]
+
+    def test_brief_vacancy_retains_original_onset(self):
+        c = self._fresh_controller()
+        original = (datetime.now() - timedelta(hours=3)).isoformat()
+        c._state["left_bed_onset_ts"] = original
+        c._state["left_zone_occupied_since"] = original
+
+        c._on_bed_vacated(
+            ctrl_module.BED_PRESENCE_ENTITIES["occupied_left"],
+            "state",
+            "on",
+            "off",
+            {"zone": "left"},
+        )
+        c._on_bed_onset(
+            ctrl_module.BED_PRESENCE_ENTITIES["occupied_left"],
+            "state",
+            "off",
+            "on",
+            {"zone": "left"},
+        )
+
+        assert c._state["left_bed_onset_ts"] == original
+
+
+class TestBodyFbOccupancyGate:
+    def _fresh_controller(self):
+        c = SleepControllerV5()
+        c._learned = {}
+        c._state = {"current_cycle_num": 0, "hot_streak": 0}
+        return c
+
+    def test_body_fb_skipped_when_unoccupied(self):
+        c = self._fresh_controller()
+        plan = c._compute_setting(
+            elapsed_min=10,
+            room_temp=72.0,
+            sleep_stage=None,
+            body_avg=75.0,
+            body_left=75.0,
+            bed_occupied=False,
+        )
+
+        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[1]
+        assert plan["setting"] == ctrl_module.CYCLE_SETTINGS[1]
+        assert "body_fb_skipped(unoccupied)" in plan["data_source"]
+        assert "body_fb(" not in plan["data_source"]
+
+    def test_body_fb_applied_when_occupied(self):
+        c = self._fresh_controller()
+        plan = c._compute_setting(
+            elapsed_min=10,
+            room_temp=72.0,
+            sleep_stage=None,
+            body_avg=75.0,
+            body_left=75.0,
+            bed_occupied=True,
+        )
+
+        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[1] + ctrl_module.BODY_FB_MAX_DELTA
+        assert "body_fb" in plan["data_source"]
+        assert "skipped" not in plan["data_source"]
+
+    def test_body_fb_legacy_no_occupancy(self):
+        c = self._fresh_controller()
+        plan = c._compute_setting(
+            elapsed_min=10,
+            room_temp=72.0,
+            sleep_stage=None,
+            body_avg=75.0,
+            body_left=75.0,
+            bed_occupied=None,
+        )
+
+        assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[1] + ctrl_module.BODY_FB_MAX_DELTA
+        assert "body_fb" in plan["data_source"]
+        assert "skipped" not in plan["data_source"]
+
+
 class TestBodyFeedback:
     """v5.2: closed-loop body-temperature feedback on cycle baselines."""
 
@@ -685,8 +833,9 @@ class TestRightEarlySleepFeedback:
         c._save_state = lambda: None
         c._set_l1_right = lambda value: None
         c.log = lambda *args, **kwargs: None
-        c._read_str = lambda entity_id: (
-            "on" if entity_id == ctrl_module.BED_PRESENCE_ENTITIES["occupied_right"] else "off"
+        c._read_str = lambda entity_id: "off"
+        c._read_bool = lambda entity_id: (
+            True if entity_id == ctrl_module.BED_PRESENCE_ENTITIES["occupied_right"] else None
         )
         sink = io.StringIO()
 
@@ -753,6 +902,64 @@ class TestRightEarlySleepFeedback:
         assert entry["right_v52_proposed"] == ctrl_module.INITIAL_BED_RIGHT_SETTING
         assert entry["right_v52_reason"] == "pre_sleep_inbed"
         assert entry["right_v52_source"] == "pre_sleep_precool"
+
+
+class TestHotRailNotesFlow:
+    def test_hot_rail_appears_in_passive_snapshot_notes(self, monkeypatch):
+        import builtins
+        import io
+
+        c = SleepControllerV5()
+        onset = (datetime.now() - timedelta(minutes=45)).isoformat()
+        c._state = {
+            "right_zone_last_occupied": True,
+            "right_zone_occupied_since": onset,
+            "right_bed_onset_ts": onset,
+            "right_hot_streak": ctrl_module.RIGHT_HOT_RAIL_STREAK - 1,
+        }
+        c._learned = {}
+        c._save_state = lambda: None
+        c._set_l1_right = lambda value: None
+        c.log = lambda *args, **kwargs: None
+        c._read_str = lambda entity_id: "off"
+        c._read_bool = lambda entity_id: (
+            True if entity_id == ctrl_module.BED_PRESENCE_ENTITIES["occupied_right"] else None
+        )
+        sink = io.StringIO()
+
+        class _FakeOpen:
+            def __enter__(self):
+                return sink
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        monkeypatch.setattr(builtins, "open", lambda *args, **kwargs: _FakeOpen())
+        right_snap = _snapshot(setting=-6, blower_pct=50) | {"body_left": 87.0, "body_avg": 85.0}
+
+        entry = c._right_v52_shadow_tick(
+            elapsed_min=45,
+            room_temp=72.0,
+            sleep_stage="core",
+            right_snap=right_snap,
+        )
+        fake_conn = _FakeConn()
+        c._get_pg = MagicMock(return_value=fake_conn)
+
+        c._log_passive_zone_snapshot(
+            "right",
+            elapsed_min=45,
+            room_temp=72.0,
+            sleep_stage="core",
+            bed_presence=_bed_presence_snapshot() | {"occupied_right": True},
+            snapshot=right_snap,
+            data_source_suffix=entry["right_v52_source"] if entry["hot_rail_fired"] else None,
+        )
+
+        notes = fake_conn.cursor_obj.params[15]
+        assert entry["hot_rail_fired"] is True
+        assert "hot_rail" in entry["right_v52_source"]
+        assert "hot_rail" in notes
 
 
 class TestRightZoneLiveGate:

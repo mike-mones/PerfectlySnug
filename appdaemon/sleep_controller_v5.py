@@ -177,6 +177,7 @@ PRE_SLEEP_STAGE_VALUES = ("inbed", "awake")
 INITIAL_BED_COOLING_MIN = 30.0
 INITIAL_BED_LEFT_SETTING = -10
 INITIAL_BED_RIGHT_SETTING = -10
+BED_ONSET_CLEAR_DEBOUNCE_MIN = 10.0
 
 # Right-zone live actuation. TWO-KEY ARMING:
 #   1. RIGHT_LIVE_ENABLED Python constant (this file) — armed by code
@@ -202,8 +203,11 @@ CONTROLLER_VERSION = "v5_2_rc_off"
 #   - 3-level mode forced OFF as a watchdog (init + every control loop tick)
 #   - right-zone proactive-cool: -1 step when body_left ≥ 86°F sustained ≥10 min,
 #     gated off during BedJet/initial-bed/unoccupied windows
+#   - bed-onset event listener schedules an immediate control tick
+#   - body feedback is gated off when bed presence says the bed is unoccupied
+#   - right-zone hot-rail source is included in passive PG snapshot notes
 # See PROGRESS_REPORT.md and docs/2026-05-01_v52_patches.md for detail.
-CONTROLLER_PATCH_LEVEL = "v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86"
+CONTROLLER_PATCH_LEVEL = "v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes"
 ENABLE_LEARNING = True
 MAX_SETTING = 0
 
@@ -399,6 +403,10 @@ class SleepControllerV5(hass.Hass):
             "hot_streak": 0,
             "right_hot_streak": 0,      # 2026-05-01: right-zone 86°F sustained counter
             "current_cycle_num": None,
+            "left_bed_onset_ts": None,
+            "right_bed_onset_ts": None,
+            "left_bed_vacated_since": None,
+            "right_bed_vacated_since": None,
         }
         self._load_state()
         self._pg_conn = None
@@ -422,10 +430,26 @@ class SleepControllerV5(hass.Hass):
             ZONE_ENTITY_IDS["right"]["bedtime"],
         )
 
+        # Bed-presence onset listeners: schedule a near-immediate algorithm tick
+        # on off/unavailable→on transitions without firing at AppDaemon startup.
+        for zone in ("left", "right"):
+            self.listen_state(
+                self._on_bed_onset,
+                BED_PRESENCE_ENTITIES[f"occupied_{zone}"],
+                new="on",
+                zone=zone,
+            )
+            self.listen_state(
+                self._on_bed_vacated,
+                BED_PRESENCE_ENTITIES[f"occupied_{zone}"],
+                new="off",
+                zone=zone,
+            )
+
         # Gap 5: If sleep_mode is already ON (mid-night restart), resume
         self._check_midnight_restart()
 
-        self.log(f"Controller {CONTROLLER_VERSION} ready — left side in RC-off blower-proxy mode")
+        self.log(f"Controller {CONTROLLER_PATCH_LEVEL} ready — left side in RC-off blower-proxy mode")
         self.log(f"  Body feedback: enabled={BODY_FB_ENABLED}, "
                  f"target={BODY_FB_TARGET_F}°F, Kp_cold={BODY_FB_KP_COLD}, "
                  f"max_delta={BODY_FB_MAX_DELTA}, min_cycle={BODY_FB_MIN_CYCLE}")
@@ -527,6 +551,7 @@ class SleepControllerV5(hass.Hass):
             body_left=body_left,
             current_setting=current,
             mins_since_occupied=left_mins_since_onset,
+            bed_occupied=bed_presence.get("occupied_left") if isinstance(bed_presence, dict) else None,
         )
         setting = plan["setting"]
         target_blower_pct = plan["target_blower_pct"]
@@ -602,8 +627,22 @@ class SleepControllerV5(hass.Hass):
             base_blower_pct=base_blower_pct, responsive_cooling_on=False,
             bed_presence=bed_presence,
         )
+        right_snap = self._read_zone_snapshot("right")
+        right_v52_entry = None
+        # ── Right-zone v5.2 shadow: log decision alongside firmware actual ──
+        # Run before the passive PG row so rail/source annotations can flow into
+        # controller_readings.notes for right-zone monitoring queries.
+        if RIGHT_SHADOW_ENABLED:
+            right_v52_entry = self._right_v52_shadow_tick(
+                elapsed_min=elapsed_min, room_temp=room_temp,
+                sleep_stage=sleep_stage, right_snap=right_snap,
+            )
+        right_source = None
+        if right_v52_entry and right_v52_entry.get("hot_rail_fired"):
+            right_source = right_v52_entry.get("right_v52_source")
         self._log_passive_zone_snapshot(
-            "right", elapsed_min, room_temp, sleep_stage, bed_presence=bed_presence
+            "right", elapsed_min, room_temp, sleep_stage, bed_presence=bed_presence,
+            snapshot=right_snap, data_source_suffix=right_source,
         )
 
         # ── Shadow-mode: log what ml.policy.controller_decision would set ──
@@ -614,23 +653,11 @@ class SleepControllerV5(hass.Hass):
             zone="left", elapsed_min=elapsed_min, room_temp_f=room_temp,
             body_f=body_left, v5_setting=setting,
         )
-        right_snap = self._read_zone_snapshot("right")
         if right_snap.get("body_left") is not None:
             self._shadow_log_decision(
                 zone="right", elapsed_min=elapsed_min, room_temp_f=room_temp,
                 body_f=right_snap.get("body_left"),
                 v5_setting=right_snap.get("setting"),
-            )
-
-        # ── Right-zone v5.2 shadow: log decision alongside firmware actual ──
-        # See RIGHT_* constants for params and rationale. Pure logging; no
-        # actuation until RIGHT_LIVE_ENABLED is set True (and even then, gated
-        # on input_boolean.snug_right_controller_enabled which doesn't exist
-        # yet — adding the entity is the explicit go-live step).
-        if RIGHT_SHADOW_ENABLED:
-            self._right_v52_shadow_tick(
-                elapsed_min=elapsed_min, room_temp=room_temp,
-                sleep_stage=sleep_stage, right_snap=right_snap,
             )
 
     def _right_v52_shadow_tick(self, *, elapsed_min, room_temp, sleep_stage, right_snap):
@@ -656,28 +683,17 @@ class SleepControllerV5(hass.Hass):
             body_avg = right_snap.get("body_avg")  # logged for diagnostics
             firmware_setting = right_snap.get("setting")
             firmware_blower = right_snap.get("blower_pct")
-            occupied = self._read_str(BED_PRESENCE_ENTITIES["occupied_right"]) == "on"
+            occupied_state = self._read_bool(BED_PRESENCE_ENTITIES["occupied_right"])
+            occupied = occupied_state is True
 
-            # Track right-bed onset for BedJet gate (independent of the
-            # right_overheat_safety app's state — keep them decoupled).
+            # Track right-bed onset for BedJet/initial-bed gates. The event
+            # listener writes right_bed_onset_ts; this helper preserves a
+            # snapshot/HA-last_changed fallback if AppDaemon restarted mid-night.
             now = datetime.now()
-            if occupied:
-                if not self._state.get("right_zone_last_occupied"):
-                    self._state["right_zone_occupied_since"] = now.isoformat()
-                    self._state["right_zone_last_occupied"] = True
-            else:
-                self._state["right_zone_last_occupied"] = False
-                self._state["right_zone_occupied_since"] = None
-
-            # Compute minutes-since-onset, if in a session
-            mins_since_onset = None
-            occ_since = self._state.get("right_zone_occupied_since")
-            if occ_since:
-                try:
-                    occ_dt = datetime.fromisoformat(occ_since)
-                    mins_since_onset = (now - occ_dt).total_seconds() / 60.0
-                except (TypeError, ValueError):
-                    mins_since_onset = None
+            mins_since_onset = (
+                self._update_zone_occupancy_onset("right", occupied, now)
+                if occupied_state is not None else self._minutes_since_onset("right", now)
+            )
             in_bedjet_window = (
                 mins_since_onset is not None
                 and 0 <= mins_since_onset <= RIGHT_BEDJET_WINDOW_MIN
@@ -700,6 +716,8 @@ class SleepControllerV5(hass.Hass):
                 corr_reason = f"bedjet_window_{mins_since_onset:.0f}min"
             elif pre_sleep_stage:
                 corr_reason = f"pre_sleep_{str(sleep_stage).lower().strip()}"
+            elif not occupied and body_skin is not None:
+                corr_reason = "body_fb_skipped_unoccupied"
             elif (cycle_num not in RIGHT_BODY_FB_SKIP_CYCLES
                   and body_skin is not None):
                 delta = body_skin - RIGHT_BODY_FB_TARGET_F
@@ -731,6 +749,8 @@ class SleepControllerV5(hass.Hass):
                 target_blower_pct = max(0, min(100, round(target_blower_pct)))
                 proposed = self._blower_pct_to_l1(target_blower_pct)
                 source = "cycle+body_fb"
+                if corr_reason == "body_fb_skipped_unoccupied":
+                    source += "+body_fb_skipped(unoccupied)"
                 if right_room_comp:
                     source += "+right_room_hot"
 
@@ -832,6 +852,8 @@ class SleepControllerV5(hass.Hass):
                 "right_v52_proposed": proposed,
                 "right_v52_reason": corr_reason,
                 "right_v52_source": source,
+                "hot_rail_fired": hot_rail_fired,
+                "right_hot_streak": right_hot_streak,
                 "right_v52_diff_vs_firmware": (
                     None if firmware_setting is None
                     else proposed - firmware_setting
@@ -843,9 +865,11 @@ class SleepControllerV5(hass.Hass):
             import json as _json
             with open(RIGHT_SHADOW_LOG_PATH, "a") as f:
                 f.write(_json.dumps(entry) + "\n")
+            return entry
         except Exception as exc:  # noqa: BLE001
             self.log(f"right_v52_shadow skipped ({exc.__class__.__name__}): {exc}",
                      level="WARNING")
+            return None
 
     def _shadow_log_decision(self, *, zone, elapsed_min, room_temp_f, body_f, v5_setting):
         """Append one shadow-policy evaluation to /config/snug_shadow.jsonl.
@@ -879,7 +903,7 @@ class SleepControllerV5(hass.Hass):
 
     def _compute_setting(self, elapsed_min, room_temp, sleep_stage,
                           body_avg=None, body_left=None, current_setting=None,
-                          mins_since_occupied=None):
+                          mins_since_occupied=None, *, bed_occupied=None):
         """Compute target L1 from cycle/stage, body feedback, room compensation, and learned blower residuals."""
         cycle_num = self._get_cycle_num(elapsed_min)
         self._state["current_cycle_num"] = cycle_num
@@ -931,10 +955,15 @@ class SleepControllerV5(hass.Hass):
         # BODY_FB_* constants for the rationale and fit numbers.
         body_fb_correction = 0
         body_fb_input = body_left if BODY_FB_INPUT == "body_left" else body_avg
-        if (BODY_FB_ENABLED
-                and cycle_num >= BODY_FB_MIN_CYCLE
-                and not pre_sleep_stage
-                and body_fb_input is not None):
+        body_fb_ready = (
+            BODY_FB_ENABLED
+            and cycle_num >= BODY_FB_MIN_CYCLE
+            and not pre_sleep_stage
+            and body_fb_input is not None
+        )
+        if body_fb_ready and bed_occupied is False:
+            data_source += "+body_fb_skipped(unoccupied)"
+        elif body_fb_ready:
             body_delta = body_fb_input - BODY_FB_TARGET_F
             if body_delta < 0:
                 # Body cooler than target → ease off (warmer correction)
@@ -1051,8 +1080,12 @@ class SleepControllerV5(hass.Hass):
             self._state["right_hot_streak"] = 0
             self._state["left_zone_last_occupied"] = False
             self._state["left_zone_occupied_since"] = None
+            self._state["left_bed_onset_ts"] = None
+            self._state["left_bed_vacated_since"] = None
             self._state["right_zone_last_occupied"] = False
             self._state["right_zone_occupied_since"] = None
+            self._state["right_bed_onset_ts"] = None
+            self._state["right_bed_vacated_since"] = None
             self._ensure_responsive_cooling_off()
             self._ensure_3_level_off()
             self.call_service(
@@ -1091,6 +1124,11 @@ class SleepControllerV5(hass.Hass):
             self._state["last_restart_ts"] = None
             self._state["hot_streak"] = 0
             self._state["right_hot_streak"] = 0
+            for zone in ("left", "right"):
+                self._state[f"{zone}_zone_last_occupied"] = False
+                self._state[f"{zone}_zone_occupied_since"] = None
+                self._state[f"{zone}_bed_onset_ts"] = None
+                self._state[f"{zone}_bed_vacated_since"] = None
             self._save_state()
 
     # ── Override Detection ───────────────────────────────────────────
@@ -1272,24 +1310,84 @@ class SleepControllerV5(hass.Hass):
                 return bool(occupied)
         return bool(fallback)
 
-    def _update_zone_occupancy_onset(self, zone, occupied, now):
-        """Track minutes since bed-presence occupancy onset for initial cooling."""
-        last_key = f"{zone}_zone_last_occupied"
-        since_key = f"{zone}_zone_occupied_since"
+    def _bed_onset_keys(self, zone):
+        return (
+            f"{zone}_bed_onset_ts",
+            f"{zone}_zone_occupied_since",
+            f"{zone}_zone_last_occupied",
+            f"{zone}_bed_vacated_since",
+        )
 
-        if occupied:
-            if not self._state.get(last_key):
-                self._state[since_key] = now.isoformat()
-                self._state[last_key] = True
-                self._save_state()
+    def _on_bed_onset(self, entity, attribute, old, new, kwargs):
+        """Bed-presence event hook: react within ~1s of off/unavailable→on."""
+        zone = kwargs.get("zone") if isinstance(kwargs, dict) else None
+        if zone not in ("left", "right") or new != "on":
+            return
+
+        now = datetime.now()
+        onset_key, since_key, last_key, vacated_key = self._bed_onset_keys(zone)
+        existing_onset = self._state.get(onset_key)
+        self._state[last_key] = True
+        self._state[vacated_key] = None
+        if not existing_onset:
+            ts = now.isoformat()
+            self._state[onset_key] = ts
+            self._state[since_key] = ts
+            msg = (
+                "Bed-onset detected (left): scheduling immediate tick — "
+                "initial_bed_cooling will force L1=-10"
+                if zone == "left"
+                else "Bed-onset detected (right): scheduling immediate tick — "
+                     "initial_bed_cooling will force right=-10"
+            )
         else:
-            if self._state.get(last_key) or self._state.get(since_key):
-                self._state[last_key] = False
-                self._state[since_key] = None
-                self._save_state()
-            return None
+            if not self._state.get(since_key):
+                self._state[since_key] = existing_onset
+            msg = (
+                f"Bed-onset detected ({zone}): scheduling immediate tick "
+                "with existing onset timestamp"
+            )
 
-        occ_since = self._state.get(since_key)
+        self._save_state()
+        self.log(msg)
+        self.run_in(self._control_loop, 1)
+
+    def _on_bed_vacated(self, entity, attribute, old, new, kwargs):
+        """Debounce bed-vacancy before clearing onset to avoid bathroom-trip re-cooling."""
+        zone = kwargs.get("zone") if isinstance(kwargs, dict) else None
+        if zone not in ("left", "right") or new != "off":
+            return
+        _, _, last_key, vacated_key = self._bed_onset_keys(zone)
+        self._state[last_key] = False
+        self._state[vacated_key] = datetime.now().isoformat()
+        self._save_state()
+        try:
+            self.run_in(
+                self._clear_bed_onset_if_still_vacant,
+                int(BED_ONSET_CLEAR_DEBOUNCE_MIN * 60),
+                zone=zone,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"Bed-vacancy debounce scheduling failed ({zone}): {exc}", level="WARNING")
+
+    def _clear_bed_onset_if_still_vacant(self, kwargs):
+        zone = kwargs.get("zone") if isinstance(kwargs, dict) else None
+        if zone not in ("left", "right"):
+            return
+        occupied = self._read_bool(BED_PRESENCE_ENTITIES[f"occupied_{zone}"])
+        if occupied is True:
+            return
+        onset_key, since_key, last_key, vacated_key = self._bed_onset_keys(zone)
+        self._state[onset_key] = None
+        self._state[since_key] = None
+        self._state[last_key] = False
+        self._state[vacated_key] = None
+        self._save_state()
+        self.log(f"Bed-vacancy confirmed ({zone}): cleared bed-onset timestamp")
+
+    def _minutes_since_onset(self, zone, now):
+        onset_key, since_key, _, _ = self._bed_onset_keys(zone)
+        occ_since = self._state.get(onset_key) or self._state.get(since_key)
         if not occ_since:
             return None
         try:
@@ -1298,9 +1396,99 @@ class SleepControllerV5(hass.Hass):
             return None
         return (now - occ_dt).total_seconds() / 60.0
 
+    def _update_zone_occupancy_onset(self, zone, occupied, now):
+        """Track minutes since bed-presence occupancy onset for initial cooling."""
+        onset_key, since_key, last_key, vacated_key = self._bed_onset_keys(zone)
+
+        if occupied:
+            changed = False
+            existing_onset = self._state.get(onset_key)
+            legacy_since = self._state.get(since_key)
+            if existing_onset is None and legacy_since:
+                self._state[onset_key] = legacy_since
+                existing_onset = legacy_since
+                changed = True
+            if existing_onset is None:
+                ts = now.isoformat()
+                self._state[onset_key] = ts
+                self._state[since_key] = ts
+                changed = True
+            elif not legacy_since:
+                self._state[since_key] = existing_onset
+                changed = True
+            if not self._state.get(last_key):
+                self._state[last_key] = True
+                changed = True
+            if self._state.get(vacated_key) is not None:
+                self._state[vacated_key] = None
+                changed = True
+            if changed:
+                self._save_state()
+            return self._minutes_since_onset(zone, now)
+
+        if self._state.get(last_key):
+            self._state[last_key] = False
+            self._state[vacated_key] = now.isoformat()
+            self._save_state()
+        vacated_since = self._state.get(vacated_key)
+        if vacated_since:
+            try:
+                vacated_dt = datetime.fromisoformat(vacated_since)
+            except (TypeError, ValueError):
+                vacated_dt = now
+            if (now - vacated_dt).total_seconds() >= BED_ONSET_CLEAR_DEBOUNCE_MIN * 60:
+                self._state[onset_key] = None
+                self._state[since_key] = None
+                self._state[vacated_key] = None
+                self._save_state()
+        return None
+
+    def _recover_zone_onset_from_presence(self, zone):
+        occupied = self._read_bool(BED_PRESENCE_ENTITIES[f"occupied_{zone}"])
+        onset_key, since_key, last_key, vacated_key = self._bed_onset_keys(zone)
+        changed = False
+        if occupied is True:
+            if not self._state.get(onset_key):
+                fallback = self._state.get(since_key)
+                if not fallback:
+                    last_changed = self.get_state(
+                        BED_PRESENCE_ENTITIES[f"occupied_{zone}"],
+                        attribute="last_changed",
+                    )
+                    if last_changed:
+                        try:
+                            dt = datetime.fromisoformat(last_changed)
+                            if dt.tzinfo is not None:
+                                dt = dt.astimezone().replace(tzinfo=None)
+                            fallback = dt.isoformat()
+                        except (TypeError, ValueError):
+                            fallback = None
+                fallback = fallback or datetime.now().isoformat()
+                self._state[onset_key] = fallback
+                self._state[since_key] = fallback
+                changed = True
+            elif not self._state.get(since_key):
+                self._state[since_key] = self._state.get(onset_key)
+                changed = True
+            if not self._state.get(last_key):
+                self._state[last_key] = True
+                changed = True
+            if self._state.get(vacated_key):
+                self._state[vacated_key] = None
+                changed = True
+        elif occupied is False:
+            if self._state.get(last_key):
+                self._state[last_key] = False
+                self._state[vacated_key] = datetime.now().isoformat()
+                changed = True
+        if changed:
+            self._save_state()
+
     def _check_midnight_restart(self):
         """Gap 5: If AppDaemon restarts while sleeping, resume from correct position."""
         if self._is_sleeping():
+            self._recover_zone_onset_from_presence("left")
+            self._recover_zone_onset_from_presence("right")
             if self._state.get("sleep_start"):
                 # Backfill epoch if missing (pre-epoch state files)
                 if not self._state.get("sleep_start_epoch"):
@@ -1631,9 +1819,12 @@ class SleepControllerV5(hass.Hass):
         snapshot["body_avg"] = self._fused_body_avg(zone, snapshot)
         return snapshot
 
-    def _log_passive_zone_snapshot(self, zone, elapsed_min, room_temp, sleep_stage, bed_presence=None):
+    def _log_passive_zone_snapshot(self, zone, elapsed_min, room_temp, sleep_stage,
+                                   bed_presence=None, snapshot=None,
+                                   data_source_suffix=None):
         """Persist a passive 5-minute telemetry snapshot for a non-controlled zone."""
-        snapshot = self._read_zone_snapshot(zone)
+        if snapshot is None:
+            snapshot = self._read_zone_snapshot(zone)
         has_signal = any(
             snapshot[key] is not None
             for key in ("setting", "body_center", "body_left", "body_right", "ambient", "setpoint", "blower_pct")
@@ -1650,7 +1841,10 @@ class SleepControllerV5(hass.Hass):
             zone=zone,
             cycle_num=self._get_cycle_num(elapsed_min),
             room_temp_comp=0,
-            data_source=f"passive_{zone}",
+            data_source=(
+                f"passive_{zone}+{data_source_suffix}"
+                if data_source_suffix else f"passive_{zone}"
+            ),
             body_avg=snapshot["body_avg"],
             body_left=snapshot["body_left"],
             body_right=snapshot["body_right"],
