@@ -53,7 +53,7 @@
 
 ## 1. Where we are in one sentence
 
-v5.1 (heuristic, refit) is running on the **left zone only** as of 2026-04-30; the v5→v5.1 update adjusted the per-cycle baselines from `[-10,-9,-8,-7,-6,-5]` to `[-10,-8,-7,-5,-5,-6]` (motivated by user feedback the morning of 2026-04-30 — see "v5.1 update" subsection below). v5.1 still has known structural limitations (override-bias trap, no proxy comfort signal, c4/c5 thin samples), and we have not been able to demonstrate that any version of the proposed v6 ML policy improves comfort outcomes on the available data — so v6 is not deployed. The single largest gap is that **the wife's right zone has no automated controller at all**, which is also where the only sustained overheat events have been recorded.
+v5.2 (closed-loop body feedback + 7 patches) is running on **both zones** as of 2026-05-02 14:21 ET. v6 is not deployed; the current production path remains the v5.2 controller plus safety rails and logging.
 
 ---
 
@@ -70,7 +70,7 @@ v5.1 (heuristic, refit) is running on the **left zone only** as of 2026-04-30; t
                │ (pressure %)                              ▼             ▼
                │                                  sleep_controller_v5.py  ── 30-day SQLite purge
 ┌──────────────▼─────────────┐                    (left zone ACTIVE)
-│ Apple Watch (SleepSync app)│                    (right zone PASSIVE log only)
+│ Apple Watch (SleepSync app)│                    (right zone ACTIVE when helper on)
 │ stages, HR, HRV, resp rate │                            │
 └──────────────┬─────────────┘                            │
                │ HTTPS POST                               │ writes 5-min snapshots
@@ -87,9 +87,9 @@ v5.1 (heuristic, refit) is running on the **left zone only** as of 2026-04-30; t
 ### What controls what
 | Component | Role | Where |
 |---|---|---|
-| `sleep_controller_v5.py` (rev `v5_rc_off`) | LEFT-zone control loop, every 5 min | HA AppDaemon |
-| Right-zone behavior | **None** — Perfectly Snug firmware default; logged only via `_log_passive_zone_snapshot("right", ...)` | HA AppDaemon |
-| `state_logger.py` | Mirror of HA topper sensors → PG `controller_readings` | HA AppDaemon |
+| `sleep_controller_v5.py` (`v5_2_rc_off` + 7 patches) | Left-zone control loop and two-key-armed right-zone control, every 5 min | HA AppDaemon |
+| Right-zone behavior | v5.2 live when `input_boolean.snug_right_controller_enabled` is on; `right_overheat_safety.py` rail remains independent | HA AppDaemon |
+| PostgreSQL writes (`sleep_controller_v5._log_to_postgres`) | Mirror of HA topper sensors → PG `controller_readings` | HA AppDaemon |
 | iOS Health Receiver (FastAPI :8080) | Apple Watch → PG `health_metrics`, `sleep_segments` | Mac Mini |
 | `tools/backfill_ha_recorder.py` | Pulls HA SQLite stats → PG `ha_stats` (idempotent) | Run from laptop or Mac cron |
 
@@ -351,7 +351,7 @@ Any future training pipeline must either:
 
 ## 7. What's deployed today
 
-**As of 2026-04-30 16:30 ET:**
+**As of 2026-05-02 14:21 ET:**
 
 | Component | State | Notes |
 |---|---|---|
