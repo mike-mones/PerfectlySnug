@@ -5,7 +5,7 @@
 > document is the running log of what's actually been built, what's deployed,
 > what's been tried and rejected, and what the data actually says today.
 
-**Last updated:** 2026-05-02 afternoon (morning analysis + 3-agent fleet patches deployed — see §12 below)
+**Last updated:** 2026-05-02 late afternoon (8-agent deep audit + 7 P0 safety/correctness patches deployed — see §13)
 
 > 🎯 **2026-05-01 RC reverse-engineering — canonical synthesis:**
 > [`findings/2026-05-01_rc_synthesis.md`](findings/2026-05-01_rc_synthesis.md).
@@ -853,3 +853,136 @@ for row in cur.fetchall():
 "
 ssh root@192.168.0.106 \"ha addon logs a0d7b954_appdaemon 2>&1 | grep -E '(Bed-onset detected|hot-rail|body_fb_skipped|initial_bed|MANUAL OVERRIDE)' | tail -30\"
 ```
+
+## 13. 2026-05-02 afternoon — 8-agent deep audit + 7 P0 safety/correctness patch set
+
+After deploying the §12 patches, ran a fleet of 8 parallel investigation
+agents (`docs/`, `integration`, `live-audit`, `data-pipeline`,
+`controller-broader`, `safety-app`, `today-redteam`, `ml-pipeline`) to
+red-team the entire PerfectlySnug stack. Synthesised findings into 7
+cross-cutting P0 patches; shipped them as a single commit + deploy and
+moved P1 items to `docs/NEXT_STEPS.md`.
+
+### 13.1 Findings → P0 patches shipped
+
+Commit: **`45fd9d3` (PerfectlySnug)** — deployed to HA Green at
+2026-05-02 16:27:36 ET, init banner confirmed new patch level.
+`CONTROLLER_PATCH_LEVEL` now:
+
+```
+v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+
+bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+
+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude
+```
+
+| # | Patch | Where | Bug it fixes |
+|---|---|---|---|
+| 1 | **overheatBypass** | `_control_loop` | `overheat_hard` plan was being suppressed by freeze/rate-limit/manual-mode holds. Hard-overheat rail must always actuate; now bypasses every gate that could swallow it. |
+| 2 | **rcBothZones** | `_ensure_responsive_cooling_off` | Watchdog only guarded the LEFT `responsive_cooling` switch. Right RC was found ON last night despite RC-off design intent. Now symmetric for both zones. |
+| 3 | **railNotOverride** | `_on_right_setting_change` | When `right_overheat_safety.py` force-writes `-10` at `body_left ≥ 86°F`, the controller mis-classified it as a manual override → 60-min freeze + learner poisoning. Now classified `'rail_force'` (no freeze, no learner ingest). |
+| 4 | **railRestoreGuard** | `right_overheat_safety._restore_setpoint` | Restore action could stomp a user or controller change that happened mid-engagement. Now only restores if current setpoint is still `-10` (the rail's own write). |
+| 5 | **leftSelfWrite** | `_set_l1` | Race window: `call_service(...)` could trigger the self-detection callback before `last_setting` was updated, mis-classifying the controller's own write as a manual override. Now sets `last_setting` *before* `call_service`, matching the right-side pattern. |
+| 6 | **bodyFbFailClosed** | `_compute_setting`, `_right_v52_shadow_tick` | `bed_occupied=None` previously preserved legacy behaviour and let `body_fb` apply the +5 cold-correction. Sensor unavailability is now treated as **unoccupied** — no warming bias when occupancy is unknown. |
+| 7 | **learnerInitialBedExclude** | `_learn_from_history` SQL | Learner was ingesting initial-bed-cooling, bedjet-window, and pre-sleep rows as if they were user preference data. SQL now `WHERE notes NOT ILIKE` those tags. |
+
+Tests: **128 pass** (was 122). New / updated test classes:
+`TestOverheatBypass`, `TestResponsiveCoolingBothZones`,
+`TestRailClassification`, `TestLeftSelfWrite`, `TestBodyFbFailClosed`,
+`TestLearnerInitialBedExclude`, plus `test_right_overheat_safety` restore
+guard tests. All pre-existing `TestBodyFeedback` tests updated to pass
+`bed_occupied=True` (fail-closed is the new safe default).
+
+### 13.2 Documentation + automation drift fixed
+
+Companion commits (`docs-automation` agent):
+- **`aeaf138` (PerfectlySnug):** PROGRESS_REPORT §1, §2, §7 refreshed —
+  v5.2 with 7 patches, both zones active when helper is on; replaced
+  references to the never-implemented `state_logger.py` with
+  `sleep_controller_v5._log_to_postgres`.
+- **`74e2fa9` (HomeAssistant):**
+  - `.github/agents/smarthome.agent.md` — room sensor corrected to
+    `sensor.bedroom_temperature_sensor_temperature` (Aqara, was the
+    now-unavailable dehumidifier sensor); active controller corrected
+    from v3 to `sleep_controller_v5.py`; override behaviour corrected
+    (60-min freeze then resume; no all-night floor); deploy commands and
+    test commands updated.
+  - `ha-config/automations.yaml` `topper_precool_start` — replaced stale
+    `sensor.superior_6000s_temperature` with the Aqara room sensor;
+    `| float(70)` fallback preserved. Validated via
+    `reload_automations.sh --check-only` then reload.
+
+### 13.3 Stored-memory facts to refresh
+
+The following stored memories were stale and should be re-stored when a
+`store_memory` tool is next available:
+
+| Memory key | Old value | Correct value |
+|---|---|---|
+| Active controller | `sleep_controller_v3.py` | `sleep_controller_v5.py` (v5.2 + 7 patches) |
+| Room temp sensor | `sensor.superior_6000s_temperature` | `sensor.bedroom_temperature_sensor_temperature` (Aqara) |
+| Override behaviour | "User's value becomes floor for rest of night" | 60-min freeze, then algorithm resumes (floor removed 2026-05-01) |
+| Right zone live as of 2026-04-30 | "live" | `RIGHT_LIVE_ENABLED=True` in code, but `input_boolean.snug_right_controller_enabled` was OFF until 2026-05-02 14:12 ET. Now genuinely live + persistence automation. |
+
+### 13.4 P1 items deferred to `docs/NEXT_STEPS.md`
+
+Not safety-critical, queued for follow-up sessions:
+
+- `sleep_mode("on")` should preserve a pre-sleep bed-onset rather than
+  resetting it.
+- `awake` sleep stage mid-night should not force max cooling.
+- Stage-mapping path can clobber v5.2 cycle baselines under specific
+  combinations (audit `inv-controller-broader` finding).
+- Learner corpus pre-`noFloor` is biased toward floor-clamped overrides;
+  expected to self-correct as new (post-2026-05-01) data accumulates.
+- HRV cadence duplication in PG ingest.
+- `sleep_segments` duplication causing 2×–5× join overcounts in nightly
+  rollups.
+- `state_logger.py` is dead code — remove from `apps.yaml` references.
+- `L_active` is not exposed by the integration; computed downstream only.
+- `topper_precool_start` still turns LEFT `responsive_cooling` on; the
+  RC-both-zones watchdog will force it off seconds later. Cosmetic
+  noise for now; revisit if logbook spam is bothersome.
+
+### 13.5 Verification
+
+- `ssh root@192.168.0.106 "head /addon_configs/a0d7b954_appdaemon/apps/sleep_controller_v5.py"`:
+  remote file matches `45fd9d3` working tree.
+- AppDaemon log:
+  `Controller v5_2_rc_off+...+learnerInitialBedExclude ready — left side in RC-off blower-proxy mode`
+  at 2026-05-02 16:27:36 ET.
+- `python -m pytest PerfectlySnug/tests/ -q` → `128 passed`.
+- HA `automation.reload` succeeded after `topper_precool_start` sensor
+  swap; `--check-only` clean.
+
+### 13.6 Where to start the next session
+
+Same morning sequence as §12.7. Specifically check:
+
+```bash
+ssh root@192.168.0.106 "ha addon logs a0d7b954_appdaemon 2>&1 | grep -E '(Right hot-rail|rail_force|body_fb_skipped|MANUAL OVERRIDE|RC forced off)' | tail -40"
+.venv/bin/python -c "
+import psycopg2
+conn = psycopg2.connect(host='192.168.0.3', dbname='sleepdata',
+                         user='sleepsync', password='sleepsync_local')
+cur = conn.cursor()
+cur.execute('''
+  SELECT ts AT TIME ZONE 'America/New_York', zone, action, setting, body_left_f, notes
+  FROM controller_readings
+  WHERE ts > now() - interval '12 hours'
+    AND (action IN ('override','rail_force','overheat_hard')
+         OR notes ILIKE '%hot_rail%'
+         OR notes ILIKE '%initial_bed%')
+  ORDER BY ts
+''')
+for row in cur.fetchall():
+    print(row)
+"
+```
+
+Acceptance for tonight:
+- At least one `action='rail_force'` row in PG when the 86°F rail engages
+  (was previously logged as `'override'`).
+- Zero `responsive_cooling` switch ON events lasting >2 ticks for either
+  zone.
+- `body_fb_skipped(unknown_occupancy)` should not appear during normal
+  in-bed sleep — only during empty-bed pre-cool.
