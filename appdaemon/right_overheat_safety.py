@@ -95,6 +95,7 @@ POLL_INTERVAL_SEC = 60
 BEDJET_SUPPRESS_MIN = 30.0
 
 E_RAIL_FLAG = "input_boolean.snug_right_overheat_rail_enabled"
+E_RAIL_ENGAGED = "input_boolean.snug_right_rail_engaged"
 E_BEDTIME_R = "number.smart_topper_right_side_bedtime_temperature"
 # Skin-contact sensor (left of right zone, where her body lies). Was previously
 # the center sensor; see "Sensor selection" in the module docstring.
@@ -123,6 +124,7 @@ class RightOverheatSafety(hass.Hass):
             "last_occupied": False,
         }
         self._load_state()
+        self._set_rail_helper(False)
 
         self.run_every(self._tick, "now", POLL_INTERVAL_SEC)
         self.log("Right-zone overheat safety rail ready "
@@ -146,6 +148,13 @@ class RightOverheatSafety(hass.Hass):
             return self.get_state(entity_id)
         except Exception:  # pragma: no cover
             return None
+
+    def _set_rail_helper(self, engaged: bool) -> None:
+        try:
+            service = "input_boolean/turn_on" if engaged else "input_boolean/turn_off"
+            self.call_service(service, entity_id=E_RAIL_ENGAGED)
+        except Exception as e:  # pragma: no cover
+            self.log(f"Rail helper update failed: {e}", level="WARNING")
 
     def _save_state(self) -> None:
         try:
@@ -252,6 +261,7 @@ class RightOverheatSafety(hass.Hass):
             self._state["engaged_at"] = datetime.now().isoformat()
             self.log(f"Right rail engaged (body={body:.1f}°F) — already at "
                      f"{current}, no setpoint change", level="WARNING")
+            self._set_rail_helper(True)
             return
 
         self._state["snapshot_setting"] = current
@@ -261,6 +271,7 @@ class RightOverheatSafety(hass.Hass):
 
         self.call_service("number/set_value", entity_id=E_BEDTIME_R,
                           value=RAIL_FORCE_SETTING)
+        self._set_rail_helper(True)
         self.log(f"Right rail ENGAGED: body={body:.1f}°F, "
                  f"prev_setpoint={current}, forced={RAIL_FORCE_SETTING}",
                  level="WARNING")
@@ -290,16 +301,19 @@ class RightOverheatSafety(hass.Hass):
         if should_restore:
             self.call_service("number/set_value", entity_id=E_BEDTIME_R,
                               value=int(snapshot))
+            self._set_rail_helper(False)
             self.log(f"Right rail RELEASED ({reason}): "
                      f"restored setpoint to {int(snapshot)}",
                      level="WARNING")
         elif snapshot is not None:
+            self._set_rail_helper(False)
             self.log(
                 f"Rail release: not restoring prev_setpoint={int(snapshot)} "
                 f"because current={current:g} was changed during engagement",
                 level="WARNING",
             )
         else:
+            self._set_rail_helper(False)
             self.log(f"Right rail RELEASED ({reason}): no snapshot to restore",
                      level="WARNING")
         self._state["snapshot_setting"] = None

@@ -69,6 +69,27 @@ class _FakeConn:
         return self.cursor_obj
 
 
+class _FilteringCursor(_FakeCursor):
+    def __init__(self, rows_with_notes):
+        super().__init__(rows=[])
+        self.rows_with_notes = rows_with_notes
+
+    def execute(self, query, params=None):
+        super().execute(query, params)
+        excluded = ("initial_bed_cooling", "bedjet_window", "pre_sleep")
+        if all(f"NOT LIKE '%{tag}%'" in query for tag in excluded):
+            self.rows = [row[:4] for row in self.rows_with_notes
+                         if not any(tag in (row[4] or "") for tag in excluded)]
+        else:
+            self.rows = [row[:4] for row in self.rows_with_notes]
+
+
+class _FilteringConn(_FakeConn):
+    def __init__(self, rows_with_notes):
+        self.cursor_obj = _FilteringCursor(rows_with_notes)
+        self.commit = MagicMock()
+
+
 def _snapshot(*, setting=-7, blower_pct=65):
     return {
         "body_center": 84.0,
@@ -113,6 +134,8 @@ def _make_controller(*, current_setting=-7, current_blower=65):
         "last_change_ts": None,
         "last_restart_ts": None,
         "last_target_blower_pct": ctrl_module.L1_TO_BLOWER_PCT[current_setting],
+        "left_last_data_source": None,
+        "right_last_data_source": None,
         "override_freeze_until": None,
         "manual_mode": False,
         "recent_changes": [],
@@ -122,6 +145,7 @@ def _make_controller(*, current_setting=-7, current_blower=65):
         "right_hot_streak": 0,
         "right_rail_force_seen": False,
         "right_rail_force_seen_at": None,
+        "right_rail_helper_seen_on_at": None,
         "current_cycle_num": None,
         "left_zone_last_occupied": True,
         "left_zone_occupied_since": occupied_since,
@@ -491,6 +515,27 @@ class TestLearning:
         assert "COALESCE(notes, '') NOT LIKE '%pre_sleep%'" in query
 
 
+    def test_learner_filter_excludes_tagged_rows_from_deltas(self):
+        controller = _make_controller()
+        fake_conn = _FilteringConn(
+            rows_with_notes=[
+                (30.0, -6, -8, "2026-04-10", "state=initial_bed_cooling(10m)"),
+                (120.0, -5, -7, "2026-04-11", "state=pre_sleep_precool"),
+                (120.0, -4, -6, "2026-04-12", "state=cycle+body_fb+bedjet_window_20min"),
+                (120.0, -5, -7, "2026-04-13", "state=cycle+body_fb"),
+            ]
+        )
+        controller._get_pg = MagicMock(return_value=fake_conn)
+
+        adjustments = SleepControllerV5._learn_from_history(controller)
+
+        assert adjustments == {"2": -24}
+        query = fake_conn.cursor_obj.query
+        assert "COALESCE(notes, '') NOT LIKE '%initial_bed_cooling%'" in query
+        assert "COALESCE(notes, '') NOT LIKE '%bedjet_window%'" in query
+        assert "COALESCE(notes, '') NOT LIKE '%pre_sleep%'" in query
+
+
 class TestBodySafety:
     def test_ambiguous_body_temp_does_not_trigger_hot_safety(self):
         controller = _make_controller()
@@ -533,10 +578,10 @@ class TestRightSideLogging:
 
 
 class TestRightRailWriteDetection:
-    def _controller(self, *, body_left=87.0, rail_streak=2, rail_flag="on", live_flag="on"):
+    def _controller(self, *, body_left=87.0, helper_state="on", live_flag="on"):
         controller = _make_controller(current_setting=-5, current_blower=41)
         controller._is_sleeping = MagicMock(return_value=True)
-        controller._state["right_hot_streak"] = rail_streak
+        controller._state["right_hot_streak"] = ctrl_module.RIGHT_HOT_RAIL_STREAK
         controller._log_override = MagicMock()
         controller._save_state = MagicMock()
         controller._read_temperature = MagicMock(return_value=70.0)
@@ -546,8 +591,8 @@ class TestRightRailWriteDetection:
         )
 
         def _read_str(entity_id):
-            if entity_id == ctrl_module.E_RIGHT_OVERHEAT_RAIL_FLAG:
-                return rail_flag
+            if entity_id == ctrl_module.E_RIGHT_RAIL_ENGAGED:
+                return helper_state
             if entity_id == ctrl_module.E_RIGHT_CONTROLLER_FLAG:
                 return live_flag
             if entity_id == ctrl_module.E_SLEEP_STAGE:
@@ -557,8 +602,8 @@ class TestRightRailWriteDetection:
         controller._read_str = MagicMock(side_effect=_read_str)
         return controller
 
-    def test_rail_force_not_classified_as_override(self):
-        controller = self._controller(body_left=87.0, rail_streak=2)
+    def test_rail_force_helper_on_not_classified_as_override(self):
+        controller = self._controller(body_left=87.0, helper_state="on")
 
         controller._on_right_setting_change(
             ctrl_module.ZONE_ENTITY_IDS["right"]["bedtime"], None, "-5", "-10", {}
@@ -566,11 +611,24 @@ class TestRightRailWriteDetection:
 
         assert "right_zone_override_until" not in controller._state
         assert controller._state["right_rail_force_seen"] is True
+        assert controller._state.get("right_rail_helper_seen_on_at") is not None
         assert controller._log_override.call_args.kwargs["action"] == "rail_force"
         assert controller._log_override.call_args.kwargs["source"] == "rail_force"
 
-    def test_user_max_cool_during_hot_still_classified_as_override(self):
-        controller = self._controller(body_left=87.0, rail_streak=0)
+    def test_rail_release_helper_on_not_classified_as_override(self):
+        controller = self._controller(body_left=83.0, helper_state="on")
+
+        controller._on_right_setting_change(
+            ctrl_module.ZONE_ENTITY_IDS["right"]["bedtime"], None, "-10", "-5", {}
+        )
+
+        assert "right_zone_override_until" not in controller._state
+        assert controller._state["right_rail_force_seen"] is False
+        assert controller._log_override.call_args.kwargs["action"] == "rail_force"
+        assert controller._log_override.call_args.kwargs["source"] == "rail_release"
+
+    def test_user_max_cool_when_helper_off_still_classified_as_override(self):
+        controller = self._controller(body_left=87.0, helper_state="off")
 
         controller._on_right_setting_change(
             ctrl_module.ZONE_ENTITY_IDS["right"]["bedtime"], None, "-5", "-10", {}
@@ -579,7 +637,6 @@ class TestRightRailWriteDetection:
         assert controller._state.get("right_zone_override_until") is not None
         assert controller._state["right_rail_force_seen"] is False
         assert controller._log_override.call_args.kwargs.get("action", "override") == "override"
-
 
 
 class TestPostgresLogging:
@@ -645,6 +702,34 @@ class TestPostgresLogging:
         assert "controller_proxy_blower=100" in notes
         assert "override_proxy_blower=75" in notes
         assert "actual_blower=33" in notes
+
+    def test_override_notes_include_last_control_state_for_excluded_windows(self):
+        cases = [
+            ("left", "initial_bed_cooling(12m)", "initial_bed_cooling"),
+            ("left", "pre_sleep_precool", "pre_sleep"),
+            ("right", "cycle+body_fb+bedjet_window_20min", "bedjet_window"),
+        ]
+        for zone, state, expected in cases:
+            controller = _make_controller()
+            controller._state[f"{zone}_last_data_source"] = state
+            fake_conn = _FakeConn()
+            controller._get_pg = MagicMock(return_value=fake_conn)
+            controller._get_cycle_num = MagicMock(return_value=1)
+
+            SleepControllerV5._log_override(
+                controller,
+                zone=zone,
+                value=-8,
+                controller_value=-10,
+                delta=2,
+                room_temp=72.0,
+                sleep_stage="unknown",
+                snapshot=_snapshot(setting=-10, blower_pct=33),
+            )
+
+            notes = fake_conn.cursor_obj.params[16]
+            assert f"state={state}" in notes
+            assert expected in notes
 
 
 class TestBedOnsetEvent:
@@ -852,7 +937,8 @@ class TestBodyFeedback:
         for body in (80.0, 82.0, 86.0):
             plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
                                       sleep_stage=None,
-                                      body_avg=body + 3, body_left=body)
+                                      body_avg=body + 3, body_left=body,
+                                      bed_occupied=True)
             assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[3], \
                 f"body_left={body} should not trigger correction"
 
@@ -881,7 +967,8 @@ class TestBodyFeedback:
         c = self._fresh_controller()
         plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
                                   sleep_stage=None,
-                                  body_avg=None, body_left=None)
+                                  body_avg=None, body_left=None,
+                                  bed_occupied=True)
         assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[3]
 
     def test_correction_does_not_exceed_zero(self):
@@ -913,7 +1000,8 @@ class TestBodyFeedback:
         plan = c._compute_setting(elapsed_min=200, room_temp=68.0,
                                   sleep_stage=None,
                                   body_avg=70.0,   # would trigger if input=body_avg
-                                  body_left=82.0)  # above target → no fire
+                                  body_left=82.0,  # above target → no fire
+                                  bed_occupied=True)
         assert plan["base_setting"] == ctrl_module.CYCLE_SETTINGS[3]
 
     def test_constants_are_locked(self):
@@ -1056,6 +1144,33 @@ class TestRightEarlySleepFeedback:
         assert entry["right_v52_proposed"] == ctrl_module.INITIAL_BED_RIGHT_SETTING
         assert entry["right_v52_reason"] == "pre_sleep_inbed"
         assert entry["right_v52_source"] == "pre_sleep_precool"
+
+    def test_right_live_write_suppressed_while_rail_helper_on(self, monkeypatch):
+        import json
+
+        c, sink = self._fresh_controller(monkeypatch)
+        c._set_l1_right = MagicMock()
+        logs = []
+        c.log = lambda msg, *args, **kwargs: logs.append(msg)
+
+        def _read_str(entity_id):
+            if entity_id in (ctrl_module.E_RIGHT_CONTROLLER_FLAG, ctrl_module.E_RIGHT_RAIL_ENGAGED):
+                return "on"
+            return "off"
+
+        c._read_str = _read_str
+        c._right_v52_shadow_tick(
+            elapsed_min=45,
+            room_temp=72.0,
+            sleep_stage="core",
+            right_snap=_snapshot(setting=-5, blower_pct=41) | {"body_left": 82.0, "body_avg": 82.0},
+        )
+
+        entry = json.loads(sink.getvalue().strip())
+        assert entry["actuation_blocked"] == "rail_engaged"
+        assert entry["actuated"] is False
+        c._set_l1_right.assert_not_called()
+        assert any("right_zone_suppressed=rail_engaged" in msg for msg in logs)
 
 
 class TestHotRailNotesFlow:
@@ -1268,6 +1383,8 @@ class TestRightZoneLiveGate:
         # Helper entity ID locked (auditor 6 said this must exist before go-live)
         assert consts.get("E_RIGHT_CONTROLLER_FLAG") == \
             "input_boolean.snug_right_controller_enabled"
+        assert consts.get("E_RIGHT_RAIL_ENGAGED") == \
+            "input_boolean.snug_right_rail_engaged"
         # Bedtime entity locked
         assert consts.get("E_BEDTIME_TEMP_RIGHT") == \
             "number.smart_topper_right_side_bedtime_temperature"

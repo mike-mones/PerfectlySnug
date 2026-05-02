@@ -273,6 +273,7 @@ def test_entity_constants_locked():
     assert consts.get("OVERHEAT_HARD_STREAK") == OVERHEAT_HARD_STREAK
     assert consts.get("BEDJET_SUPPRESS_MIN") == BEDJET_SUPPRESS_MIN
     assert consts.get("RAIL_FORCE_SETTING") == -10
+    assert consts.get("E_RAIL_ENGAGED") == "input_boolean.snug_right_rail_engaged"
 
 
 def test_release_does_not_stomp_user_change_during_engagement():
@@ -306,10 +307,86 @@ def test_release_does_not_stomp_user_change_during_engagement():
 
     app._release("body_cooled_to_81.5")
 
-    app.call_service.assert_not_called()
+    assert not any(call.args and call.args[0] == "number/set_value"
+                   for call in app.call_service.call_args_list)
+    app.call_service.assert_any_call(
+        "input_boolean/turn_off", entity_id=module.E_RAIL_ENGAGED
+    )
     assert app._state["engaged"] is False
     assert app._state["snapshot_setting"] is None
     assert any(
         "not restoring prev_setpoint=-4" in call.args[0]
         for call in app.log.call_args_list
     )
+
+
+def _load_app_module(name="right_overheat_safety_for_helper_tests"):
+    import importlib.util
+    import sys
+    import types
+    from pathlib import Path
+
+    fake_hass_module = types.ModuleType("hassapi")
+    fake_hass_module.Hass = object
+    sys.modules["hassapi"] = fake_hass_module
+
+    module_path = Path(__file__).resolve().parents[1] / "appdaemon" / "right_overheat_safety.py"
+    spec = importlib.util.spec_from_file_location(name, module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_engage_flips_helper_on_after_force_write():
+    from unittest.mock import MagicMock
+
+    module = _load_app_module("right_overheat_safety_engage_helper")
+    app = module.RightOverheatSafety.__new__(module.RightOverheatSafety)
+    app._state = {"engage_count_session": 0}
+    app._read_float = MagicMock(return_value=-5.0)
+    app.call_service = MagicMock()
+    app.log = MagicMock()
+
+    app._engage(body=87.0)
+
+    app.call_service.assert_any_call(
+        "number/set_value", entity_id=module.E_BEDTIME_R, value=module.RAIL_FORCE_SETTING
+    )
+    app.call_service.assert_any_call(
+        "input_boolean/turn_on", entity_id=module.E_RAIL_ENGAGED
+    )
+    assert app._state["engaged"] is True
+
+
+def test_release_flips_helper_off_after_restore_write():
+    from unittest.mock import MagicMock
+
+    module = _load_app_module("right_overheat_safety_release_helper")
+    app = module.RightOverheatSafety.__new__(module.RightOverheatSafety)
+    app._state = {"engaged": True, "streak": 2, "snapshot_setting": -4}
+    app._read_float = MagicMock(return_value=-10.0)
+    app.call_service = MagicMock()
+    app.log = MagicMock()
+    app._save_state = MagicMock()
+
+    app._release("body_cooled_to_81.5")
+
+    app.call_service.assert_any_call("number/set_value", entity_id=module.E_BEDTIME_R, value=-4)
+    app.call_service.assert_any_call("input_boolean/turn_off", entity_id=module.E_RAIL_ENGAGED)
+    assert app._state["engaged"] is False
+
+
+def test_initialize_forces_rail_helper_off():
+    from unittest.mock import MagicMock
+
+    module = _load_app_module("right_overheat_safety_init_helper")
+    app = module.RightOverheatSafety.__new__(module.RightOverheatSafety)
+    app._load_state = MagicMock()
+    app.run_every = MagicMock()
+    app.call_service = MagicMock()
+    app.log = MagicMock()
+
+    app.initialize()
+
+    app.call_service.assert_any_call("input_boolean/turn_off", entity_id=module.E_RAIL_ENGAGED)
+    app.run_every.assert_called_once()

@@ -190,6 +190,7 @@ BED_ONSET_CLEAR_DEBOUNCE_MIN = 10.0
 # helper to enable live control when ready.
 RIGHT_LIVE_ENABLED = True
 E_RIGHT_CONTROLLER_FLAG = "input_boolean.snug_right_controller_enabled"
+E_RIGHT_RAIL_ENGAGED = "input_boolean.snug_right_rail_engaged"
 E_BEDTIME_TEMP_RIGHT = "number.smart_topper_right_side_bedtime_temperature"
 RIGHT_MIN_CHANGE_INTERVAL_SEC = 1800   # 30 min between live writes
 RIGHT_OVERRIDE_FREEZE_MIN = 60          # 1 hour freeze after manual change
@@ -207,7 +208,7 @@ CONTROLLER_VERSION = "v5_2_rc_off"
 #   - body feedback is gated off when bed presence says the bed is unoccupied
 #   - right-zone hot-rail source is included in passive PG snapshot notes
 # See PROGRESS_REPORT.md and docs/2026-05-01_v52_patches.md for detail.
-CONTROLLER_PATCH_LEVEL = "v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude"
+CONTROLLER_PATCH_LEVEL = "v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude+learnerStateTag+railHelperIPC"
 ENABLE_LEARNING = True
 MAX_SETTING = 0
 
@@ -396,6 +397,8 @@ class SleepControllerV5(hass.Hass):
             "last_change_ts": None,     # When we last changed L1
             "last_restart_ts": None,    # Last time we auto-restarted the topper
             "last_target_blower_pct": None,
+            "left_last_data_source": None,
+            "right_last_data_source": None,
             "override_freeze_until": None,
             # NOTE 2026-05-01: override_floor removed. Manual overrides are now
             # treated as learning data points (cross-night via _learn_from_history)
@@ -409,6 +412,7 @@ class SleepControllerV5(hass.Hass):
             "right_hot_streak": 0,      # 2026-05-01: right-zone 86°F sustained counter
             "right_rail_force_seen": False,
             "right_rail_force_seen_at": None,
+            "right_rail_helper_seen_on_at": None,
             "current_cycle_num": None,
             "left_bed_onset_ts": None,
             "right_bed_onset_ts": None,
@@ -568,6 +572,7 @@ class SleepControllerV5(hass.Hass):
         room_temp_comp = plan["room_temp_comp"]
         learned_adj_pct = plan["learned_adj_pct"]
         data_source = plan["data_source"]
+        self._state["left_last_data_source"] = data_source
 
         # NOTE 2026-05-01: override floor removed. We no longer clamp `setting`
         # to a night-long floor based on the user's last manual change; manual
@@ -793,6 +798,8 @@ class SleepControllerV5(hass.Hass):
                 target_blower_pct = max(0, min(100, round(target_blower_pct)))
                 proposed = self._blower_pct_to_l1(target_blower_pct)
                 source = "cycle+body_fb"
+                if corr_reason.startswith("bedjet_window_"):
+                    source += f"+{corr_reason}"
                 if corr_reason == "body_fb_skipped_unoccupied":
                     source += "+body_fb_skipped(unoccupied)"
                 elif corr_reason == "body_fb_skipped_unknown_occupancy":
@@ -848,11 +855,22 @@ class SleepControllerV5(hass.Hass):
             actuated = False
             actuation_blocked = "off"
             ha_flag_on = self._read_str(E_RIGHT_CONTROLLER_FLAG) == "on"
+            rail_helper_on = self._read_str(E_RIGHT_RAIL_ENGAGED) == "on"
+            if rail_helper_on:
+                self._state["right_rail_helper_seen_on_at"] = now.isoformat()
+            self._state["right_last_data_source"] = source
             if RIGHT_LIVE_ENABLED and ha_flag_on:
                 if not occupied:
                     actuation_blocked = "unoccupied"
                 elif in_bedjet_window and not in_initial_bed_cooling:
                     actuation_blocked = "bedjet_window"
+                elif rail_helper_on:
+                    actuation_blocked = "rail_engaged"
+                    self.log(
+                        "right_zone_suppressed=rail_engaged: "
+                        f"helper on, holding firmware={firmware_setting}, proposed={proposed:+d}",
+                        level="WARNING",
+                    )
                 elif self._right_zone_in_freeze(now):
                     actuation_blocked = "override_freeze"
                 elif not self._right_zone_rate_ok(now):
@@ -1260,38 +1278,42 @@ class SleepControllerV5(hass.Hass):
         snapshot = self._read_zone_snapshot("right")
         body_left = snapshot.get("body_left") if isinstance(snapshot, dict) else None
         now = datetime.now()
-        rail_enabled = self._read_str(E_RIGHT_OVERHEAT_RAIL_FLAG) == "on"
-        rail_streak = self._state.get("right_hot_streak", 0)
-        rail_force = (
-            new_val <= -10
-            and body_left is not None
-            and body_left >= RIGHT_HOT_RAIL_F
-            and rail_enabled
-            and rail_streak >= RIGHT_HOT_RAIL_STREAK
+        rail_helper_on = self._read_str(E_RIGHT_RAIL_ENGAGED) == "on"
+        if rail_helper_on:
+            self._state["right_rail_helper_seen_on_at"] = now.isoformat()
+
+        rail_seen_at = (
+            self._state.get("right_rail_helper_seen_on_at")
+            or self._state.get("right_rail_force_seen_at")
         )
-        rail_seen_at = self._state.get("right_rail_force_seen_at")
         rail_seen_fresh = False
-        if self._state.get("right_rail_force_seen") and rail_seen_at:
+        if rail_seen_at:
             try:
                 rail_seen_fresh = (
                     now - datetime.fromisoformat(rail_seen_at)
                 ).total_seconds() <= RIGHT_RAIL_MAX_ENGAGE_SEC
             except (TypeError, ValueError):
                 rail_seen_fresh = False
-        rail_release = (
-            old_val <= -10
-            and new_val > -10
-            and rail_seen_fresh
-            and body_left is not None
-            and body_left <= RIGHT_RAIL_RELEASE_F + RIGHT_RAIL_RELEASE_TOLERANCE_F
-        )
+
+        helper_sanity_ok = body_left is not None and body_left >= RIGHT_HOT_RAIL_F
+        if rail_helper_on and new_val <= -10 and not helper_sanity_ok:
+            body_desc = "unknown" if body_left is None else f"{body_left:.1f}°F"
+            self.log(
+                "RIGHT RAIL helper is on but body_left sanity check failed "
+                f"(body_left={body_desc}); treating {old_val:+d} → {new_val:+d} as override",
+                level="WARNING",
+            )
+        rail_force = rail_helper_on and new_val <= -10 and helper_sanity_ok
+        rail_release = old_val <= -10 and new_val > -10 and (rail_helper_on or rail_seen_fresh)
 
         if rail_force:
             self._state["right_rail_force_seen"] = True
             self._state["right_rail_force_seen_at"] = now.isoformat()
+            self._state["right_rail_helper_seen_on_at"] = now.isoformat()
+            body_desc = f"{body_left:.1f}°F" if body_left is not None else "unknown"
             self.log(
                 f"RIGHT RAIL FORCE: {old_val:+d} → {new_val:+d} "
-                f"body_left={body_left:.1f}°F streak={rail_streak} — not a manual override",
+                f"body_left={body_desc} helper=on — not a manual override",
                 level="WARNING",
             )
             self._log_override(
@@ -1311,9 +1333,11 @@ class SleepControllerV5(hass.Hass):
         if rail_release:
             self._state["right_rail_force_seen"] = False
             self._state["right_rail_force_seen_at"] = None
+            self._state["right_rail_helper_seen_on_at"] = None
+            body_desc = f"{body_left:.1f}°F" if body_left is not None else "unknown"
             self.log(
                 f"RIGHT RAIL RELEASE: {old_val:+d} → {new_val:+d} "
-                f"body_left={body_left:.1f}°F — not a manual override",
+                f"body_left={body_desc} helper_recent=True — not a manual override",
                 level="WARNING",
             )
             self._log_override(
@@ -1333,6 +1357,7 @@ class SleepControllerV5(hass.Hass):
         if old_val <= -10 and new_val > -10:
             self._state["right_rail_force_seen"] = False
             self._state["right_rail_force_seen_at"] = None
+            self._state["right_rail_helper_seen_on_at"] = None
 
         self.log(f"RIGHT SIDE CHANGE: {old_val:+d} → {new_val:+d}")
         # Engage override freeze (only meaningful when controller is live).
@@ -2367,6 +2392,9 @@ class SleepControllerV5(hass.Hass):
                 notes += f" override_proxy_blower={self._l1_to_blower_pct(value)}"
                 if snapshot.get("blower_pct") is not None:
                     notes += f" actual_blower={round(snapshot['blower_pct'])}"
+                last_data_source = self._state.get(f"{zone}_last_data_source")
+                if last_data_source:
+                    notes += f" state={last_data_source}"
                 if zone == "left":
                     notes += " rc=off"
 
