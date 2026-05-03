@@ -27,3 +27,7 @@ docs/discomfort_labeling_metrics.json
 # Raw data audit dumps (regenerable from HA / PG)
 audit_*.json
 audit_*.csv
+
+# Generated tool outputs
+tools/backtest_results.json
+tools/simulation_results.json
