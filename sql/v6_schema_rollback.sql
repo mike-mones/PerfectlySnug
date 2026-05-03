@@ -29,3 +29,7 @@ ALTER TABLE controller_readings
     DROP COLUMN IF EXISTS regime;
 
 COMMIT;
+
+-- Rollback trigger
+DROP TRIGGER IF EXISTS trg_extract_actual_blower_pct ON controller_readings;
+DROP FUNCTION IF EXISTS extract_actual_blower_pct();

@@ -58,3 +58,29 @@ CREATE TABLE IF NOT EXISTS v6_nightly_summary (
 );
 
 COMMIT;
+
+-- 5) Trigger to auto-populate actual_blower_pct_typed on INSERT/UPDATE
+BEGIN;
+CREATE OR REPLACE FUNCTION extract_actual_blower_pct() RETURNS trigger AS $$
+DECLARE
+    m text[];
+BEGIN
+    IF NEW.actual_blower_pct_typed IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.notes IS NULL THEN
+        RETURN NEW;
+    END IF;
+    m := regexp_match(NEW.notes, 'actual_blower=([0-9]+)');
+    IF m IS NOT NULL THEN
+        NEW.actual_blower_pct_typed := m[1]::int;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_extract_actual_blower_pct ON controller_readings;
+CREATE TRIGGER trg_extract_actual_blower_pct
+    BEFORE INSERT OR UPDATE OF notes ON controller_readings
+    FOR EACH ROW EXECUTE FUNCTION extract_actual_blower_pct();
+COMMIT;
