@@ -83,6 +83,7 @@ OVERHEAT_RELEASE_F = 82.0    # release engagement when body drops below
                              # symmetry with the new engage threshold).
 RAIL_FORCE_SETTING = -10     # value forced on bedtime_temperature
 POLL_INTERVAL_SEC = 60
+HA_RESTART_RECOVERY_GRACE_SEC = 5
 
 # BedJet warm-blanket window. The wife runs a BedJet on heat for the first
 # ~30 min of sleep to pre-warm the sheets while the topper cools. The BedJet
@@ -125,6 +126,7 @@ class RightOverheatSafety(hass.Hass):
         }
         self._load_state()
         self._set_rail_helper(False)
+        self.run_in(self._recover_helper_after_restart, HA_RESTART_RECOVERY_GRACE_SEC)
 
         self.run_every(self._tick, "now", POLL_INTERVAL_SEC)
         self.log("Right-zone overheat safety rail ready "
@@ -155,6 +157,28 @@ class RightOverheatSafety(hass.Hass):
             self.call_service(service, entity_id=E_RAIL_ENGAGED)
         except Exception as e:  # pragma: no cover
             self.log(f"Rail helper update failed: {e}", level="WARNING")
+
+    def _recover_helper_after_restart(self, kwargs) -> None:
+        try:
+            current = self._read_float(E_BEDTIME_R)
+            body = self._read_float(E_BODY_LEFT_R)
+            occupied = self._read_str(E_OCCUPIED_R) == "on"
+            if current == RAIL_FORCE_SETTING and body is not None and body >= OVERHEAT_HARD_F and occupied:
+                self._state["engaged"] = True
+                self._state["streak"] = max(
+                    self._state.get("streak", 0), OVERHEAT_HARD_STREAK
+                )
+                self._state.setdefault("snapshot_setting", None)
+                self._state["engaged_at"] = self._state.get("engaged_at") or datetime.now().isoformat()
+                self._set_rail_helper(True)
+                self._save_state()
+                self.log(
+                    "Recovered right rail helper after restart: "
+                    f"setpoint={current:g}, body={body:.1f}°F, occupied={occupied}",
+                    level="WARNING",
+                )
+        except Exception as e:  # pragma: no cover
+            self.log(f"Rail helper restart recovery failed: {e}", level="WARNING")
 
     def _save_state(self) -> None:
         try:
@@ -269,9 +293,9 @@ class RightOverheatSafety(hass.Hass):
         self._state["engaged_at"] = datetime.now().isoformat()
         self._state["engage_count_session"] = self._state.get("engage_count_session", 0) + 1
 
+        self._set_rail_helper(True)
         self.call_service("number/set_value", entity_id=E_BEDTIME_R,
                           value=RAIL_FORCE_SETTING)
-        self._set_rail_helper(True)
         self.log(f"Right rail ENGAGED: body={body:.1f}°F, "
                  f"prev_setpoint={current}, forced={RAIL_FORCE_SETTING}",
                  level="WARNING")

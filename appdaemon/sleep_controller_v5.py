@@ -1174,6 +1174,7 @@ class SleepControllerV5(hass.Hass):
                 f"(room={room_temp}°F, proxy={plan['target_blower_pct']}%)"
             )
             self._set_l1(initial_setting)
+            self._state["left_last_data_source"] = "initial_setting"
             self._state["last_setting"] = initial_setting
             self._state["last_target_blower_pct"] = plan["target_blower_pct"]
             self._state["initial_setting"] = initial_setting

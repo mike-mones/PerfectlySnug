@@ -731,6 +731,30 @@ class TestPostgresLogging:
             assert f"state={state}" in notes
             assert expected in notes
 
+    def test_initial_override_after_sleep_on_is_tagged_initial_setting(self):
+        controller = _make_controller(current_setting=-6, current_blower=50)
+        controller._learn_from_history = MagicMock(return_value={})
+        controller._save_learned = MagicMock()
+        controller._ensure_responsive_cooling_off = MagicMock()
+        controller._ensure_3_level_off = MagicMock()
+        controller._read_temperature = MagicMock(return_value=72.0)
+        controller._read_zone_snapshot = MagicMock(return_value=_snapshot(setting=-6, blower_pct=50))
+        controller._read_str = MagicMock(return_value="unknown")
+        controller.get_state = MagicMock(return_value="on")
+        fake_conn = _FakeConn()
+        controller._get_pg = MagicMock(return_value=fake_conn)
+        controller._get_cycle_num = MagicMock(return_value=1)
+
+        SleepControllerV5._on_sleep_mode(
+            controller, ctrl_module.E_SLEEP_MODE, None, "off", "on", {}
+        )
+        SleepControllerV5._on_setting_change(
+            controller, ctrl_module.E_BEDTIME_TEMP, None, "-6", "-5", {}
+        )
+
+        notes = fake_conn.cursor_obj.params[16]
+        assert "state=initial_setting" in notes
+
 
 class TestBedOnsetEvent:
     def _fresh_controller(self):
