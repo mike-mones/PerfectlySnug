@@ -15,6 +15,7 @@ import argparse
 import json
 import math
 import os
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -594,10 +595,21 @@ def case_test(policy: Policy, case_id: str, df: pd.DataFrame | None = None) -> C
 
 
 def _load_policy(name: str) -> Policy:
-    if name in {"baseline", "v5.2", "v52", "v5.2_reference"}:
+    if name in {"baseline", "v5.2", "v52", "v5.2_reference", "v5_2", "v5_2_actual"}:
         return V52BaselinePolicy()
+    if name in {"v6_synth", "shadow_compare"}:
+        # Try to load the real v6 policy; fall back to v5.2 wrapper with a
+        # console warning so the harness still runs end-to-end pre-R1B.
+        try:
+            from ml.v6.policy import V6SynthPolicy  # type: ignore
+            return V6SynthPolicy()
+        except ImportError as exc:
+            print(f"[v6_eval] ml.v6.policy not available ({exc}); "
+                  f"falling back to V52 reference policy for {name}", file=sys.stderr)
+            return V52BaselinePolicy()
     if ":" not in name:
-        raise SystemExit("--policy must be 'baseline' or module.path:ClassName")
+        raise SystemExit("--policy must be 'baseline', 'v5_2_actual', 'v6_synth', "
+                         "'shadow_compare', or module.path:ClassName")
     mod_name, cls_name = name.split(":", 1)
     import importlib
     mod = importlib.import_module(mod_name)
@@ -605,14 +617,274 @@ def _load_policy(name: str) -> Policy:
     return cls()
 
 
+# ---------------------------------------------------------------------------
+# v6 R1A — §11.3 rollback-criteria metrics
+# ---------------------------------------------------------------------------
+
+V6_RIGHT_HOT_F = 86.0
+V6_LEFT_HOT_F = 84.0
+V6_COLD_F = 72.0
+
+
+def _compute_dt_min(df: pd.DataFrame) -> pd.Series:
+    return (
+        df.sort_values("ts")
+        .groupby(["zone", "night"])["ts"]
+        .diff()
+        .dt.total_seconds()
+        .div(60)
+        .clip(0.5, 30)
+        .fillna(5.0)
+    )
+
+
+def _safe_import(modpath: str):
+    try:
+        import importlib
+        return importlib.import_module(modpath), None
+    except ImportError as exc:
+        return None, str(exc)
+
+
+def compute_v6_night_metrics(df: pd.DataFrame) -> list[dict[str, Any]]:
+    """Compute per-night, per-zone §11.3 metrics from raw controller_readings.
+
+    Operates on the actual logged rows (no policy replay). Used by
+    --policy v5_2_actual to produce the historical baseline, and by
+    --policy shadow_compare as the v5.2 leg of the comparison.
+    """
+    if df.empty:
+        return []
+    work = df.copy()
+    work["ts"] = pd.to_datetime(work["ts"], utc=True)
+    if "night" not in work.columns:
+        work["night"] = (work["ts"] - pd.Timedelta(hours=18)).dt.date.astype(str)
+    work["dt_min"] = _compute_dt_min(work)
+    notes = work["notes"].fillna("").astype(str)
+    body = pd.to_numeric(work.get("body_left_f"), errors="coerce")
+
+    # §11.3 metric building blocks
+    work["above_86f"] = (body > V6_RIGHT_HOT_F).fillna(False).astype(float)
+    work["above_84f"] = (body > V6_LEFT_HOT_F).fillna(False).astype(float)
+    work["below_72f"] = (body < V6_COLD_F).fillna(False).astype(float)
+    work["is_override"] = work["action"].astype(str).str.lower().eq("override")
+    work["rail_event"] = notes.str.contains("hot_rail|right_rail_engaged|rail_force",
+                                             case=False, regex=True)
+    # divergence guard activations come from the v6 column when present;
+    # fall back to a notes scan for the same string.
+    if "divergence_steps" in work.columns:
+        work["divergence_event"] = pd.to_numeric(
+            work["divergence_steps"], errors="coerce").fillna(0).gt(0)
+    else:
+        work["divergence_event"] = notes.str.contains("divergence_guard",
+                                                       case=False, regex=False)
+
+    # Try to use the v6 right_comfort_proxy if R1B has shipped it; otherwise
+    # fall back to the in-file proxy used in the legacy harness.
+    proxy_mod, proxy_err = _safe_import("ml.v6.right_comfort_proxy")
+    if proxy_mod is not None and hasattr(proxy_mod, "score_frame"):
+        work["right_comfort_proxy"] = proxy_mod.score_frame(work)
+    else:
+        work["right_comfort_proxy"] = float("nan")  # marker: not yet computed
+
+    out: list[dict[str, Any]] = []
+    for (zone, night), g in work.groupby(["zone", "night"], sort=True):
+        rec = {
+            "night": str(night),
+            "zone": str(zone),
+            "n_rows": int(len(g)),
+            "override_count": int(g["is_override"].sum()),
+            "minutes_above_86f": float((g["above_86f"] * g["dt_min"]).sum()),
+            "minutes_above_84f": float((g["above_84f"] * g["dt_min"]).sum()),
+            "minutes_below_72f": float((g["below_72f"] * g["dt_min"]).sum()),
+            "rail_engagements": int(_count_event_starts(g["rail_event"])),
+            "divergence_guard_activations": int(_count_event_starts(g["divergence_event"])),
+            "right_comfort_proxy_min_ge_05": (
+                float((g["right_comfort_proxy"].fillna(0).ge(0.5).astype(float) * g["dt_min"]).sum())
+                if proxy_mod is not None else None
+            ),
+        }
+        # Override MAE: the absolute |override_delta| sum/count for the night.
+        ov = g[g["is_override"] & g["override_delta"].notna()]
+        rec["override_mae_steps"] = (
+            float(pd.to_numeric(ov["override_delta"], errors="coerce").abs().mean())
+            if not ov.empty else None
+        )
+        out.append(rec)
+    return out
+
+
+def _count_event_starts(series: pd.Series) -> int:
+    s = series.fillna(False).astype(bool).reset_index(drop=True)
+    if s.empty:
+        return 0
+    starts = s & ~s.shift(fill_value=False)
+    return int(starts.sum())
+
+
+def aggregate_v6_metrics(per_night: list[dict[str, Any]]) -> dict[str, Any]:
+    if not per_night:
+        return {"n_nights": 0}
+    df = pd.DataFrame(per_night)
+    by_zone: dict[str, dict[str, Any]] = {}
+    for zone, g in df.groupby("zone"):
+        by_zone[str(zone)] = {
+            "n_zone_nights": int(len(g)),
+            "override_count_total": int(g["override_count"].sum()),
+            "override_count_per_night": float(g["override_count"].mean()),
+            "override_mae_steps_avg": float(
+                pd.to_numeric(g["override_mae_steps"], errors="coerce").dropna().mean()
+            ) if g["override_mae_steps"].notna().any() else None,
+            "minutes_above_86f_per_night": float(g["minutes_above_86f"].mean()),
+            "minutes_above_84f_per_night": float(g["minutes_above_84f"].mean()),
+            "minutes_below_72f_per_night": float(g["minutes_below_72f"].mean()),
+            "rail_engagements_total": int(g["rail_engagements"].sum()),
+            "divergence_guard_activations_total": int(g["divergence_guard_activations"].sum()),
+            "right_comfort_proxy_min_ge_05_per_night": (
+                float(g["right_comfort_proxy_min_ge_05"].dropna().mean())
+                if g["right_comfort_proxy_min_ge_05"].notna().any() else None
+            ),
+        }
+    return {
+        "n_nights": int(df["night"].nunique()),
+        "zones": sorted(df["zone"].unique().tolist()),
+        "by_zone": by_zone,
+    }
+
+
+def _filter_recent_nights(df: pd.DataFrame, nights: int | None) -> pd.DataFrame:
+    if not nights or df.empty or "night" not in df.columns:
+        return df
+    keep = sorted(df["night"].dropna().unique())[-nights:]
+    return df[df["night"].isin(keep)].copy()
+
+
+def run_v6_actual(db_conn=None, since: str | None = None,
+                  nights: int | None = None) -> dict[str, Any]:
+    df = load_data(db_conn)
+    if since:
+        df = df[df["ts"] >= pd.Timestamp(since, tz="UTC").tz_convert("America/New_York")]
+    df = _filter_recent_nights(df, nights)
+    per_night = compute_v6_night_metrics(df)
+    return {
+        "policy": "v5_2_actual",
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "since": since,
+        "n_nights_requested": nights,
+        "rows": int(len(df)),
+        "per_night": per_night,
+        "aggregate": aggregate_v6_metrics(per_night),
+    }
+
+
+def _print_v6_table(result: dict[str, Any], compare: dict[str, Any] | None = None) -> None:
+    agg = result.get("aggregate", {}).get("by_zone", {})
+    print(f"\n=== v6 §11.3 metrics ({result.get('policy')}) — n_nights={result.get('aggregate',{}).get('n_nights')} ===")
+    cmp_agg = (compare or {}).get("aggregate", {}).get("by_zone", {})
+    cmp_label = compare.get("policy") if compare else None
+    cols = [
+        ("override_count_per_night", "ovr/night"),
+        ("override_mae_steps_avg", "ovr_MAE"),
+        ("minutes_above_86f_per_night", "min>86F"),
+        ("minutes_above_84f_per_night", "min>84F"),
+        ("minutes_below_72f_per_night", "min<72F"),
+        ("rail_engagements_total", "rail_eng"),
+        ("divergence_guard_activations_total", "div_guard"),
+        ("right_comfort_proxy_min_ge_05_per_night", "proxy>=0.5"),
+    ]
+    header = "zone".ljust(7) + "".join(label.rjust(13) for _, label in cols)
+    if compare:
+        header += "  | " + cmp_label.rjust(20)
+    print(header)
+    for zone in sorted(set(list(agg.keys()) + list(cmp_agg.keys()))):
+        row = zone.ljust(7)
+        for key, _ in cols:
+            v = (agg.get(zone) or {}).get(key)
+            row += (f"{v:13.2f}" if isinstance(v, (int, float)) else "         n/a")
+        if compare:
+            row += "  |"
+            for key, _ in cols:
+                v = (cmp_agg.get(zone) or {}).get(key)
+                row += (f"{v:13.2f}" if isinstance(v, (int, float)) else "         n/a")
+        print(row)
+
+
+def run_shadow_compare(db_conn=None, since: str | None = None,
+                       nights: int | None = None) -> dict[str, Any]:
+    actual = run_v6_actual(db_conn=db_conn, since=since, nights=nights)
+    v6_mod, v6_err = _safe_import("ml.v6.policy")
+    shadow: dict[str, Any]
+    if v6_mod is None:
+        shadow = {
+            "policy": "v6_synth",
+            "status": "module_not_built",
+            "import_error": v6_err,
+            "aggregate": {"n_nights": 0, "by_zone": {}},
+            "per_night": [],
+        }
+    else:  # pragma: no cover — exercised after R1B lands
+        policy = v6_mod.V6SynthPolicy()
+        df = load_data(db_conn)
+        if since:
+            df = df[df["ts"] >= pd.Timestamp(since, tz="UTC").tz_convert("America/New_York")]
+        df = _filter_recent_nights(df, nights)
+        rp = replay(policy, df)
+        per_night = compute_v6_night_metrics(rp)
+        shadow = {
+            "policy": "v6_synth",
+            "rows": int(len(rp)),
+            "per_night": per_night,
+            "aggregate": aggregate_v6_metrics(per_night),
+        }
+    return {
+        "policy": "shadow_compare",
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "since": since,
+        "n_nights_requested": nights,
+        "v5_2_actual": actual,
+        "v6_synth": shadow,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Run honest v6 PerfectlySnug policy evaluation")
-    ap.add_argument("--policy", default="baseline", help="baseline or module.path:ClassName")
+    ap.add_argument("--policy", default="baseline",
+                    help="baseline | v5_2 | v5_2_actual | v6_synth | shadow_compare | module.path:ClassName")
     ap.add_argument("--final-nights", type=int, default=3)
     ap.add_argument("--json", action="store_true", help="print full JSON result")
     ap.add_argument("--out", type=Path, help="write JSON result to this path")
     ap.add_argument("--case", choices=sorted(CASE_DEFS), help="run one case test only")
+    ap.add_argument("--since", default=None, help="ISO timestamp lower bound (e.g. 2026-04-01)")
+    ap.add_argument("--nights", type=int, default=None,
+                    help="restrict to the most recent N calendar nights")
+    ap.add_argument("--findings-dir", type=Path, default=ROOT / "findings",
+                    help="when set with --policy v5_2_actual|v6_synth|shadow_compare, "
+                         "auto-write a timestamped JSON in this directory")
     args = ap.parse_args(argv)
+
+    # New v6 R1A modes: §11.3 metrics over raw history (no replay) or via
+    # shadow_compare with the v6_synth policy when available.
+    if args.policy in {"v5_2_actual", "v5_2", "v52_actual"}:
+        result = run_v6_actual(since=args.since, nights=args.nights)
+        _print_v6_table(result)
+        out = args.out or _default_findings_path(args.findings_dir, "v5_2_actual")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(result, indent=2, default=str) + "\n")
+        print(f"wrote {out}")
+        return 0
+    if args.policy in {"shadow_compare", "v6_synth"}:
+        if args.policy == "v6_synth":
+            # Run only the v6 leg (still goes through shadow_compare so we get
+            # the actual baseline alongside for reference).
+            result = run_shadow_compare(since=args.since, nights=args.nights)
+        else:
+            result = run_shadow_compare(since=args.since, nights=args.nights)
+        _print_v6_table(result["v5_2_actual"], compare=result["v6_synth"])
+        out = args.out or _default_findings_path(args.findings_dir, args.policy)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(result, indent=2, default=str) + "\n")
+        print(f"wrote {out}")
+        return 0
 
     policy = _load_policy(args.policy)
     df = load_data()
@@ -640,6 +912,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.out:
             print(f"wrote {args.out}")
     return 0
+
+
+def _default_findings_path(findings_dir: Path, policy: str) -> Path:
+    ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+    return findings_dir / f"v6_eval_{policy}_{ts}.json"
 
 
 if __name__ == "__main__":
