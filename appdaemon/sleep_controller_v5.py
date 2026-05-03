@@ -310,10 +310,7 @@ E_PROFILE_3LEVEL_RIGHT = "switch.smart_topper_right_side_3_level_mode"
 RIGHT_HOT_RAIL_F = 86.0
 RIGHT_HOT_RAIL_STREAK = 2          # 2 consecutive ticks (≈10 min @ 5 min cycles)
 RIGHT_HOT_RAIL_BIAS = -1           # one step cooler when streak triggers
-RIGHT_RAIL_RELEASE_F = 82.0         # standalone rail releases below this body_left°F
-RIGHT_RAIL_RELEASE_TOLERANCE_F = 2.0
 RIGHT_RAIL_MAX_ENGAGE_SEC = 6 * 60 * 60
-E_RIGHT_OVERHEAT_RAIL_FLAG = "input_boolean.snug_right_overheat_rail_enabled"
 E_BODY_CENTER = "sensor.smart_topper_left_side_body_sensor_center"
 E_BODY_LEFT = "sensor.smart_topper_left_side_body_sensor_left"
 E_BODY_RIGHT = "sensor.smart_topper_left_side_body_sensor_right"
@@ -1061,7 +1058,6 @@ class SleepControllerV5(hass.Hass):
 
         hot_safety = False
         overheat_hard = False
-        body_max = body_avg  # used by both rails
         # ── Hard overheat rail: sustained body ≥90°F → force -10 ──
         # Gated behind input_boolean so user can disable instantly. Hysteresis
         # via OVERHEAT_HARD_RELEASE_F prevents single-spike chattering.

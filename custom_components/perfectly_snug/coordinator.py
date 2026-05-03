@@ -8,11 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .client import TopperClient
-from .const import (
-    CONF_ROOM_TEMP_ENTITY,
-    POLL_SETTINGS,
-    UPDATE_INTERVAL,
-)
+from .const import POLL_SETTINGS, UPDATE_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -6,7 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .client import TopperClient
-from .const import CONF_LEFT_IP, CONF_RIGHT_IP, CONF_ROOM_TEMP_ENTITY, CONF_SINGLE_ZONE, DOMAIN, PLATFORMS
+from .const import CONF_LEFT_IP, CONF_RIGHT_IP, CONF_ROOM_TEMP_ENTITY, CONF_SINGLE_ZONE, PLATFORMS
 from .coordinator import PerfectlySnugCoordinator
 
 _LOGGER = logging.getLogger(__name__)
