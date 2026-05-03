@@ -1196,6 +1196,64 @@ class TestRightEarlySleepFeedback:
         c._set_l1_right.assert_not_called()
         assert any("right_zone_suppressed=rail_engaged" in msg for msg in logs)
 
+    def test_right_sensor_invalid_idle_writes_zero(self, monkeypatch):
+        """2026-05-03 fix: empty-bed-equilibrium body sensor → write L1=0 to let firmware idle."""
+        import json
+        c, sink = self._fresh_controller(monkeypatch)
+        # body=72°F, room=70°F → delta=2°F, below 6°F threshold → sensor invalid
+        c._right_v52_shadow_tick(
+            elapsed_min=200,  # mid-sleep, past initial-bed window
+            room_temp=70.0,
+            sleep_stage="core",
+            right_snap=_snapshot(setting=-5, blower_pct=100) | {"body_left": 72.0, "body_avg": 73.0},
+        )
+        entry = json.loads(sink.getvalue().strip())
+        assert entry["right_v52_body_proposed"] == 0
+        assert entry["right_v52_proposed"] == 0
+        assert entry["right_v52_source"] == "sensor_invalid_idle"
+        assert "sensor_invalid_idle" in entry["right_v52_reason"]
+
+    def test_right_sensor_valid_at_threshold(self, monkeypatch):
+        """body - room == 6°F (boundary): sensor counts as valid → normal control."""
+        import json
+        c, sink = self._fresh_controller(monkeypatch)
+        # body=76°F, room=70°F → delta=6°F, exactly at threshold → valid
+        c._right_v52_shadow_tick(
+            elapsed_min=200,
+            room_temp=70.0,
+            sleep_stage="core",
+            right_snap=_snapshot(setting=-5, blower_pct=100) | {"body_left": 76.0, "body_avg": 76.0},
+        )
+        entry = json.loads(sink.getvalue().strip())
+        assert entry["right_v52_source"] != "sensor_invalid_idle"
+        # body 76 < target 80 → cold delta -4 → Kp_cold=0.3*4 = 1.2 → +1 warmer
+        assert entry["right_v52_correction"] == 1
+
+    def test_right_sensor_invalid_does_not_override_initial_bed_cooling(self, monkeypatch):
+        """During initial_bed_cooling, write -10 even if sensor reads 'invalid' (empty-bed pattern at bed-onset)."""
+        import json
+        from datetime import datetime as _dt, timedelta as _td
+
+        c, sink = self._fresh_controller(monkeypatch)
+        c._state["right_zone_occupied_since"] = (_dt.now() - _td(minutes=10)).isoformat()
+        c._right_v52_shadow_tick(
+            elapsed_min=10,
+            room_temp=70.0,
+            sleep_stage="core",
+            right_snap=_snapshot(setting=-8, blower_pct=75) | {"body_left": 72.0, "body_avg": 73.0},
+        )
+        entry = json.loads(sink.getvalue().strip())
+        assert entry["in_initial_bed_cooling"] is True
+        assert entry["right_v52_proposed"] == ctrl_module.INITIAL_BED_RIGHT_SETTING
+        # Initial-bed-cooling source wins, not sensor_invalid_idle
+        assert entry["right_v52_source"] == "initial_bed_cooling"
+
+    def test_right_sensor_invalid_constants_locked(self):
+        assert ctrl_module.RIGHT_BODY_SENSOR_VALID_DELTA_F == 6.0
+        assert ctrl_module.RIGHT_SENSOR_INVALID_IDLE_SETTING == 0
+        # Patch level token must include the new gate
+        assert "+rightSensorValidGate" in ctrl_module.CONTROLLER_PATCH_LEVEL
+
 
 class TestHotRailNotesFlow:
     def test_hot_rail_appears_in_passive_snapshot_notes(self, monkeypatch):

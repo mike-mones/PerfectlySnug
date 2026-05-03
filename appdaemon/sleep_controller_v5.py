@@ -163,6 +163,19 @@ RIGHT_BEDJET_WINDOW_MIN = 30.0  # match right_overheat_safety.BEDJET_SUPPRESS_MI
                                  # during this window.
 RIGHT_SHADOW_LOG_PATH = "/config/snug_right_v52_shadow.jsonl"
 
+# 2026-05-03 morning: wife was cold all night because the firmware ran blower
+# at 100% even as v5.2 walked the dial warmer. Root cause: body_left was
+# reading 71-77°F (only +3-6°F above room) — the empty-bed equilibrium
+# pattern, not actual body temp. v5.2 saw "cold body" and applied warmer
+# bias; the firmware's PID stayed saturated regardless. Fix: when the body
+# sensor is unreliable (delta from room < threshold), skip cooling proposals
+# entirely and write L1=0 — at L1=0 the firmware setpoint is ~91°F, body
+# stays well below it, so the firmware idles and the blower drops. The
+# right_overheat_safety rail still engages independently if body actually
+# does climb to ≥86°F.
+RIGHT_BODY_SENSOR_VALID_DELTA_F = 6.0   # body must be >= room + 6°F for control input to count
+RIGHT_SENSOR_INVALID_IDLE_SETTING = 0   # let firmware idle (no cooling) when sensor unreliable
+
 # Apple Health can report pre-sleep bed occupancy before actual sleep onset.
 # Preserve intentional pre-cooling during those explicit not-yet-asleep states;
 # once the stage is asleep/deep/core/rem (or unknown elapsed-sleep control), the
@@ -208,7 +221,7 @@ CONTROLLER_VERSION = "v5_2_rc_off"
 #   - body feedback is gated off when bed presence says the bed is unoccupied
 #   - right-zone hot-rail source is included in passive PG snapshot notes
 # See PROGRESS_REPORT.md and docs/2026-05-01_v52_patches.md for detail.
-CONTROLLER_PATCH_LEVEL = "v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude+learnerStateTag+railHelperIPC"
+CONTROLLER_PATCH_LEVEL = "v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude+learnerStateTag+railHelperIPC+rightSensorValidGate"
 ENABLE_LEARNING = True
 MAX_SETTING = 0
 
@@ -781,6 +794,33 @@ class SleepControllerV5(hass.Hass):
             else:
                 body_proposed = max(-10, min(MAX_SETTING, base + correction))
 
+            # ── Body-sensor-validity gate (2026-05-03) ──────────────────────
+            # If body_left is reading near room+ambient (the empty-bed
+            # equilibrium pattern: +3-4°F per agent.md, sometimes up to 6°F
+            # with sheets), the sensor isn't actually measuring her body —
+            # she's sleeping off-center, wrapped in covers, or otherwise
+            # not in good thermal contact. Trusting body_fb in that state
+            # walks the dial in the wrong direction AND keeps the firmware
+            # PID saturated. Override to L1=0 (firmware idles, blower drops).
+            # The right_overheat_safety rail (separate app) still engages
+            # at body_left ≥ 86°F regardless; this gate only governs the
+            # routine v5.2 right-zone control.
+            #
+            # Skipped during initial_bed_cooling (force -10), pre_sleep
+            # (force -10), and bedjet_window (intentional warming).
+            sensor_invalid = False
+            if (not in_initial_bed_cooling and not pre_sleep_stage
+                    and not in_bedjet_window
+                    and body_skin is not None and room_temp is not None):
+                delta_above_room = body_skin - room_temp
+                if delta_above_room < RIGHT_BODY_SENSOR_VALID_DELTA_F:
+                    sensor_invalid = True
+                    body_proposed = RIGHT_SENSOR_INVALID_IDLE_SETTING
+                    corr_reason = (
+                        f"sensor_invalid_idle(body{body_skin:.1f}-room{room_temp:.1f}"
+                        f"={delta_above_room:.1f}<{RIGHT_BODY_SENSOR_VALID_DELTA_F:.1f})"
+                    )
+
             # Wife/right-side room compensation is in blower-proxy space, like
             # the left controller, but deliberately hot-only for now.  A room
             # below the shared 72°F reference yields 0, so it cannot warm her
@@ -790,6 +830,10 @@ class SleepControllerV5(hass.Hass):
                 right_room_comp = 0
                 proposed = INITIAL_BED_RIGHT_SETTING
                 source = "initial_bed_cooling" if in_initial_bed_cooling else "pre_sleep_precool"
+            elif sensor_invalid:
+                right_room_comp = 0
+                proposed = RIGHT_SENSOR_INVALID_IDLE_SETTING
+                source = f"sensor_invalid_idle"
             else:
                 target_blower_pct = self._l1_to_blower_pct(body_proposed) + right_room_comp
                 target_blower_pct = max(0, min(100, round(target_blower_pct)))
