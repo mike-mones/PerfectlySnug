@@ -1024,3 +1024,186 @@ Additional cleanup commits from the same pass:
   untracked generated JSON outputs.
 - `b29ef3f` — removed unused constants/imports and pinned those cleanup choices
   with hygiene tests.
+
+---
+
+## 14. 2026-05-02 night — v6 shadow scaffold landed
+
+### 14.1 Decision context
+
+User explicitly asked for a v6 push (the multi-feature ML controller per
+`docs/proposals/2026-05-01_recommendation.md`) and stepped away to sleep with
+full autonomy granted. Goal: land all v6 prereqs in **shadow-only** mode while
+v5.2 keeps actuating both zones, so the morning report and PG telemetry would
+be unaffected.
+
+### 14.2 What landed
+
+- 5 rounds of fleet work across diversified models (Opus 4.7-high, Opus 4.6,
+  GPT 5.5):
+  - R1A: PG schema migrations + `firmware_cap_fit` + `v6_eval` harness.
+  - R1B: `ml/v6/` modules — regime classifier, firmware plant, comfort proxy,
+    residual head.
+  - R1C: HA helpers, writer-owner leases, recorder include, shadow-logging
+    persistence automation (lives in the HomeAssistant repo).
+  - R2A: AppDaemon glue — `v6_pressure_logger`, `safety_actuator`,
+    `sleep_controller_v6` (shadow-only).
+  - R2B: integration tests, golden case fixtures, rollback gate suite,
+    `ml/v6/policy.py`.
+- Round 4: 3 audit agents in parallel (code review, system red-team, test
+  coverage) targeting different failure modes from different angles.
+- Round 4 follow-up: 6 audit-flagged fixes shipped post-audit.
+- **Totals:** 373 tests passing (up from 138 at session start), 7 PerfectlySnug
+  commits + 1 HomeAssistant commit, all pushed to `origin/main`.
+
+### 14.3 Live state (verified 2026-05-02 23:46 EDT)
+
+**AppDaemon:**
+
+```
+v6_pressure_logger ready — 60s movement aggregates → controller_pressure_movement
+  (gated by input_boolean.snug_v6_shadow_logging)
+```
+
+`sleep_controller` (v5.2) banner unchanged, still owns both dials:
+
+```
+v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+
+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+railRestoreGuard+
+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude+learnerStateTag+
+railHelperIPC
+```
+
+**Postgres** (`192.168.0.3:5432/sleepdata`):
+
+- `controller_pressure_movement` accumulating both zones at ~1 row/min
+  (verified: `left=15`, `right=16` rows in the first ~26 minutes;
+  most recent row 2026-05-02 23:45:59 EDT).
+- `controller_readings` has all **15 new v6 columns** present:
+  `regime, regime_reason, residual, residual_n_support, residual_lcb,
+  divergence_steps, plant_predicted_setpoint_f, bedjet_active,
+  movement_density_15m, post_bedjet_min, mins_since_onset, l_active_dial,
+  three_level_off, right_rail_engaged, actual_blower_pct_typed`.
+- 2 new tables: `controller_pressure_movement`, `v6_nightly_summary`.
+- New PG trigger `extract_actual_blower_pct` auto-populates
+  `actual_blower_pct_typed` from `notes` on every INSERT/UPDATE
+  (commit `3d42750`).
+- Backfill ran clean: 3248 historical rows now have `actual_blower_pct_typed`
+  populated.
+
+**HA helpers** (verified live state):
+
+| Helper | State |
+|---|---|
+| `input_boolean.snug_v6_enabled` | off |
+| `input_boolean.snug_v6_left_live` | off |
+| `input_boolean.snug_v6_right_live` | off |
+| `input_boolean.snug_v6_residual_enabled` | off |
+| `input_boolean.snug_v6_shadow_logging` | **on** |
+| `input_boolean.snug_right_controller_enabled` | on (v5.2 owns right) |
+| `input_boolean.snug_right_rail_engaged` | off |
+
+Plus new `input_text` helpers: `snug_writer_owner_left = "v5"`,
+`snug_writer_owner_right = "v5"`, and `snug_v6_residual_model_path`
+(default path under `/addon_configs/a0d7b954_appdaemon/data/`).
+
+**v6 controller status:** `sleep_controller_v6.py` is committed but **NOT
+loaded in `appdaemon/apps.yaml`** — block is commented out with a TODO,
+deferred until the Canary-L day-8 phase per proposal §11.2.
+
+### 14.4 Audit findings + post-audit fixes
+
+Three audits ran in parallel against the integrated scaffold. Result files in
+session workspace `audit/`:
+
+#### R4A — Code review (Opus 4.7-high) — `v6-r4a-codereview.result.md`
+3 CRITICAL, 8 NIT, 6 file-for-later:
+- **C1** Cap table loader format mismatch — `firmware_cap_fit.py` writes
+  `{"table": [...]}` but `FirmwarePlant` reads `{"anchors": [...]}`; loader
+  silently fell back to 3 hard-coded anchors. **FIXED.**
+- **C2** Bayesian Ridge α/λ swap in LCB σ formula — `noise_var = 1/lambda`
+  instead of `1/alpha`. Could mis-scale σ by 1000×. **FIXED.**
+- **C3** Dead-man timer = tick interval (300s) — first slow tick locks v6 out
+  for the night. **FIXED** (timer now 720s + heartbeat path; see Fix 3).
+
+#### R4B — System red-team (Opus 4.6) — `v6-r4b-redteam.result.md`
+**Verdict: 🟡 YELLOW** (safe for shadow tonight; CRITICAL for Canary-L).
+4 CRITICAL, 4 HIGH, 5 MEDIUM:
+- **C1** Dead-man false-fires on hold/no-change — same root cause as R4A C3.
+  **FIXED** with `heartbeat()` API on `SafetyActuator`, called every tick.
+- **C2** Rate limiter blocks instead of clamps; legitimate regime transitions
+  swallowed. **FIXED** — clamps toward target, bypassed entirely for
+  `INITIAL_COOL`, `SAFETY_YIELD`, `PRE_BED`, `OVERHEAT_HARD` per proposal §7.
+- **C3** CAS lease is one-sided (v5.2 doesn't participate). **DOCUMENTED**
+  as advisory; mitigated by `right_overheat_safety` setting
+  `snug_right_rail_engaged` before any write.
+- **C4** `COLD_ROOM_COMP` missing `body_trend_15m` guard — could warm during
+  rising body temperature. **FIXED** — accepts optional `body_trend_15m`,
+  blocks when ≥0.20°F/15min; also added 60°F lower bound on room.
+
+HIGH issues remain open (see §14.5): override detection wiring (H1),
+WAKE_COOL sustained-duration guard (H2), residual head dim validation (H3).
+H4 (entity ID mismatch) was caught in `ffb2f2b` before R4B even ran.
+
+#### R4C — Test coverage audit (GPT 5.5) — `v6-r4c-testaudit.result.md`
+4 CRITICAL, 7 MEDIUM, 2 NIT:
+- **C1** No production rollback gate checker — only a test fixture exists.
+  `v6_eval.py` does not consume `RollbackGateChecker`. **DEFERRED** to next
+  session (must land before Canary-L).
+- **C2** Golden cases A/B/C are circular (synthesized from spec, asserted
+  against spec). **DEFERRED** — backfill ≥1 case from real PG once
+  shadow data accumulates.
+- **C3** Shadow controller tests don't verify v6 column semantics.
+  **DEFERRED** — light-touch coverage only.
+- **C4** Positive-target writes aren't tested as rollback-trigger paths.
+  **DEFERRED.**
+
+**Total fixes shipped post-audit: 6** (commit `a7c90b9`):
+1. Cap table loader format
+2. Bayesian Ridge α/λ swap (+ docstring + comment fixes)
+3. Dead-man timer (12-min default + heartbeat + lockout-clear)
+4. Rate limiter clamps instead of blocks (+ regime bypass)
+5. `COLD_ROOM_COMP` body_trend guard + 60°F room lower bound
+6. `residual_lcb` meta key (shadow column will now actually populate)
+
+Test count went 356 → **373** to lock these fixes (+17 new tests).
+
+### 14.5 What still needs to happen before Canary-L (proposal §11.2 night 8+)
+
+See `docs/NEXT_STEPS.md §V6` for the full list. Headline blockers:
+
+- **7 nights of clean shadow data first** (per proposal Shadow-A criteria).
+- **Production `RollbackGateChecker`** wrapping `v6_nightly_summary` queries
+  (currently only a test fixture exists — R4C C1).
+- **Override detection wiring** in `sleep_controller_v6` — currently always
+  passes `override_freeze_active=False`, so shadow data will never show
+  `OVERRIDE` regime (R4B H1).
+- **WAKE_COOL sustained-duration guard** — single brief wake currently fires
+  it (R4B H2).
+- **Residual head array-dim validation** in `_load_from_path` (R4B H3).
+- **BedJet warm regime** — confirm BedJet doesn't bleed into left zone
+  sensors (R4B M2; mostly safe today because INITIAL_COOL forces -10 on
+  left during first 30 min anyway).
+- **Backfill ≥1 golden case** from real PG snapshot (R4C C2).
+
+### 14.6 What to expect in PG tomorrow morning
+
+- `controller_pressure_movement` should have **~1440 rows per zone** over 24h
+  (1 per minute). If much less, the pressure logger has stopped or
+  `snug_v6_shadow_logging` got toggled off — investigate logs.
+- `controller_readings` new columns will all be NULL for v5.2 rows
+  (v5.2 doesn't write the v6 columns) **except** `actual_blower_pct_typed`,
+  which the new trigger auto-populates from the `notes` field.
+- **No v6 shadow rows yet** — the shadow controller isn't loaded. Shadow-row
+  generation is the day-2 task once the pressure logger is verified
+  collecting cleanly.
+
+### 14.7 Where to start next session
+
+1. Read this section (`§14`), then `docs/NEXT_STEPS.md §V6`.
+2. Run `tools/v6_eval.py --policy v5_2_actual --nights 1` for last night's
+   metrics (right-zone min>86F is the headline gate to beat).
+3. Check `controller_pressure_movement` row count for both zones; investigate
+   if either zone has dramatically fewer rows than the other.
+4. Decide: extend shadow phase, load `sleep_controller_v6` for shadow-row
+   generation, or address any newly-discovered findings before promoting.

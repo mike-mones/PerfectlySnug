@@ -138,48 +138,45 @@ replay on any future patch.
 
 From `docs/proposals/2026-05-01_recommendation.md`:
 
-### 2.A Composite right-zone comfort proxy
+### 2.A Composite right-zone comfort proxy — SCAFFOLD DONE
 
-Synth §5. Combines body distribution percentiles, body_30m_sd
-(restlessness), sleep-stage normality (from Apple Health), movement
-density (from bed-presence pressure %). Wife's override-absence trap
-mitigation. Target metric:
-`right_comfort_proxy.minutes_score≥0.5 ≤ 70` (vs v5.2's 115).
+`ml/v6/right_comfort_proxy.py` shipped 2026-05-02 night (commit `e6d6a53`,
+R1B). Combines body distribution percentiles, body volatility, sleep-stage
+normality, movement density. Target metric remains
+`right_comfort_proxy.minutes_score≥0.5 ≤ 70`. **Open:** wire the proxy as a
+gating metric once Canary-R lands; today it's exercised in tests + shadow
+column only.
 
-### 2.B Movement-density logger
+### 2.B Movement-density logger — DONE
 
-New AppDaemon app `appdaemon/v6_pressure_logger.py` + new PG table
-`controller_pressure_movement`. Reads
-`sensor.bed_presence_2bcab8_left_pressure` /
-`sensor.bed_presence_2bcab8_right_pressure` and computes a per-cycle
-movement intensity. Becomes the leading indicator for thermal
-discomfort (memory: top quartile predicts 2.4× the override rate).
+`appdaemon/v6_pressure_logger.py` + table `controller_pressure_movement`
+shipped 2026-05-02 night (commits `05ad059` deploy + `ffb2f2b` entity-ID fix).
+Live and writing 60s aggregates for both zones. Verified in PG.
 
-### 2.C Bounded learned residual head (LEFT zone)
+### 2.C Bounded learned residual head (LEFT zone) — SCAFFOLD DONE
 
-`ml/v6/residual_head.py`. BayesianRidge + tiny GP under LCB. Residual
-constrained to ±1 step from the regime classifier output. Trained
-nightly on accumulated overrides + comfort proxy. Deployed only after
-≥14 nights of shadow-mode logging confirms it does not regress.
-Specifically NOT deployed on the right zone until ≥10 right-zone
-controlled nights exist.
+`ml/v6/residual_head.py` shipped 2026-05-02 night (commit `e6d6a53`).
+BayesianRidge + LCB gating implemented; α/λ semantics fixed in
+post-audit commit `a7c90b9`. **Still gated off** by
+`input_boolean.snug_v6_residual_enabled` (default off). Will not be
+enabled until ≥14 nights of clean shadow data. Right-zone residual
+remains permanently off until ≥10 right-zone controlled nights exist.
+Open follow-up: array-dim validation in `_load_from_path` (R4B H3).
 
-### 2.D Regime classifier proper
+### 2.D Regime classifier proper — DONE
 
-The current patch set keeps v5.2's monolithic decision logic. The synth
-recommendation calls for a deterministic regime classifier with
-priority-ordered states (`pre_bed`, `initial_cool`, `bedjet_warm`,
-`safety_yield`, `override_respect`, `cold_room_comp`, `wake_cool`,
-`normal_cool`). This is the structural change that unlocks per-regime
-tuning + transparent failure mode debugging.
+`ml/v6/regime.py` shipped 2026-05-02 night (commit `e6d6a53`) with the
+8 priority-ordered regimes from the proposal. `COLD_ROOM_COMP`
+`body_trend` guard + 60°F lower bound added in post-audit commit
+`a7c90b9`.
 
-### 2.E `apps.yaml` wiring + new HA helpers
+### 2.E `apps.yaml` wiring + new HA helpers — PARTIAL
 
-The synth wrapper requires `input_boolean.snug_v6_enabled`,
-`snug_v6_residual_enabled`, `snug_right_rail_engaged`,
-`snug_v6_left_live`, `snug_v6_right_live`, plus `input_text` writer-lease
-fields. Each addition is one entry in
-`ha-config/configuration.yaml` followed by `ha core restart`.
+HA helpers all in (`abc1aa2`, R1C): `snug_v6_enabled`, `snug_v6_left_live`,
+`snug_v6_right_live`, `snug_v6_residual_enabled`, `snug_v6_shadow_logging`
+(default ON), `snug_writer_owner_left/right`, `snug_v6_residual_model_path`.
+`apps.yaml` now loads `v6_pressure_logger`; `sleep_controller_v6:` is
+present-but-commented-out, awaiting Canary-L per §V6 below.
 
 ---
 
@@ -240,3 +237,70 @@ by tonight's deploy (no override has a floor anymore).
 | HA host | `root@192.168.0.106` | AppDaemon configs at `/addon_configs/a0d7b954_appdaemon/apps/` |
 | PG | `192.168.0.3:5432/sleepdata` user=sleepsync | `controller_readings`, `nightly_summary`, `sleep_segments` |
 | Bedroom room sensor | `sensor.bedroom_temperature_sensor_temperature` (Aqara) | NOT topper ambient (5-10°F high), NOT dehumidifier (stale memory entries reference this — they're outdated) |
+
+
+---
+
+## V6 — Phased Rollout Plan
+
+> **Read first:** `docs/PROGRESS_REPORT.md §14` (what landed 2026-05-02 night)
+> and `docs/proposals/2026-05-01_recommendation.md §11.2` (phased rollout).
+
+### Phase status
+
+| Phase | State | Started | Notes |
+|---|---|---|---|
+| **Shadow-A** (nights 1-7) | 🟡 IN PROGRESS | 2026-05-02 evening | Pressure logger live; shadow controller scaffold deployed but **not loaded in apps.yaml**. v5.2 still owns both dials. |
+| **Canary-L** (left live, residual off) | ⏸ DEFERRED | — | Pre-canary blockers below. |
+| **Canary-L + residual** | ⏸ DEFERRED | — | Requires ≥14 nights of clean shadow data. |
+| **Shadow-R** | ⏸ DEFERRED | — | Per §11.2, after Canary-L stable. |
+| **Canary-R** | ⏸ DEFERRED | — | Requires ≥10 right-zone controlled nights of data. |
+| **Steady-state** | ⏸ DEFERRED | — | Per §11.2. |
+
+### Shadow-A acceptance criteria (proposal §11.2)
+
+- ≥6 nights of coverage with `controller_pressure_movement` ≥ ~1300 rows/zone/night.
+- Regime distribution sanity check (NORMAL_COOL dominant; INITIAL_COOL only
+  during first 30 min; COLD_ROOM_COMP only when room < 70°F).
+- No v5.2 regressions in the morning report.
+
+### Pre-Canary-L blockers (must clear before flipping any `snug_v6_*_live`)
+
+- [ ] **WAKE_COOL sustained-duration guard** (R4B H2). Single 5-min "awake"
+      stage currently fires the regime; need ≥10-min sustained or
+      `body_trend_15m > 0.20°F/15min`.
+- [ ] **Production `RollbackGateChecker`** (R4C C1). Test fixture exists; need
+      a tool that runs against `v6_nightly_summary` after each shadow night and
+      logs PASS/FAIL on each of the 7 §11.3 gates.
+- [ ] **Override detection wiring** in `sleep_controller_v6._tick_zone`
+      (R4B H1). Currently hardcodes `override_freeze_active=False`, so shadow
+      data will never reflect what Canary-L would actually do.
+- [ ] **Residual head array-dim validation** in
+      `ResidualHead._load_from_path` (R4B H3). Validate
+      `len(coefficients) == len(scaler_mean) == len(FEATURE_NAMES)` before
+      setting `_loaded=True`.
+- [ ] **Backfill ≥1 golden-case fixture** from real PG (R4C C2). Current 4
+      cases are spec-synthesized.
+- [ ] **Load `sleep_controller_v6`** in `appdaemon/apps.yaml` (currently
+      commented out) once the above are in. Even loaded, all live-write
+      switches default off — it will run shadow-only until manually armed.
+
+### Open user decisions seeded with defaults (proposal §14)
+
+The overnight build seeded reasonable defaults so work could proceed.
+Each can be overridden — change the corresponding constant in
+`ml/v6/regime.py::DEFAULT_CONFIG` (or `RegimeConfig`) or the helper
+defaults in `ha-config/configuration.yaml`, then redeploy.
+
+| # | Question | Default seeded | Where to change |
+|---|---|---|---|
+| 1 | Right-zone has 30+ controlled nights of runway? | **YES** — proceed with phased rollout | n/a (decision only) |
+| 2 | Cold-room A/B night to disambiguate body_fb vs cold-room comp? | **DEFER** — flagged as user decision | n/a |
+| 3 | BedJet entity name | `climate.bedjet_shar` (verified live tonight, currently in `heat`) | `regime.py` BedJet helper / per-app config |
+| 4 | `RIGHT_PROACTIVE_HOT_F` (proactive cool threshold) | **84.0 °F** (between v5.2's 86°F rail and proposal's proactive 84°F) | `RegimeConfig` |
+| 5 | All-night cold-override floor on right zone? | **NO** — preserve user's 2026-05-01 floor removal | controller logic |
+| 6 | Wake_cool warm-bias removed? | **YES** — cool-bias on right when body_hot > 84°F | `RegimeConfig` / `policy.py` |
+| 7 | Bayesian Ridge ~1MB model state OK? | **YES** — no objection | n/a (architecture) |
+| 8 | 3-level mode forcibly OFF? | **YES** — keeps v5.2's watchdog behavior | `_ensure_3_level_off` (v5.2) and shadow record in v6 |
+
+---
