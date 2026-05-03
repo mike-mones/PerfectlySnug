@@ -1,0 +1,48 @@
+{
+  "_meta": {
+    "case": "C_warm",
+    "description": "LEFT warm AM at 06:56 on 2026-04-30",
+    "source": "synthesized from proposal \u00a79 table",
+    "zone": "left",
+    "trigger_time": "2026-04-30T06:56:00-04:00"
+  },
+  "zone": "left",
+  "elapsed_min": 420.0,
+  "mins_since_onset": 420.0,
+  "post_bedjet_min": null,
+  "sleep_stage": "awake",
+  "bed_occupied": true,
+  "room_f": 70.5,
+  "body_skin_f": 84.0,
+  "body_hot_f": 84.0,
+  "body_avg_f": 82.0,
+  "body_center_f": null,
+  "override_freeze_active": false,
+  "right_rail_engaged": false,
+  "pre_sleep_active": false,
+  "three_level_off": true,
+  "movement_density_15m": 0.03,
+  "current_setting": -6,
+  "v52_setting": -6,
+  "body_trend_15m": 0.3,
+  "history": [
+    {
+      "ts": "2026-04-30T06:40:00-04:00",
+      "setting": -6,
+      "room_f": 70.4,
+      "body_skin_f": 83.5
+    },
+    {
+      "ts": "2026-04-30T06:45:00-04:00",
+      "setting": -6,
+      "room_f": 70.4,
+      "body_skin_f": 83.8
+    },
+    {
+      "ts": "2026-04-30T06:50:00-04:00",
+      "setting": -6,
+      "room_f": 70.5,
+      "body_skin_f": 84.0
+    }
+  ]
+}

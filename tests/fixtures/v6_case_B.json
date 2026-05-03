@@ -1,0 +1,48 @@
+{
+  "_meta": {
+    "case": "B",
+    "description": "RIGHT under-cooled override at 03:25 on 2026-05-01",
+    "source": "synthesized from proposal \u00a79 table",
+    "zone": "right",
+    "trigger_time": "2026-05-01T03:25:00-04:00"
+  },
+  "zone": "right",
+  "elapsed_min": 245.0,
+  "mins_since_onset": 245.0,
+  "post_bedjet_min": 260.0,
+  "sleep_stage": "deep",
+  "bed_occupied": true,
+  "room_f": 68.3,
+  "body_skin_f": 73.1,
+  "body_hot_f": 77.0,
+  "body_avg_f": 75.0,
+  "body_center_f": 77.0,
+  "override_freeze_active": false,
+  "right_rail_engaged": false,
+  "pre_sleep_active": false,
+  "three_level_off": true,
+  "movement_density_15m": 0.12,
+  "current_setting": -3,
+  "v52_setting": -3,
+  "body_trend_15m": 0.1,
+  "history": [
+    {
+      "ts": "2026-05-01T03:10:00-04:00",
+      "setting": -3,
+      "room_f": 68.3,
+      "body_skin_f": 73.4
+    },
+    {
+      "ts": "2026-05-01T03:15:00-04:00",
+      "setting": -3,
+      "room_f": 68.3,
+      "body_skin_f": 73.2
+    },
+    {
+      "ts": "2026-05-01T03:20:00-04:00",
+      "setting": -3,
+      "room_f": 68.3,
+      "body_skin_f": 73.1
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "_meta": {
+    "case": "C_cold",
+    "description": "LEFT cold mid-night at 04:27 on 2026-04-30",
+    "source": "synthesized from proposal \u00a79 table",
+    "zone": "left",
+    "trigger_time": "2026-04-30T04:27:00-04:00"
+  },
+  "zone": "left",
+  "elapsed_min": 270.0,
+  "mins_since_onset": 270.0,
+  "post_bedjet_min": null,
+  "sleep_stage": "rem",
+  "bed_occupied": true,
+  "room_f": 68.5,
+  "body_skin_f": 76.0,
+  "body_hot_f": 76.0,
+  "body_avg_f": 75.8,
+  "body_center_f": null,
+  "override_freeze_active": false,
+  "right_rail_engaged": false,
+  "pre_sleep_active": false,
+  "three_level_off": true,
+  "movement_density_15m": 0.01,
+  "current_setting": -5,
+  "v52_setting": -2,
+  "body_trend_15m": 0.0,
+  "history": [
+    {
+      "ts": "2026-04-30T04:15:00-04:00",
+      "setting": -5,
+      "room_f": 68.6,
+      "body_skin_f": 76.1
+    },
+    {
+      "ts": "2026-04-30T04:20:00-04:00",
+      "setting": -5,
+      "room_f": 68.5,
+      "body_skin_f": 76.0
+    },
+    {
+      "ts": "2026-04-30T04:25:00-04:00",
+      "setting": -5,
+      "room_f": 68.5,
+      "body_skin_f": 76.0
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "_meta": {
+    "case": "A",
+    "description": "LEFT cold-cluster 01:37\u201302:05 on 2026-05-01",
+    "source": "synthesized from proposal \u00a79 table",
+    "zone": "left",
+    "trigger_time": "2026-05-01T01:37:00-04:00"
+  },
+  "zone": "left",
+  "elapsed_min": 120.0,
+  "mins_since_onset": 120.0,
+  "post_bedjet_min": null,
+  "sleep_stage": "light",
+  "bed_occupied": true,
+  "room_f": 67.4,
+  "body_skin_f": 76.1,
+  "body_hot_f": 76.1,
+  "body_avg_f": 75.9,
+  "body_center_f": null,
+  "override_freeze_active": false,
+  "right_rail_engaged": false,
+  "pre_sleep_active": false,
+  "three_level_off": true,
+  "movement_density_15m": 0.02,
+  "current_setting": -10,
+  "v52_setting": -10,
+  "body_trend_15m": 0.0,
+  "history": [
+    {
+      "ts": "2026-05-01T01:20:00-04:00",
+      "setting": -10,
+      "room_f": 67.5,
+      "body_skin_f": 76.3
+    },
+    {
+      "ts": "2026-05-01T01:25:00-04:00",
+      "setting": -10,
+      "room_f": 67.5,
+      "body_skin_f": 76.2
+    },
+    {
+      "ts": "2026-05-01T01:30:00-04:00",
+      "setting": -10,
+      "room_f": 67.4,
+      "body_skin_f": 76.1
+    },
+    {
+      "ts": "2026-05-01T01:35:00-04:00",
+      "setting": -10,
+      "room_f": 67.4,
+      "body_skin_f": 76.1
+    }
+  ]
+}

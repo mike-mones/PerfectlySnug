@@ -163,14 +163,29 @@ def test_cli_shadow_compare_handles_missing_v6(monkeypatch, tmp_path):
     monkeypatch.setattr(v6_eval, "load_data", lambda db_conn=None: fixture)
 
     # Force ml.v6.policy import to fail so the v6 leg becomes a stub.
+    original_safe_import = v6_eval._safe_import
+
+    def patched_safe_import(modpath):
+        if "v6.policy" in modpath:
+            return None, "not built"
+        return original_safe_import(modpath)
+
+    monkeypatch.setattr(v6_eval, "_safe_import", patched_safe_import)
+
     real_import = __import__
 
     def fake_import(name, *a, **kw):
-        if name == "ml.v6.policy":
+        if "ml.v6.policy" in name:
             raise ImportError("not built")
         return real_import(name, *a, **kw)
 
     monkeypatch.setattr("builtins.__import__", fake_import)
+    # Also remove from sys.modules cache
+    import sys as _sys
+    for key in list(_sys.modules.keys()):
+        if "ml.v6.policy" in key:
+            monkeypatch.delitem(_sys.modules, key)
+
     out = tmp_path / "cmp.json"
     rc = v6_eval.main(["--policy", "shadow_compare", "--out", str(out),
                        "--findings-dir", str(tmp_path)])
