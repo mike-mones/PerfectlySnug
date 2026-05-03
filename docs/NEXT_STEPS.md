@@ -1,6 +1,6 @@
-# PerfectlySnug — NEXT STEPS (post 2026-05-01 evening deploy)
+# PerfectlySnug — NEXT STEPS (v5.2 `+railHelperIPC` red-team follow-up)
 
-> **READ FIRST every new session:** `docs/PROGRESS_REPORT.md` (especially §11),
+> **READ FIRST every new session:** `docs/PROGRESS_REPORT.md` (especially §13.7),
 > then `docs/2026-05-01_v52_patches.md`, then this file. Then read the user's
 > morning report and decide on next action.
 >
@@ -60,6 +60,22 @@ Decision matrix:
 | Wife: "too cold" | Hot-rail probably over-fired or BedJet -10 ran past her preference window. Consider tightening streak threshold to 3 (≈15 min). |
 | Either: "much worse than before" | Revert. See `docs/2026-05-01_v52_patches.md` § Rollback. |
 
+
+
+## Tonight's acceptance — redteam follow-up patches
+
+Check these in PG/logs after the next sleep session:
+
+- AppDaemon banner still ends `+learnerStateTag+railHelperIPC` after any reload.
+- Any immediate post-`sleep_mode=on` left override has notes containing
+  `state=initial_setting`.
+- Any right rail force shows helper-on before/with the `-10` setpoint write;
+  no right-zone controller actuation occurs while `snug_right_rail_engaged=on`.
+- After an HA restart during rail conditions, logs show helper recovery if
+  `bedtime_temperature=-10`, `body_left_f >= 86`, and right occupancy is on.
+- M11 remains open: confirm whether right-zone live writes produce PG rows;
+  do not mark it done without observed right-side `controller_readings` rows.
+
 ---
 
 ## Priority 1 — Patches that should ship this week (deferred from tonight)
@@ -81,36 +97,15 @@ bias.
 **Effort:** ~30 min. Need to track body history (3 samples over 15 min).
 **Risk:** could under-warm on legitimate cold nights.
 
-### 1.B Mutex between controller hot-rail and `right_overheat_safety`
+### 1.B Mutex between controller hot-rail and `right_overheat_safety` — DONE
 
-**Source:** red-safety §1.
-**Why:** Both apps write to `number.smart_topper_right_side_bedtime_temperature`
-without coordination. Currently OK because the rail's force-write at -10
-is monotonically more aggressive than the controller's -1 step bias, but
-there's a race window where the controller could write a warmer value
-right after the rail engaged.
-**What:** New `input_boolean.snug_right_rail_engaged`. `right_overheat_safety`
-turns it ON before forcing -10 and OFF after release. Controller's
-`_right_v52_shadow_tick` reads it and yields control entirely while ON.
-**Effort:** ~1 hour. Modifies `right_overheat_safety.py`,
-`sleep_controller_v5.py`, adds an HA helper (requires `ha core restart`
-or just adding to UI).
-**Risk:** low; new helper defaults to off.
+**Done:** `+railHelperIPC` (`48b347e`) added `input_boolean.snug_right_rail_engaged`; `right_overheat_safety` owns the helper and the controller yields right-zone writes while it is on. Cleanup commit `0e4014d` tightened helper-before-setpoint ordering and added HA-restart recovery.
+**Verify tonight:** no controller right-zone write should occur while notes/logs indicate the rail helper is on.
 
-### 1.C BedJet-window override exclusion from learner
+### 1.C BedJet-window override exclusion from learner — DONE
 
-**Source:** user request 2026-05-01 ("BedJet shouldn't be taken into
-account when determining preferences").
-**Why:** If wife overrides during the first 30 min after right-bed onset
-(BedJet warm-blanket), her override is influenced by external heat input,
-not her thermal preference. Counting it in `_learn_from_history` biases
-the learner toward warmer-than-preferred settings.
-**What:** In `_learn_from_history`'s SQL query, exclude rows where
-`mins_since_onset < 30` on the right zone. Need to add
-`mins_since_onset` to `controller_readings` writes (or join to it from
-zone-occupancy events).
-**Effort:** ~1-2 hours; PG-schema-aware.
-**Risk:** low; can ship behind a feature flag.
+**Done:** `+learnerInitialBedExclude` (`45fd9d3`) filters tagged initial-bed, pre-sleep, and BedJet-window overrides out of learner SQL. `+learnerStateTag` (`48b347e`) writes the source state into override notes; cleanup commit `0e4014d` covers the no-control-tick-yet initial-setting edge case.
+**Verify tonight:** qualifying override notes should include `state=...`; learner SQL should exclude `initial_bed_cooling`, `pre_sleep`, and `bedjet_window` tags.
 
 ### 1.D Right-zone live writes → `controller_readings` rows
 
@@ -194,7 +189,7 @@ From `docs/PROGRESS_REPORT.md §10`:
 
 - C3, C4, C5 (PG migration / stale fitted_baselines)
 - H1 (rail engagement state not persisted on rail-only mutations)
-- H2 (`_set_l1` callback race with override detection)
+- H2 (`_set_l1` callback race with override detection) — DONE by `+leftSelfWrite` (`45fd9d3`)
 - H3 (`_setting_for_stage` clobbers v5.2 cycle baselines)
 - H5 (`hot_safety` erodes warm overrides)
 - H8 (HRV cadence implausibly high — health receiver bug)
@@ -227,7 +222,7 @@ by tonight's deploy (no override has a floor anymore).
   GROUP BY 1;
   ```
 
-  All rows should be `v5_2_rc_off`.
+  All rows should keep `controller_version='v5_2_rc_off'`; patch-level validation is via the AppDaemon banner/source constant, not this PG field.
 
 ---
 
@@ -235,13 +230,13 @@ by tonight's deploy (no override has a floor anymore).
 
 | Thing | Where | Notes |
 |---|---|---|
-| Live controller | `appdaemon/sleep_controller_v5.py` (deployed to HA at 19:33 ET 2026-05-01) | `v5_2_rc_off` + 4 patches; `CONTROLLER_PATCH_LEVEL` constant tracks them |
-| Right-zone safety rail | `appdaemon/right_overheat_safety.py` (unchanged tonight) | engages at 86°F / releases at 82°F / BedJet 30-min suppression |
+| Live controller | `appdaemon/sleep_controller_v5.py` (latest verified 2026-05-02 evening) | `v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude+learnerStateTag+railHelperIPC`; `CONTROLLER_VERSION` remains `v5_2_rc_off` for learner continuity |
+| Right-zone safety rail | `appdaemon/right_overheat_safety.py` | engages at 86°F / releases at 82°F / BedJet 30-min suppression; coordinates via `input_boolean.snug_right_rail_engaged` |
 | Apps wiring | `appdaemon/apps.yaml` (unchanged tonight) | 2 apps registered |
 | Eval framework | `tools/v6_eval.py` (built tonight by val-eval agent) | needs v5.2/v6 policy wrappers |
 | Long-term v6 design | `docs/proposals/2026-05-01_recommendation.md` (862 lines) | chief-architect synthesis from 9 prior agent docs in same dir |
-| Tonight's patch detail | `docs/2026-05-01_v52_patches.md` | line-level diff record |
-| Progress log | `docs/PROGRESS_REPORT.md` §11 | this session's entry |
+| Patch history | `docs/2026-05-01_v52_patches.md` + `docs/PROGRESS_REPORT.md` §12/§13/§13.7 | May 1 line-level record plus May 2 superseding patches |
+| Progress log | `docs/PROGRESS_REPORT.md` §13.7 | latest red-team follow-up and cleanup pass |
 | HA host | `root@192.168.0.106` | AppDaemon configs at `/addon_configs/a0d7b954_appdaemon/apps/` |
 | PG | `192.168.0.3:5432/sleepdata` user=sleepsync | `controller_readings`, `nightly_summary`, `sleep_segments` |
 | Bedroom room sensor | `sensor.bedroom_temperature_sensor_temperature` (Aqara) | NOT topper ambient (5-10°F high), NOT dehumidifier (stale memory entries reference this — they're outdated) |

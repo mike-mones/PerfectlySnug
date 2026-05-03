@@ -5,7 +5,7 @@
 > document is the running log of what's actually been built, what's deployed,
 > what's been tried and rejected, and what the data actually says today.
 
-**Last updated:** 2026-05-02 late afternoon (8-agent deep audit + 7 P0 safety/correctness patches deployed — see §13)
+**Last updated:** 2026-05-02 evening (v5.2 red-team follow-up through `+railHelperIPC`, cleanup pass — see §13.7)
 
 > 🎯 **2026-05-01 RC reverse-engineering — canonical synthesis:**
 > [`findings/2026-05-01_rc_synthesis.md`](findings/2026-05-01_rc_synthesis.md).
@@ -53,7 +53,7 @@
 
 ## 1. Where we are in one sentence
 
-v5.2 (closed-loop body feedback + 7 patches) is running on **both zones** as of 2026-05-02 14:21 ET. v6 is not deployed; the current production path remains the v5.2 controller plus safety rails and logging.
+v5.2 is running on **both zones** with live patch level `v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude+learnerStateTag+railHelperIPC` as of the 2026-05-02 evening red-team follow-up. v6 is not deployed; the current production path remains the v5.2 controller plus safety rails, helper IPC, and logging. See §13.7 for the latest addendum.
 
 ---
 
@@ -87,7 +87,7 @@ v5.2 (closed-loop body feedback + 7 patches) is running on **both zones** as of 
 ### What controls what
 | Component | Role | Where |
 |---|---|---|
-| `sleep_controller_v5.py` (`v5_2_rc_off` + 7 patches) | Left-zone control loop and two-key-armed right-zone control, every 5 min | HA AppDaemon |
+| `sleep_controller_v5.py` (`v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude+learnerStateTag+railHelperIPC`) | Left-zone control loop and two-key-armed right-zone control, every 5 min | HA AppDaemon |
 | Right-zone behavior | v5.2 live when `input_boolean.snug_right_controller_enabled` is on; `right_overheat_safety.py` rail remains independent | HA AppDaemon |
 | PostgreSQL writes (`sleep_controller_v5._log_to_postgres`) | Mirror of HA topper sensors → PG `controller_readings` | HA AppDaemon |
 | iOS Health Receiver (FastAPI :8080) | Apple Watch → PG `health_metrics`, `sleep_segments` | Mac Mini |
@@ -351,13 +351,13 @@ Any future training pipeline must either:
 
 ## 7. What's deployed today
 
-**As of 2026-05-02 14:21 ET:**
+**As of 2026-05-02 evening (latest verified banner ends `+railHelperIPC`):**
 
 | Component | State | Notes |
 |---|---|---|
-| `sleep_controller_v5.py` (`v5_2_rc_off`) — **left zone live** | ✅ Running on HA | v5.2 with closed-loop body feedback on `body_left_f` (target 80°F, Kp_cold 1.25, Kp_hot=0, max_delta 5, min_cycle 3) |
+| `sleep_controller_v5.py` (`v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude+learnerStateTag+railHelperIPC`) — **left zone live** | ✅ Running on HA | v5.2 with closed-loop body feedback on `body_left_f` (target 80°F, Kp_cold 1.25, Kp_hot=0, max_delta 5, min_cycle 3) |
 | `sleep_controller_v5.py` — **right zone live** | ✅ Running on HA | RIGHT_LIVE_ENABLED=True + input_boolean.snug_right_controller_enabled=on (two-key arming). Right-zone-specific params: baselines `[-8,-7,-6,-5,-5,-5]`, target 80°F, Kp_hot=0.5, Kp_cold=0.3, cap=4, skip cycle 1 |
-| `right_overheat_safety.py` (`RightOverheatSafety`) | ✅ Live | Skin-side sensor (body_left_f), engage 86°F, release 82°F, BedJet 30-min suppression, force −10. Per-zone calibrated to her physiology |
+| `right_overheat_safety.py` (`RightOverheatSafety`) | ✅ Live | Skin-side sensor (body_left_f), engage 86°F, release 82°F, BedJet 30-min suppression, force −10. Uses `input_boolean.snug_right_rail_engaged` helper IPC with v5.2. |
 | Hard overheat rail on left v5 (body ≥90°F → −10) | ✅ Deployed | Gated by `input_boolean.snug_overheat_rail_enabled`; **default off** |
 | Shadow logger `/config/snug_shadow.jsonl` (ml.policy) | ✅ Live | Defensive try/except |
 | Right-zone shadow log `/config/snug_right_v52_shadow.jsonl` | ✅ Live | Logs all proposals + actuated/blocked status; consumed by `tools/eval_right_shadow.py` |
@@ -377,6 +377,7 @@ Any future training pipeline must either:
 |---|---|
 | Right-zone v5.2 controller | `input_boolean.snug_right_controller_enabled` → off |
 | Right-zone safety rail | `input_boolean.snug_right_overheat_rail_enabled` → off |
+| Right-zone rail IPC helper | `input_boolean.snug_right_rail_engaged` → off (normally rail-owned; force off only for emergency cleanup) |
 | Left-zone hard-overheat rail | `input_boolean.snug_overheat_rail_enabled` → off (already off) |
 | All AppDaemon (nuclear option) | Stop the AppDaemon addon in HA UI |
 
@@ -594,10 +595,9 @@ patch set. These items are queued for follow-up:
 - **Bounded learned residual head** (BayesianRidge + GP under LCB) on
   LEFT zone — synth gates this behind 14 nights of shadow logging.
 - **Mutex w/ `right_overheat_safety`** via new
-  `input_boolean.snug_right_rail_engaged`. Both apps currently race the
-  same entity. Functionally OK because the rail is rare (engages only at
-  ≥86°F sustained), but red-safety §1 flagged it as a top risk that
-  needs fixing before any aggressive right-zone changes.
+  `input_boolean.snug_right_rail_engaged`. **Superseded by §13.7:**
+  `+railHelperIPC` now coordinates this helper, and cleanup commit `0e4014d`
+  tightened helper-before-setpoint ordering plus HA-restart recovery.
 - **`tools/v6_eval.py` v6 Policy wrapper** for case A/B/C replay
   validation — the framework was built tonight but no v6 policy is wired.
 - **PG schema migration** (`controller_readings` ADD COLUMN regime,
@@ -821,9 +821,8 @@ or another agent flipping it off). Committed in HomeAssistant repo as
   a second cold-mid-night observation; tonight's bed-onset patch may
   remove the upstream cause (false +5 pre-bed warming).
 - Mutex with `right_overheat_safety` via `input_boolean.snug_right_rail_engaged`.
-  Still flagged in red-safety §1; no race observed last night because
-  v5.2 right-zone wasn't actuating, and the only force-write was from
-  `right_overheat_safety` itself.
+  **Superseded by §13.7:** `+railHelperIPC` is deployed, and the helper is
+  now the live IPC between `right_overheat_safety` and v5.2 right-zone writes.
 - Firmware-ceiling escalation in the morning. Needs the v6 plant
   model / bounded learned residual head; not a tonight-fix.
 - BedJet-window override exclusion from learner.
@@ -866,13 +865,15 @@ moved P1 items to `docs/NEXT_STEPS.md`.
 ### 13.1 Findings → P0 patches shipped
 
 Commit: **`45fd9d3` (PerfectlySnug)** — deployed to HA Green at
-2026-05-02 16:27:36 ET, init banner confirmed new patch level.
-`CONTROLLER_PATCH_LEVEL` now:
+2026-05-02 16:27:36 ET, init banner confirmed the initial seven-patch level.
+§13.7 records the later `48b347e` `+learnerStateTag+railHelperIPC` follow-up;
+current `CONTROLLER_PATCH_LEVEL` now:
 
 ```
 v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+
 bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+
-railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude
+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude+
+learnerStateTag+railHelperIPC
 ```
 
 | # | Patch | Where | Bug it fixes |
@@ -883,7 +884,7 @@ railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude
 | 4 | **railRestoreGuard** | `right_overheat_safety._restore_setpoint` | Restore action could stomp a user or controller change that happened mid-engagement. Now only restores if current setpoint is still `-10` (the rail's own write). |
 | 5 | **leftSelfWrite** | `_set_l1` | Race window: `call_service(...)` could trigger the self-detection callback before `last_setting` was updated, mis-classifying the controller's own write as a manual override. Now sets `last_setting` *before* `call_service`, matching the right-side pattern. |
 | 6 | **bodyFbFailClosed** | `_compute_setting`, `_right_v52_shadow_tick` | `bed_occupied=None` previously preserved legacy behaviour and let `body_fb` apply the +5 cold-correction. Sensor unavailability is now treated as **unoccupied** — no warming bias when occupancy is unknown. |
-| 7 | **learnerInitialBedExclude** | `_learn_from_history` SQL | Learner was ingesting initial-bed-cooling, bedjet-window, and pre-sleep rows as if they were user preference data. SQL now `WHERE notes NOT ILIKE` those tags. |
+| 7 | **learnerInitialBedExclude** | `_learn_from_history` SQL | Learner was ingesting initial-bed-cooling, bedjet-window, and pre-sleep rows as if they were user preference data. SQL now `WHERE notes NOT ILIKE` those tags; §13.7 `learnerStateTag` makes the early-night source tags visible in override notes. |
 
 Tests: **128 pass** (was 122). New / updated test classes:
 `TestOverheatBypass`, `TestResponsiveCoolingBothZones`,
@@ -918,7 +919,7 @@ The following stored memories were stale and should be re-stored when a
 
 | Memory key | Old value | Correct value |
 |---|---|---|
-| Active controller | `sleep_controller_v3.py` | `sleep_controller_v5.py` (v5.2 + 7 patches) |
+| Active controller | `sleep_controller_v3.py` | `sleep_controller_v5.py` (`v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude+learnerStateTag+railHelperIPC`) |
 | Room temp sensor | `sensor.superior_6000s_temperature` | `sensor.bedroom_temperature_sensor_temperature` (Aqara) |
 | Override behaviour | "User's value becomes floor for rest of night" | 60-min freeze, then algorithm resumes (floor removed 2026-05-01) |
 | Right zone live as of 2026-04-30 | "live" | `RIGHT_LIVE_ENABLED=True` in code, but `input_boolean.snug_right_controller_enabled` was OFF until 2026-05-02 14:12 ET. Now genuinely live + persistence automation. |
@@ -950,6 +951,8 @@ Not safety-critical, queued for follow-up sessions:
 - AppDaemon log:
   `Controller v5_2_rc_off+...+learnerInitialBedExclude ready — left side in RC-off blower-proxy mode`
   at 2026-05-02 16:27:36 ET.
+- Later AppDaemon reload verified at 2026-05-02 16:51:21 ET with banner ending
+  `+learnerStateTag+railHelperIPC ready — left side in RC-off blower-proxy mode`.
 - `python -m pytest PerfectlySnug/tests/ -q` → `128 passed`.
 - HA `automation.reload` succeeded after `topper_precool_start` sensor
   swap; `--check-only` clean.
@@ -986,3 +989,38 @@ Acceptance for tonight:
   zone.
 - `body_fb_skipped(unknown_occupancy)` should not appear during normal
   in-bed sleep — only during empty-bed pre-cool.
+
+### 13.7 2026-05-02 evening — redteam follow-up patches
+
+Follow-up code review of the §13 patch set found no critical issues and three
+low-risk NITs. The live patch-level string remains:
+
+```
+v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude+learnerStateTag+railHelperIPC
+```
+
+Additional patch tokens already deployed before this cleanup pass:
+
+| Patch | Commit | What changed |
+|---|---|---|
+| **learnerStateTag** | `48b347e` | Override notes append `state=<last_data_source>` so learner exclusions for `initial_bed_cooling`, `pre_sleep`, and `bedjet_window` are observable in PG. |
+| **railHelperIPC** | `48b347e` | `input_boolean.snug_right_rail_engaged` coordinates authority between `right_overheat_safety.py` and the right-zone v5.2 writer. |
+
+Cleanup pass NIT fixes shipped in `0e4014d`:
+
+1. **Initial-setting tag:** `_on_sleep_mode("on")` now sets
+   `left_last_data_source="initial_setting"` immediately after the initial
+   `_set_l1(...)`, so an override before the first 5-minute control tick logs
+   `state=initial_setting`.
+2. **Helper-before-write ordering:** `right_overheat_safety._engage()` now flips
+   `input_boolean.snug_right_rail_engaged` on before writing `bedtime_temperature=-10`,
+   eliminating the one-second helper/setpoint race.
+3. **HA-restart recovery:** `right_overheat_safety.initialize()` schedules a
+   5-second recovery check; if setpoint is still `-10`, body-left is ≥86°F,
+   and right bed occupancy is on, it restores the rail helper to on.
+
+Additional cleanup commits from the same pass:
+- `42482df` — removed old v3/v4 controllers, 45 March one-off tools, and
+  untracked generated JSON outputs.
+- `b29ef3f` — removed unused constants/imports and pinned those cleanup choices
+  with hygiene tests.
