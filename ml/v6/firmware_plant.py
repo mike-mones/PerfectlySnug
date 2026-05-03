@@ -62,13 +62,23 @@ class FirmwarePlant:
             try:
                 with open(cap_table_path, "r") as f:
                     data = json.load(f)
-                if "anchors" in data and len(data["anchors"]) >= 2:
+                if "table" in data and isinstance(data["table"], list) and len(data["table"]) >= 2:
+                    # New format from tools/firmware_cap_fit.py: list of rows
+                    # with {"setting", "median_setpoint_f", "n", ...}.
+                    self._anchors = sorted(
+                        (int(row["setting"]), float(row["median_setpoint_f"]))
+                        for row in data["table"]
+                    )
+                    self._cap_table_loaded = True
+                    logger.info("FirmwarePlant: loaded cap table (table format) from %s", cap_table_path)
+                elif "anchors" in data and len(data["anchors"]) >= 2:
+                    # Legacy format: explicit anchor list.
                     self._anchors = [
                         (pt["setting"], pt["setpoint_f"])
                         for pt in data["anchors"]
                     ]
                     self._cap_table_loaded = True
-                    logger.info("FirmwarePlant: loaded cap table from %s", cap_table_path)
+                    logger.info("FirmwarePlant: loaded cap table (legacy anchors) from %s", cap_table_path)
                 else:
                     logger.warning(
                         "FirmwarePlant: cap table at %s has invalid format, using anchors",

@@ -211,6 +211,43 @@ class TestColdRoomComp:
         assert result["base_setting"] >= -10
         assert result["base_setting"] <= DEFAULT_CONFIG.cold_room_comp_cap_left
 
+    def test_cold_room_blocked_by_high_body_trend(self):
+        """body_trend_15m >= +0.20 °F/15min must NOT fire COLD_ROOM_COMP."""
+        kw = _base_kwargs("left")
+        kw["room_f"] = 67.0
+        kw["body_skin_f"] = 76.0
+        kw["mins_since_onset"] = 60
+        result = classify(body_trend_15m=0.30, **kw)
+        assert result["regime"] != "COLD_ROOM_COMP"
+
+    def test_cold_room_fires_with_low_body_trend(self):
+        """body_trend_15m < +0.20 still fires COLD_ROOM_COMP."""
+        kw = _base_kwargs("left")
+        kw["room_f"] = 67.0
+        kw["body_skin_f"] = 76.0
+        kw["mins_since_onset"] = 60
+        result = classify(body_trend_15m=0.10, **kw)
+        assert result["regime"] == "COLD_ROOM_COMP"
+
+    def test_cold_room_fires_when_trend_is_none(self):
+        """Backwards-compatible: body_trend_15m=None still fires."""
+        kw = _base_kwargs("left")
+        kw["room_f"] = 67.0
+        kw["body_skin_f"] = 76.0
+        kw["mins_since_onset"] = 60
+        # Default — no body_trend_15m kwarg
+        result = classify(**kw)
+        assert result["regime"] == "COLD_ROOM_COMP"
+
+    def test_cold_room_blocked_below_lower_bound(self):
+        """Sensor outlier (room=55°F) must NOT fire COLD_ROOM_COMP."""
+        kw = _base_kwargs("left")
+        kw["room_f"] = 55.0
+        kw["body_skin_f"] = 76.0  # delta well above threshold
+        kw["mins_since_onset"] = 60
+        result = classify(**kw)
+        assert result["regime"] != "COLD_ROOM_COMP"
+
 
 # ─── WAKE_COOL ────────────────────────────────────────────────────────
 

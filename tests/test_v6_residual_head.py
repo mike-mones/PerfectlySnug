@@ -241,3 +241,150 @@ class TestSoftImport:
         # With these small coefficients, delta should be within cap
         assert -1 <= delta <= 1
         assert meta["model_loaded"] is True
+
+
+# ─── Bayesian Ridge α/λ semantics ─────────────────────────────────────
+
+class TestBayesianRidgeSigma:
+    def test_sigma_uses_alpha_for_noise_var(self, tmp_path):
+        """σ² should grow with 1/alpha (noise variance), not 1/lambda.
+
+        sklearn's BayesianRidge.alpha_ is the precision of the noise;
+        lambda_ is the precision of the weights. Halving alpha doubles
+        noise_var and should grow std; halving lambda only grows the
+        weight-uncertainty term.
+        """
+        from ml.v6.residual_head import ResidualHead, FEATURE_NAMES
+
+        def make_model(alpha, lam):
+            model = {
+                "zone": "left",
+                "cap_steps": 1,
+                "n_support_threshold": 1,
+                # all-zero coefficients so x_scaled · x_scaled is the only
+                # contributor to weight_var term (small).
+                "coefficients": [0.0] * len(FEATURE_NAMES),
+                "intercept": 0.0,
+                "alpha": alpha,
+                "lambda": lam,
+                "scaler_mean": [0.0] * len(FEATURE_NAMES),
+                "scaler_scale": [1.0] * len(FEATURE_NAMES),
+                "feature_names": FEATURE_NAMES,
+                "n_training_rows": 100,
+                "n_support_per_bin": {"cycle_2": 50},
+                "metadata": {},
+            }
+            p = tmp_path / f"m_{alpha}_{lam}.json"
+            with open(p, "w") as f:
+                json.dump(model, f)
+            return ResidualHead(zone="left", model_path=str(p))
+
+        feats = {"cycle_phase": 2, "room_f": 70.0,
+                 "body_skin_f": 80.0, "body_hot_f": 80.0}
+
+        # Fix lambda, vary alpha — noise variance dominates.
+        _, m_high_alpha = make_model(alpha=100.0, lam=1.0).predict_lcb(feats)
+        _, m_low_alpha = make_model(alpha=0.01, lam=1.0).predict_lcb(feats)
+        assert m_low_alpha["std"] > m_high_alpha["std"], (
+            "Lower alpha (more noise) must yield larger σ"
+        )
+
+    def test_sigma_grows_when_lambda_decreases(self, tmp_path):
+        """Decreasing lambda (weight precision) should grow weight-var term."""
+        from ml.v6.residual_head import ResidualHead, FEATURE_NAMES
+
+        def make_model(lam):
+            model = {
+                "zone": "left",
+                "cap_steps": 1,
+                "n_support_threshold": 1,
+                "coefficients": [0.0] * len(FEATURE_NAMES),
+                "intercept": 0.0,
+                "alpha": 1.0,
+                "lambda": lam,
+                "scaler_mean": [0.0] * len(FEATURE_NAMES),
+                "scaler_scale": [1.0] * len(FEATURE_NAMES),
+                "feature_names": FEATURE_NAMES,
+                "n_training_rows": 100,
+                "n_support_per_bin": {"cycle_2": 50},
+                "metadata": {},
+            }
+            p = tmp_path / f"l_{lam}.json"
+            with open(p, "w") as f:
+                json.dump(model, f)
+            return ResidualHead(zone="left", model_path=str(p))
+
+        feats = {"cycle_phase": 2, "room_f": 70.0,
+                 "body_skin_f": 80.0, "body_hot_f": 80.0}
+        _, m_hi = make_model(lam=100.0).predict_lcb(feats)
+        _, m_lo = make_model(lam=0.01).predict_lcb(feats)
+        assert m_lo["std"] > m_hi["std"]
+
+    def test_meta_exposes_lcb_key(self, tmp_path):
+        """predict_lcb meta exposes 'lcb' = mean - sign·k·σ for shadow logging."""
+        from ml.v6.residual_head import ResidualHead, FEATURE_NAMES
+
+        model = {
+            "zone": "left",
+            "cap_steps": 1,
+            "n_support_threshold": 1,
+            "coefficients": [0.5] * len(FEATURE_NAMES),
+            "intercept": 0.0,
+            "alpha": 1.0,
+            "lambda": 1.0,
+            "scaler_mean": [0.0] * len(FEATURE_NAMES),
+            "scaler_scale": [1.0] * len(FEATURE_NAMES),
+            "feature_names": FEATURE_NAMES,
+            "n_training_rows": 50,
+            "n_support_per_bin": {"cycle_2": 25},
+            "metadata": {},
+        }
+        path = tmp_path / "m.json"
+        with open(path, "w") as f:
+            json.dump(model, f)
+        head = ResidualHead(zone="left", model_path=str(path))
+        feats = {"cycle_phase": 2, "room_f": 70.0,
+                 "body_skin_f": 80.0, "body_hot_f": 80.0}
+        _, meta = head.predict_lcb(feats, k=1.0)
+        assert "lcb" in meta
+        assert "mean" in meta and "std" in meta
+        # lcb = mean - sign(mean)·k·std
+        import math
+        expected = meta["mean"] - math.copysign(1, meta["mean"]) * 1.0 * meta["std"]
+        assert abs(meta["lcb"] - expected) < 1e-9
+
+    def test_bayesian_ridge_sigma_with_real_fit(self, tmp_path):
+        """End-to-end with sklearn: σ correlates with 1/alpha_, not 1/lambda_."""
+        try:
+            import sklearn  # noqa: F401
+        except ImportError:
+            pytest.skip("sklearn not installed")
+        from ml.v6.residual_head import ResidualHead
+
+        # Synthetic noisy linear data so alpha_ comes out finite.
+        import numpy as np
+        rng = np.random.default_rng(42)
+        n = 200
+        rows = []
+        for _ in range(n):
+            cycle = int(rng.integers(1, 6))
+            room = float(rng.uniform(65, 75))
+            body = float(rng.uniform(75, 85))
+            hot = body + float(rng.uniform(-1, 4))
+            target = 0.05 * (body - room) + float(rng.normal(0, 0.5))
+            rows.append({
+                "cycle_phase": cycle, "room_f": room,
+                "body_skin_f": body, "body_hot_f": hot,
+                "body_trend_15m": 0.0, "movement_density_15m": 0.1,
+                "bedjet_active": 0.0, "target_delta": target,
+            })
+        out = str(tmp_path / "fit.json")
+        head = ResidualHead.fit("left", rows, output_path=out,
+                                cap_steps=1, n_support_threshold=1)
+        assert head.loaded
+        feats = {"cycle_phase": 2, "room_f": 70.0,
+                 "body_skin_f": 80.0, "body_hot_f": 82.0,
+                 "body_trend_15m": 0.0, "movement_density_15m": 0.1,
+                 "bedjet_active": 0.0}
+        _, meta = head.predict_lcb(feats)
+        assert meta["std"] > 0.0

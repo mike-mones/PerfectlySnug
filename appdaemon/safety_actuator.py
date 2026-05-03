@@ -33,8 +33,19 @@ from typing import Optional
 
 # ── Defaults ──────────────────────────────────────────────────────────
 DEFAULT_MAX_STEP_PER_TICK = 2
-DEFAULT_DEAD_MAN_SEC = 5 * 60          # 5 minutes
+# 12 minutes: ~2.4× the 5-minute controller tick interval. The dead-man must
+# tolerate a single late tick (HA pause, scheduler jitter) without firing.
+# The controller calls heartbeat() every tick regardless of whether write()
+# was needed, so this only fires on genuinely stalled controllers.
+DEFAULT_DEAD_MAN_SEC = 12 * 60
 DEFAULT_RAIL_HOLD_TARGET = -10         # only allowed write when rail engaged
+
+# Regimes that bypass the rate limiter entirely (proposal §7 line 518).
+# Large jumps are intentional in these regimes (e.g. INITIAL_COOL drops to -10
+# from any prior value).
+_RATE_LIMIT_BYPASS_REGIMES = frozenset({
+    "SAFETY_YIELD", "INITIAL_COOL", "PRE_BED", "OVERHEAT_HARD",
+})
 
 E_MASTER_ARM = "input_boolean.snug_v6_enabled"
 E_RAIL_ENGAGED = "input_boolean.snug_right_rail_engaged"
@@ -73,6 +84,19 @@ class SafetyActuator:
         self.dry_run = bool(dry_run)
         self.last_v6_write: Optional[int] = None
         self.last_v6_write_ts: Optional[float] = None  # monotonic seconds
+        # Liveness heartbeat — updated by controller every tick regardless of
+        # whether write() was called. Dead-man uses this so that steady-state
+        # holds (target unchanged → no write) don't trip the timer.
+        self._last_alive_ts: Optional[float] = None
+
+    def heartbeat(self) -> None:
+        """Mark the controller as alive for this tick.
+
+        Must be called by sleep_controller_v6 at the start of every tick
+        regardless of shadow vs live, so that the dead-man only fires when
+        the controller has genuinely stopped ticking.
+        """
+        self._last_alive_ts = time.monotonic()
 
     # ── Public API ─────────────────────────────────────────────────────
 
@@ -110,16 +134,31 @@ class SafetyActuator:
             if self._read(E_RAIL_ENGAGED) == "on" and target > DEFAULT_RAIL_HOLD_TARGET:
                 return self._result(None, True, "rail_engaged_right")
 
-        # 6. Rate limit
-        if self.last_v6_write is not None:
-            if abs(target - self.last_v6_write) > self.max_step_per_tick:
-                return self._result(None, True, "rate_limit")
+        # 6. Rate limit — clamp toward target instead of blocking.
+        # Bypassed entirely for safety/initial-cool regimes per proposal §7.
+        rate_clamped = False
+        original_target = target
+        if (
+            self.last_v6_write is not None
+            and regime not in _RATE_LIMIT_BYPASS_REGIMES
+        ):
+            delta = target - self.last_v6_write
+            if abs(delta) > self.max_step_per_tick:
+                sign = 1 if delta > 0 else -1
+                target = self.last_v6_write + sign * self.max_step_per_tick
+                rate_clamped = True
+                self._log(
+                    f"safety_actuator rate_clamped zone={self.zone} "
+                    f"original_target={original_target} clamped={target} "
+                    f"regime={regime}",
+                    level="WARNING",
+                )
 
-        # 7. Dead-man — if a previous v6 write exists, ensure we have ticked
-        # recently. (On first-ever write last_v6_write_ts is None and we
-        # allow it; the dead-man only protects continuous operation.)
-        if self.last_v6_write_ts is not None:
-            elapsed = time.monotonic() - self.last_v6_write_ts
+        # 7. Dead-man — based on heartbeat liveness, not on last successful
+        # write. A controller that holds steady (no write needed) is still
+        # alive as long as it called heartbeat() this tick.
+        if self._last_alive_ts is not None:
+            elapsed = time.monotonic() - self._last_alive_ts
             if elapsed > self.dead_man_sec:
                 self.fallback_to_v5(reason="dead_man")
                 return self._result(None, True, "dead_man")
@@ -144,7 +183,16 @@ class SafetyActuator:
         note = f"regime={regime} reason={reason}"
         if clip_changed:
             note += " clipped_to_cool_only"
+        if rate_clamped:
+            note += f" rate_clamped(orig={original_target})"
         self._log(f"safety_actuator wrote zone={self.zone} target={target} {note}")
+        if rate_clamped:
+            return {
+                "written": target,
+                "blocked": False,
+                "reason": "rate_clamped",
+                "original_target": original_target,
+            }
         return self._result(target, False, "ok")
 
     # ── Lease management ───────────────────────────────────────────────
@@ -177,6 +225,9 @@ class SafetyActuator:
         self.release_lease()
         self.last_v6_write = None
         self.last_v6_write_ts = None
+        # Reset liveness so the next take_lease/write cycle starts fresh
+        # (dead-man only re-arms after the next heartbeat() call).
+        self._last_alive_ts = None
         # Optional notify (best-effort)
         try:
             if self.hass is not None:

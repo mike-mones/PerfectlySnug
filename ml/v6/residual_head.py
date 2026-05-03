@@ -70,8 +70,8 @@ class ResidualHead:
             "n_support_threshold": int,
             "coefficients": list[float],  # Bayesian Ridge weights
             "intercept": float,
-            "alpha": float,               # precision of weights
-            "lambda": float,              # precision of noise
+            "alpha": float,               # precision of noise (sklearn alpha_)
+            "lambda": float,              # precision of weights (sklearn lambda_)
             "scaler_mean": list[float],
             "scaler_scale": list[float],
             "feature_names": list[str],
@@ -103,8 +103,8 @@ class ResidualHead:
         # Model state (None until loaded or trained)
         self._coefficients: Optional[np.ndarray] = None
         self._intercept: float = 0.0
-        self._alpha: float = 1.0   # weight precision
-        self._lambda: float = 1.0  # noise precision
+        self._alpha: float = 1.0   # noise precision (sklearn BayesianRidge.alpha_)
+        self._lambda: float = 1.0  # weight precision (sklearn BayesianRidge.lambda_)
         self._scaler_mean: Optional[np.ndarray] = None
         self._scaler_scale: Optional[np.ndarray] = None
         self._n_training_rows: int = 0
@@ -206,10 +206,12 @@ class ResidualHead:
         # Prediction
         mean = float(np.dot(self._coefficients, x_scaled) + self._intercept)
 
-        # Estimate std from Bayesian Ridge posterior
-        # σ² ≈ (1/λ) + x^T · (1/α) · I · x (simplified diagonal approximation)
-        noise_var = 1.0 / max(self._lambda, 1e-8)
-        weight_var = 1.0 / max(self._alpha, 1e-8)
+        # Estimate std from Bayesian Ridge posterior.
+        # sklearn's BayesianRidge: alpha_ is NOISE precision, lambda_ is WEIGHT
+        # precision. So noise_var = 1/alpha and weight_var = 1/lambda.
+        # σ² ≈ (1/α) + x^T · (1/λ) · I · x (simplified diagonal approximation)
+        noise_var = 1.0 / max(self._alpha, 1e-8)
+        weight_var = 1.0 / max(self._lambda, 1e-8)
         std = math.sqrt(noise_var + weight_var * float(np.dot(x_scaled, x_scaled)))
 
         meta["mean"] = mean
@@ -218,6 +220,10 @@ class ResidualHead:
         # LCB gate: Δ_safe = sign(Δ̂) · max(0, |Δ̂| − k·σ)
         delta_lcb = math.copysign(1, mean) * max(0.0, abs(mean) - k * std)
         meta["delta_lcb_raw"] = delta_lcb
+        # Convenience: signed lower confidence bound (mean − k·σ in the
+        # direction of the prediction). Used by sleep_controller_v6 for
+        # logging in the residual_lcb shadow column.
+        meta["lcb"] = mean - math.copysign(1, mean) * k * std
 
         # Clamp to ±cap
         delta = int(round(max(-self.cap, min(self.cap, delta_lcb))))

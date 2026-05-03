@@ -298,6 +298,16 @@ class SleepControllerV6(hass.Hass):
     def _tick_zone(self, zone, *, room_f, sleep_stage, bedjet_active,
                    rail_engaged, three_level_off, elapsed_min,
                    post_bedjet_min):
+        # Heartbeat the safety actuator at the start of every tick (shadow
+        # or live) so the dead-man timer reflects controller liveness, not
+        # last-successful-write. See safety_actuator.py heartbeat().
+        try:
+            actuator = self.safety_actuator.get(zone) if isinstance(
+                self.safety_actuator, dict) else None
+            if actuator is not None and hasattr(actuator, "heartbeat"):
+                actuator.heartbeat()
+        except Exception:  # pragma: no cover
+            pass
         snap = self._read_zone_snapshot(zone)
         body_skin = snap.get("body_left")
         body_hot = snap.get("body_left")

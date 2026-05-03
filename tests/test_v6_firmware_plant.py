@@ -111,6 +111,39 @@ class TestCapTableLoading:
         assert not plant.cap_table_loaded
         assert abs(plant.predict_setpoint_f(0) - 91.4) < 0.1
 
+    def test_loads_table_format_from_fit_tool(self, tmp_path):
+        """Round-trip: fit_from_rows → write_table → FirmwarePlant loads it."""
+        from tools.firmware_cap_fit import (
+            build_table, fit_from_rows, write_table,
+        )
+
+        rows = [
+            (-8, 69.0), (-8, 70.0),
+            (-4, 80.0), (-4, 81.0),
+            (0, 91.0), (0, 92.0),
+            (5, 95.0), (5, 96.5),
+        ]
+        points = fit_from_rows(rows)
+        table = build_table(points, since=None)
+        cap_file = tmp_path / "fit.json"
+        write_table(table, cap_file)
+
+        plant = FirmwarePlant(cap_table_path=str(cap_file))
+        assert plant.cap_table_loaded
+        # Median of (-8 -> 69, 70) ≈ 69.5
+        assert abs(plant.predict_setpoint_f(-8) - 69.5) < 0.6
+
+    def test_loads_committed_cap_table(self):
+        """The repo's committed cap table file loads cleanly."""
+        committed = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "ml", "v6", "firmware_cap_table.json",
+        )
+        if not os.path.isfile(committed):
+            pytest.skip("committed cap table not present")
+        plant = FirmwarePlant(cap_table_path=committed)
+        assert plant.cap_table_loaded
+
 
 # ─── Blower prediction ───────────────────────────────────────────────
 

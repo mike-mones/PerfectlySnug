@@ -31,6 +31,8 @@ class RegimeConfig:
     # Cold-room compensation thresholds
     cold_room_threshold_f: float = 70.0
     cold_room_body_skin_delta_f: float = 5.0  # body_skin - room >= this
+    cold_room_min_room_f: float = 60.0  # lower bound to reject sensor outliers
+    cold_room_body_trend_max_f_per_15m: float = 0.20  # don't warm a rising body
 
     # Wake-cool trigger
     wake_cool_elapsed_min: int = 240
@@ -103,6 +105,7 @@ def classify(
     pre_sleep_active: bool,
     three_level_off: bool,
     movement_density_15m: Optional[float] = None,
+    body_trend_15m: Optional[float] = None,
     config: Optional[RegimeConfig] = None,
 ) -> dict:
     """Classify the current tick into a regime.
@@ -186,11 +189,19 @@ def classify(
         )
 
     # --- COLD_ROOM_COMP ---
+    # Per proposal §6 line 419-421: gated on body not actively warming
+    # (incipient hot-flash / post-BedJet residual heating). When
+    # body_trend_15m is None (no history yet, e.g. first ~15 min of session),
+    # the gate still fires for backwards compatibility.
+    # Lower bound on room_f rejects sensor-outlier-driven false fires (R4B M3).
     if (
         room_f is not None
         and body_skin_f is not None
+        and room_f >= config.cold_room_min_room_f
         and room_f < config.cold_room_threshold_f
         and (body_skin_f - room_f) >= config.cold_room_body_skin_delta_f
+        and (body_trend_15m is None
+             or body_trend_15m < config.cold_room_body_trend_max_f_per_15m)
     ):
         base = _cold_room_base(zone, config, body_skin_f, room_f)
         return _result(
@@ -198,7 +209,8 @@ def classify(
             f"cold room ({room_f:.1f}°F) with body-room delta "
             f"{body_skin_f - room_f:.1f}°F",
             base,
-            {"room_f": room_f, "body_skin_f": body_skin_f},
+            {"room_f": room_f, "body_skin_f": body_skin_f,
+             "body_trend_15m": body_trend_15m},
         )
 
     # --- WAKE_COOL ---

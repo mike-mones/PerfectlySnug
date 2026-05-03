@@ -113,23 +113,113 @@ def test_rail_engaged_left_does_not_apply_right_mutex():
     assert not r["blocked"]
 
 
-def test_rate_limit_blocks_large_step():
+def test_rate_limit_clamps_large_step():
+    """Rate limit clamps toward target instead of blocking (proposal §7)."""
     h = FakeHass(_live_state("left"))
     sa = SafetyActuator(h, "left", max_step_per_tick=2)
-    r1 = sa.write(-3, regime="x", reason="x")
+    r1 = sa.write(-3, regime="NORMAL_COOL", reason="x")
     assert not r1["blocked"]
-    r2 = sa.write(-7, regime="x", reason="x")
-    assert r2["blocked"] and r2["reason"] == "rate_limit"
+    r2 = sa.write(-7, regime="NORMAL_COOL", reason="x")
+    assert not r2["blocked"]
+    assert r2["reason"] == "rate_clamped"
+    assert r2["written"] == -5  # -3 + (-2)
+    assert r2["original_target"] == -7
 
 
-def test_dead_man_trips_after_threshold():
+def test_rate_limit_bypassed_for_initial_cool():
     h = FakeHass(_live_state("left"))
-    sa = SafetyActuator(h, "left", dead_man_sec=0.0001)
-    r1 = sa.write(-3, regime="x", reason="x")
+    sa = SafetyActuator(h, "left", max_step_per_tick=2)
+    sa.write(-3, regime="NORMAL_COOL", reason="x")
+    r = sa.write(-10, regime="INITIAL_COOL", reason="x")
+    assert not r["blocked"]
+    assert r["written"] == -10
+    assert r["reason"] == "ok"
+
+
+def test_rate_limit_bypassed_for_safety_yield():
+    h = FakeHass(_live_state("right"))
+    sa = SafetyActuator(h, "right", max_step_per_tick=2)
+    sa.write(-3, regime="NORMAL_COOL", reason="x")
+    r = sa.write(-10, regime="SAFETY_YIELD", reason="overheat")
+    assert not r["blocked"]
+    assert r["written"] == -10
+
+
+def test_rate_limit_bypassed_for_pre_bed_and_overheat_hard():
+    h = FakeHass(_live_state("left"))
+    sa = SafetyActuator(h, "left", max_step_per_tick=2)
+    sa.write(-3, regime="NORMAL_COOL", reason="x")
+    r = sa.write(-10, regime="PRE_BED", reason="x")
+    assert r["written"] == -10
+    h2 = FakeHass(_live_state("right"))
+    sa2 = SafetyActuator(h2, "right", max_step_per_tick=2)
+    sa2.write(-3, regime="NORMAL_COOL", reason="x")
+    r2 = sa2.write(-10, regime="OVERHEAT_HARD", reason="x")
+    assert r2["written"] == -10
+
+
+def test_default_dead_man_sec_pinned():
+    """Constants pinned: DEFAULT_DEAD_MAN_SEC == 720 (12 min, ~2.4× tick)."""
+    assert _mod.DEFAULT_DEAD_MAN_SEC == 720
+
+
+def test_dead_man_does_not_fire_with_heartbeat():
+    """Heartbeat called every tick keeps the actuator alive across writes."""
+    h = FakeHass(_live_state("left"))
+    sa = SafetyActuator(h, "left", dead_man_sec=10.0)
+    sa.heartbeat()
+    r1 = sa.write(-3, regime="NORMAL_COOL", reason="x")
     assert not r1["blocked"]
-    time.sleep(0.001)
-    r2 = sa.write(-4, regime="x", reason="x")
+    # Simulate 11 ticks of "no change" (no write needed) but heartbeat fires.
+    for _ in range(11):
+        sa.heartbeat()
+    # A subsequent write succeeds because heartbeat kept liveness fresh.
+    r2 = sa.write(-4, regime="NORMAL_COOL", reason="x")
+    assert not r2["blocked"]
+    assert r2["written"] == -4
+
+
+def test_dead_man_fires_when_no_heartbeat():
+    """Without heartbeat, dead-man trips once threshold elapses."""
+    h = FakeHass(_live_state("left"))
+    sa = SafetyActuator(h, "left", dead_man_sec=0.001)
+    sa.heartbeat()
+    r1 = sa.write(-3, regime="NORMAL_COOL", reason="x")
+    assert not r1["blocked"]
+    time.sleep(0.01)  # no heartbeat
+    r2 = sa.write(-4, regime="NORMAL_COOL", reason="x")
     assert r2["blocked"] and r2["reason"] == "dead_man"
+
+
+def test_take_lease_succeeds_after_fallback():
+    """After fallback, the next take_lease must succeed (no lockout)."""
+    h = FakeHass(_live_state("left"))
+    sa = SafetyActuator(h, "left", dead_man_sec=0.001)
+    sa.heartbeat()
+    sa.write(-3, regime="NORMAL_COOL", reason="x")
+    time.sleep(0.01)
+    # Trigger dead-man fallback
+    r = sa.write(-4, regime="NORMAL_COOL", reason="x")
+    assert r["reason"] == "dead_man"
+    # Lease was released to v5.
+    assert h.states["input_text.snug_writer_owner_left"] == "v5"
+    # Next healthy tick: take_lease succeeds.
+    ok = sa.take_lease()
+    assert ok is True
+    assert h.states["input_text.snug_writer_owner_left"] == "v6"
+    # And the next write (with fresh heartbeat) succeeds too.
+    sa.heartbeat()
+    r2 = sa.write(-3, regime="NORMAL_COOL", reason="x")
+    assert not r2["blocked"]
+
+
+def test_dead_man_skipped_with_no_heartbeat_yet():
+    """If heartbeat() never called (cold start in shadow), dead-man is skipped."""
+    h = FakeHass(_live_state("left"))
+    sa = SafetyActuator(h, "left", dead_man_sec=0.001)
+    # No heartbeat() — _last_alive_ts is None
+    r = sa.write(-3, regime="NORMAL_COOL", reason="x")
+    assert not r["blocked"]
 
 
 def test_successful_write_updates_lease_and_ts():
