@@ -37,8 +37,8 @@ import hassapi as hass
 #    sensors Sensor sub-component exposes; distinct from the v5.2
 #    `_left_pressure`/`_right_pressure` which are the calibrated rollups). ─
 PRESSURE_ENTITIES = {
-    "left":  "sensor.bed_presence_2bcab8_left_pressure_sensor_pressure",
-    "right": "sensor.bed_presence_2bcab8_right_pressure_sensor_pressure",
+    "left":  "sensor.bed_presence_2bcab8_left_pressure",
+    "right": "sensor.bed_presence_2bcab8_right_pressure",
 }
 OCCUPIED_ENTITIES = {
     "left":  "binary_sensor.bed_presence_2bcab8_bed_occupied_left",
