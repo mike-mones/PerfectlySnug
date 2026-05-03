@@ -7,3 +7,16 @@ sleep_controller:
 right_overheat_safety:
   module: right_overheat_safety
   class: RightOverheatSafety
+
+v6_pressure_logger:
+  module: v6_pressure_logger
+  class: V6PressureLogger
+  postgres_host: 192.168.0.3
+
+# v6 controller loading deferred to R3 (post-audit). Shadow controller
+# implemented at appdaemon/sleep_controller_v6.py.
+# sleep_controller_v6:
+#   module: sleep_controller_v6
+#   class: SleepControllerV6
+#   room_temp_entity: sensor.bedroom_temperature_sensor_temperature
+#   postgres_host: 192.168.0.3
