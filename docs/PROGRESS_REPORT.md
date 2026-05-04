@@ -5,7 +5,7 @@
 > document is the running log of what's actually been built, what's deployed,
 > what's been tried and rejected, and what the data actually says today.
 
-**Last updated:** 2026-05-02 evening (v5.2 red-team follow-up through `+railHelperIPC`, cleanup pass — see §13.7)
+**Last updated:** 2026-05-04 afternoon (Fleet-Mode P2 eval framework + P3a state estimator + P3b shadow logger shipped — see §15). v5.2 controller still production-active and untouched.
 
 > 🎯 **2026-05-01 RC reverse-engineering — canonical synthesis:**
 > [`findings/2026-05-01_rc_synthesis.md`](findings/2026-05-01_rc_synthesis.md).
@@ -1207,3 +1207,83 @@ See `docs/NEXT_STEPS.md §V6` for the full list. Headline blockers:
    if either zone has dramatically fewer rows than the other.
 4. Decide: extend shadow phase, load `sleep_controller_v6` for shadow-row
    generation, or address any newly-discovered findings before promoting.
+
+---
+
+## §15 — 2026-05-04 Fleet Mode: stabilization + intelligence upgrade
+
+User invoked Fleet Mode against the v5.2 controller with an explicit
+"NOT a rewrite" hard constraint. 7 design deliverables produced via
+8 parallel sub-agents, then incremental rollout patches shipped per
+`docs/proposals/2026-05-04_rollout.md`.
+
+### 15.1 Design phase — 2026-05-04 morning (commit `9c54d51`)
+
+Eight design docs written under `docs/`:
+
+- `findings/2026-05-04_context_audit.md` — what was tried, what failed,
+  what to keep vs discard.
+- `proposals/2026-05-04_architecture.md` — 4-module split (ingest /
+  state estimation / control policy / learning loop).
+- `proposals/2026-05-04_state_estimation.md` — 7-state rule cascade
+  driven by movement + body trend, time-of-night demoted to weak prior.
+- `proposals/2026-05-04_control_policy.md` — state→action authority
+  table with rate limits and oscillation guards.
+- `proposals/2026-05-04_learning.md` — incremental, per-user adjustment
+  layer over a shared base.
+- `proposals/2026-05-04_evaluation.md` — discomfort proxy + stability +
+  responsiveness metrics with nightly batch pipeline.
+- `proposals/2026-05-04_features.md` — normalized feature set.
+- `proposals/2026-05-04_rollout.md` — P1–P11 incremental, reversible
+  rollout sequence.
+
+### 15.2 P2 — Evaluation framework (commit `8596a91`)
+
+- `sql/v6_eval_metrics.sql` — `v6_nightly_summary` table.
+- `tools/eval_nightly.py` — per-night metric computation + upsert.
+- `tools/eval_compare.py` — A/B comparison between controller versions.
+- 19 tests. 28 nights × 2 zones backfilled into PG.
+- Macmini cron: `0 9 * * *` runs `tools/cron_eval_nightly.sh` (pulls,
+  runs eval against yesterday). Verified end-to-end.
+
+### 15.3 P3a — State estimator + offline replay (commit `b692cb7`)
+
+- `ml/v6/state_estimator.py` — pure 7-state rule cascade (no I/O).
+- `tools/replay_state.py` — read-only replay against historical PG
+  with per-spec scoring buckets.
+- 38 new tests (438 total).
+- Replay over 14 nights: 3/3 buckets PASS on instrumented subset.
+
+### 15.4 P3b — Shadow logging deployment (commit `0d4f1ec`)
+
+- `sql/v7_state_shadow.sql` — dedicated `controller_state_shadow`
+  table (deviation from spec §7.1 — separate table avoids racing v5.2
+  controller writes).
+- `appdaemon/v6_state_shadow.py` — live shadow logger, 60s tick per
+  zone. Two-key armed via `input_boolean.snug_v6_state_shadow_logging`.
+- `ha-config/configuration.yaml` — new input_boolean (parent-repo
+  commit `1dab382`).
+- 13 new tests (451 total). Schema applied to live PG. Verified rows
+  landing every 60s per zone.
+
+### 15.5 Live state at end of session
+
+| Component | State |
+|---|---|
+| v5.2 controller | Production, untouched |
+| right-overheat safety | Production, untouched |
+| `v6_pressure_logger` | Production (collecting since 2026-05-02) |
+| `v6_state_shadow` | **NEW — live, observational only** |
+| `eval_nightly` cron | **NEW — armed for 09:00 ET daily** |
+| Test suite | 451 passing |
+
+### 15.6 Where to start next session
+
+1. Read `docs/NEXT_STEPS.md §0.0` (verify P3b captured a full night).
+2. If shadow data looks healthy across ≥3 nights, begin **P4** per
+   `docs/proposals/2026-05-04_rollout.md` — control policy integration.
+   This is the first patch with any live behavior change and will
+   modify `appdaemon/sleep_controller_v5.py`.
+3. If shadow data shows degraded/missing features for occupied
+   periods, debug the body-validity gate or movement deque population
+   before P4.

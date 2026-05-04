@@ -1,14 +1,51 @@
-# PerfectlySnug — NEXT STEPS (v5.2 `+railHelperIPC` red-team follow-up)
+# PerfectlySnug — NEXT STEPS
 
-> **READ FIRST every new session:** `docs/PROGRESS_REPORT.md` (especially §13.7),
-> then `docs/2026-05-01_v52_patches.md`, then this file. Then read the user's
-> morning report and decide on next action.
+> **READ FIRST every new session:** `docs/PROGRESS_REPORT.md` (esp. §13.7 + §15),
+> then `docs/2026-05-01_v52_patches.md`, then this file.
 >
-> Also review (long-term roadmap): `docs/proposals/2026-05-01_recommendation.md`.
+> **Active roadmap:** `docs/proposals/2026-05-04_rollout.md` (P1–P11 sequence).
+> P2 + P3a + P3b shipped 2026-05-04. **Next is P4** (control policy
+> integration) — blocked on ≥3 nights of P3b shadow data.
 
 ---
 
-## Priority 0 — Tomorrow morning (do these before anything else)
+## Priority 0 — Tomorrow morning (2026-05-05)
+
+### 0.0 Verify P3b shadow logger captured a full occupied night
+
+```bash
+PGPASSWORD=sleepsync_local psql -h 192.168.0.3 -U sleepsync -d sleepdata -c "
+SELECT zone, state, count(*) AS rows
+FROM controller_state_shadow
+WHERE ts::date = (CURRENT_DATE - 1)
+GROUP BY zone, state ORDER BY zone, count(*) DESC;"
+```
+
+Expect ~1440 rows/zone, multiple states observed (not all `OFF_BED`,
+not all `degraded='movement'`). If the bed-occupied window only shows
+`OCCUPIED_AWAKE`/`OCCUPIED_QUIET` (degraded), the body-validity gate
+or movement features didn't engage — investigate.
+
+### 0.0b Score live shadow against the offline replay
+
+```bash
+cd ~/Documents/GitHub/HomeAssistant/PerfectlySnug
+.venv/bin/python tools/replay_state.py --night yesterday -v
+```
+
+The 3 spec §8.2 buckets should pass. After 3 clean nights of shadow
+data the green light is on for P4.
+
+### 0.0c Check eval_nightly cron on macmini
+
+```bash
+ssh mike@192.168.0.3 'cat /home/mike/PerfectlySnug/cron_eval_nightly.log | tail -30'
+```
+
+Cron fires 09:00 ET daily. If it stops appending, the cron's pull
+failed or psycopg2 broke.
+
+### 0.1 Read the user's morning subjective report
 
 ### 0.1 Read the user's morning subjective report
 
