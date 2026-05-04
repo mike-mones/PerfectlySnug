@@ -5,6 +5,44 @@ exhaustive history. See `docs/PROGRESS_REPORT.md` for full context.
 
 ## [Unreleased]
 
+### Added — 2026-05-04 (P3a: state estimator + offline replay)
+
+Pure logic + offline harness. No AppDaemon code touched. Gates the future
+P3b shadow deployment.
+
+- `ml/v6/state_estimator.py` — explainable rule-based 7-state estimator
+  per `docs/proposals/2026-05-04_state_estimation.md` §3.2.
+  States: `OFF_BED`, `AWAKE_IN_BED`, `SETTLING`, `STABLE_SLEEP`,
+  `RESTLESS`, `WAKE_TRANSITION`, `DISTURBANCE` + degraded
+  `OCCUPIED_AWAKE` / `OCCUPIED_QUIET`.
+  - Time-of-night appears only as a weak ≥5h necessary-condition prior
+    on `WAKE_TRANSITION` (Rule 5) and as a tiebreaker in degraded mode.
+  - No cycle index, no `CYCLE_SETTINGS` lookup, no `night_progress`.
+  - Body-validity gate: `(body − room) ≥ 6.0 °F AND ≥ 600 s` after onset
+    (audit §2.1 fix). Gates Rule 5 and Rule 6.
+  - Confidence cap of `0.5` in any degraded path (spec §5.2 / §6).
+- `tools/replay_state.py` — offline replay against historical PG. Builds
+  `Features` per `controller_readings` tick from trailing 15-min
+  `controller_pressure_movement` window. Scores per spec §8.2:
+    1. Override lead-time recall (target ≥ 70 %)
+    2. OFF_BED rate on persistent empty (target ≥ 99 %)
+    3. STABLE_SLEEP mid-night share (target band 30–80 %)
+  Reports both full-corpus and instrumented-subset (≥ 50 % movement
+  data) scores so degraded nights don't mask the gate.
+- `tests/test_v6_state_estimator.py` (30 tests) +
+  `tests/test_replay_state.py` (8 tests). Full suite **438 passing**.
+- Replay over the last 14 nights, instrumented subset (2 nights with
+  `controller_pressure_movement` populated):
+    - Bucket 1 (override recall): **3/3 = 100 %** PASS
+    - Bucket 2 (OFF_BED rate): **397/397 = 100 %** PASS (full corpus)
+    - Bucket 3 (stable mid-night): **41 %** PASS (in 30–80 % band)
+  Pre-2026-05-02 nights run in degraded mode (no movement data); replay
+  re-scores will tighten as P3b shadow logging accumulates per-tick
+  movement features.
+
+REVERT: delete `ml/v6/state_estimator.py`, `tools/replay_state.py`, the
+two new test files. No live behavior changed.
+
 ### Added — 2026-05-04 (P2: evaluation framework)
 
 First patch of the 2026-05-04 stabilization+intelligence rollout (see
