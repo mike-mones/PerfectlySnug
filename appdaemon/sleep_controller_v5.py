@@ -221,7 +221,7 @@ CONTROLLER_VERSION = "v5_2_rc_off"
 #   - body feedback is gated off when bed presence says the bed is unoccupied
 #   - right-zone hot-rail source is included in passive PG snapshot notes
 # See PROGRESS_REPORT.md and docs/2026-05-01_v52_patches.md for detail.
-CONTROLLER_PATCH_LEVEL = "v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude+learnerStateTag+railHelperIPC+rightSensorValidGate"
+CONTROLLER_PATCH_LEVEL = "v5_2_rc_off+noFloor+3levelWatchdog+rightHotRail86+bedOnsetEvent+bodyFbOccGate+hotRailNotes+overheatBypass+rcBothZones+railNotOverride+railRestoreGuard+leftSelfWrite+bodyFbFailClosed+learnerInitialBedExclude+learnerStateTag+railHelperIPC+rightSensorValidGate+telemetryAlwaysOn"
 ENABLE_LEARNING = True
 MAX_SETTING = 0
 
@@ -441,6 +441,17 @@ class SleepControllerV5(hass.Hass):
         # Run control loop every 5 minutes
         self.run_every(self._control_loop, "now", 300)
 
+        # Daily data-loss alarm at 10:30 AM. Queries PG for last-night row
+        # count; fires a persistent_notification if too few rows logged.
+        # Belt-and-suspenders defense against silent data loss (sleep_mode
+        # never flipped on, AppDaemon crashed, PG unreachable, etc.)
+        try:
+            from datetime import time as _time
+            self.run_daily(self._morning_data_loss_check, _time(10, 30, 0))
+        except Exception as exc:  # noqa: BLE001 — never crash AppDaemon on init
+            self.log(f"Failed to schedule data-loss check: {exc.__class__.__name__}: {exc}",
+                     level="WARNING")
+
         # Listen for sleep mode changes
         self.listen_state(self._on_sleep_mode, E_SLEEP_MODE)
 
@@ -493,8 +504,12 @@ class SleepControllerV5(hass.Hass):
     def _control_loop(self, kwargs):
         now = datetime.now()
 
-        # Not sleeping? Nothing to do.
+        # 2026-05-04: Telemetry must NEVER have gaps. If sleep_mode is off,
+        # we still log a passive row each tick so we can audit body/room/dial
+        # state continuously. v5.2 used to gate ALL logging on sleep_mode and
+        # we lost ~10h of data when the goodnight_routine event didn't fire.
         if not self._is_sleeping():
+            self._log_telemetry_only_tick(now)
             return
 
         # Responsive cooling watchdog — keep both sides in RC-off mode.
@@ -1732,6 +1747,89 @@ class SleepControllerV5(hass.Hass):
     def _is_sleeping(self):
         state = self.get_state(E_SLEEP_MODE)
         return state == "on"
+
+    def _log_telemetry_only_tick(self, now):
+        """Log a passive telemetry row to PG when sleep_mode is OFF.
+
+        2026-05-04: was added after a night where goodnight_routine didn't
+        fire, sleep_mode stayed off, and v5.2 logged ZERO rows for ~10 hours.
+        This helper guarantees we always have body/room/dial/blower data in
+        PG even when not actively controlling. NEVER actuates anything —
+        only reads sensors and writes a row with action='telemetry_only'.
+        """
+        try:
+            room_temp = self._read_temperature(self._get_room_temp_entity())
+            if room_temp is not None and not (40.0 <= room_temp <= 100.0):
+                room_temp = None
+            sleep_stage = self._read_str(E_SLEEP_STAGE)
+            left_snapshot = self._read_zone_snapshot("left")
+            bed_presence = self._read_bed_presence_snapshot()
+            self._log_to_postgres(
+                elapsed_min=0.0,  # not in a sleep session
+                room_temp=room_temp,
+                sleep_stage=sleep_stage,
+                body_center=left_snapshot["body_center"],
+                setting=self._state.get("last_setting", -10),
+                body_avg=left_snapshot["body_avg"],
+                body_left=left_snapshot["body_left"],
+                body_right=left_snapshot["body_right"],
+                action="telemetry_only",
+                ambient=left_snapshot["ambient"],
+                setpoint=left_snapshot["setpoint"],
+                blower_pct=left_snapshot["blower_pct"],
+                responsive_cooling_on=False,
+                bed_presence=bed_presence,
+                data_source="telemetry_only_no_sleep_mode",
+            )
+            self._log_passive_zone_snapshot(
+                "right", elapsed_min=0.0, room_temp=room_temp,
+                sleep_stage=sleep_stage, bed_presence=bed_presence,
+            )
+        except Exception as exc:  # noqa: BLE001 — must never break the loop
+            self.log(f"telemetry_only tick failed: {exc.__class__.__name__}: {exc}",
+                     level="WARNING")
+
+    def _morning_data_loss_check(self, kwargs):
+        """Daily 10:30 AM check: alert if last 14h had too few PG rows.
+
+        2026-05-04: defensive monitor. v5.2 logs every 5 min when sleep_mode
+        is on (and now also when it's off via _log_telemetry_only_tick).
+        A healthy 14h window should have 100-200 rows. If <60, something
+        broke. Sends a persistent_notification + WARNING log line.
+        """
+        try:
+            conn = self._get_pg()
+            if not conn:
+                self.log("data-loss check: PG unreachable", level="WARNING")
+                return
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT COUNT(*) FROM controller_readings "
+                    "WHERE ts > now() - interval '14 hours'"
+                )
+                row_count = cur.fetchone()[0]
+            finally:
+                cur.close()
+            self.log(f"data-loss check: {row_count} rows in last 14h")
+            THRESHOLD = 60
+            if row_count < THRESHOLD:
+                msg = (f"Only {row_count} controller rows in last 14h "
+                       f"(expected 100-200). Possible: sleep_mode never flipped "
+                       f"on, AppDaemon crashed, PG unreachable.")
+                self.log(f"DATA LOSS DETECTED: {msg}", level="ERROR")
+                try:
+                    self.call_service(
+                        "persistent_notification/create",
+                        title="⚠ PerfectlySnug data loss",
+                        notification_id="snug_data_loss",
+                        message=msg,
+                    )
+                except Exception:
+                    pass
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"data-loss check failed: {exc.__class__.__name__}: {exc}",
+                     level="WARNING")
 
     def _elapsed_min(self):
         """Get minutes since sleep started, using epoch seconds (DST-safe)."""

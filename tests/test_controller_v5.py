@@ -413,6 +413,42 @@ class TestControlLoopLogging:
         assert kwargs["blower_pct"] is None
 
 
+class TestTelemetryAlwaysOn:
+    """2026-05-04 fix: log every tick to PG even when sleep_mode is off."""
+
+    def test_logs_when_sleep_mode_off(self):
+        controller = _make_controller(current_setting=-5, current_blower=33)
+        _set_states(controller, running="on", sleep_mode="off")
+        controller._control_loop({})
+        # _log_to_postgres should have been called with action='telemetry_only'
+        assert controller._log_to_postgres.call_count >= 1
+        kwargs = controller._log_to_postgres.call_args.kwargs
+        assert kwargs.get("action") == "telemetry_only"
+        # Right zone should also get a passive snapshot
+        assert controller._log_passive_zone_snapshot.call_count >= 1
+
+    def test_does_not_actuate_when_sleep_mode_off(self):
+        controller = _make_controller(current_setting=-5, current_blower=33)
+        _set_states(controller, running="on", sleep_mode="off")
+        controller._control_loop({})
+        # No call_service writes to bedtime_temperature
+        for call in controller.call_service.call_args_list:
+            assert call.args != ("number/set_value",) or \
+                call.kwargs.get("entity_id") != ctrl_module.E_BEDTIME_TEMP, \
+                "Controller must not actuate when sleep_mode is off"
+
+    def test_telemetry_helper_recovers_from_exception(self):
+        """If _log_to_postgres raises, the loop must not crash AppDaemon."""
+        controller = _make_controller(current_setting=-5, current_blower=33)
+        _set_states(controller, running="on", sleep_mode="off")
+        controller._log_to_postgres.side_effect = Exception("PG down")
+        # Must not raise
+        controller._control_loop({})
+
+    def test_patch_level_includes_telemetry_token(self):
+        assert "+telemetryAlwaysOn" in ctrl_module.CONTROLLER_PATCH_LEVEL
+
+
 class TestSafetyBypass:
     def _safety_plan(self, setting=-10, *, overheat_hard=False, hot_safety=False):
         return {
