@@ -13,6 +13,11 @@ v6_pressure_logger:
   class: V6PressureLogger
   postgres_host: 192.168.0.3
 
+v6_state_shadow:
+  module: v6_state_shadow
+  class: V6StateShadow
+  postgres_host: 192.168.0.3
+
 # v6 controller loading deferred to R3 (post-audit). Shadow controller
 # implemented at appdaemon/sleep_controller_v6.py.
 # sleep_controller_v6:

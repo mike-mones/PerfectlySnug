@@ -5,6 +5,44 @@ exhaustive history. See `docs/PROGRESS_REPORT.md` for full context.
 
 ## [Unreleased]
 
+### Added — 2026-05-04 (P3b: state-estimator shadow deployment)
+
+Shadow logging of the P3a state estimator from inside AppDaemon. Purely
+observational — no control side effects.
+
+- `sql/v7_state_shadow.sql` — additive, new dedicated table
+  `controller_state_shadow`. One row per zone per 60s tick. Indexes on
+  `(zone, ts DESC)` and `state`. Idempotent.
+  - Rollback: `psql -f sql/v7_state_shadow_rollback.sql`
+  - Deviation from spec §7.1 (which proposed ALTERing
+    `controller_readings`): a separate table avoids racing the live v5.2
+    controller's writes and lets the shadow run at finer cadence than
+    the live controller's ~5min ticks.
+- `appdaemon/v6_state_shadow.py` — new `V6StateShadow` AppDaemon app.
+  Subscribes to bed-pressure, occupancy, body-left, and room
+  temperature sensors. Maintains in-process 15-min rolling buffers per
+  zone. Every 60s computes `Features` and calls
+  `ml.v6.state_estimator.estimate_state`, writes one row per zone to
+  PG. Two-key armed via `input_boolean.snug_v6_state_shadow_logging`.
+  Mirrors `v6_pressure_logger`'s safety patterns (lazy PG conn, never
+  crashes the AppDaemon process, all errors logged at WARNING/ERROR).
+- `appdaemon/apps.yaml` — registers `v6_state_shadow`.
+- `ha-config/configuration.yaml` — adds
+  `input_boolean.snug_v6_state_shadow_logging` (initial: on).
+- `tests/test_v6_state_shadow.py` — 13 tests for the pure helpers
+  (`_rms_consecutive_deltas`, `_variance_consecutive_deltas`,
+  `_max_consecutive_delta`, `_ols_slope_per_15m`). Full suite **451
+  passing**.
+- Schema migration applied to live PG. AppDaemon restarted; app boot
+  log confirms `v6_state_shadow ready` and PG rows landing every 60s
+  per zone. Initial mid-day rows show correct degraded-fallback
+  behavior (`degraded='movement'` while pressure deque is warming up,
+  `OFF_BED` for empty bed).
+
+REVERT: turn off `input_boolean.snug_v6_state_shadow_logging`. To
+fully remove: delete `appdaemon/v6_state_shadow.py` from AppDaemon's
+apps dir, restart, then `psql -f sql/v7_state_shadow_rollback.sql`.
+
 ### Added — 2026-05-04 (P3a: state estimator + offline replay)
 
 Pure logic + offline harness. No AppDaemon code touched. Gates the future
